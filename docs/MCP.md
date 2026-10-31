@@ -31,8 +31,10 @@ substrings of the name, and a word containing `/` must match the full path.
 
 ## Access control
 
-**Being indexed does not authorize access.** An agent sees a path only when
-all of the following hold:
+**Only indexed, policy-approved paths are visible.** New, unconfigured MCP
+servers permit all indexed roots by default; `restricted` is an explicit option
+and remains in effect for legacy allowlist configurations. An agent sees a path
+only when all of the following hold:
 
 1. **It is indexed and inside the selected authorization scope.** In the
    `restricted` mode, directories come from `--allow DIR` and/or
@@ -195,9 +197,10 @@ deny = ["private-project", "*.backup"]
 Exceptions are case-insensitive component globs. They do not override hidden
 filtering, authorization boundaries or indexing exclusions. Existing
 `deny_defaults = false` and `allow_hidden` remain available; defaults stay on
-and off respectively. Editing the mode in a policy file or passing the CLI
-option is an explicit server configuration choice; the interactive installer
-requires additional typed consent before enabling global agent access.
+and off respectively. The interactive installer requires additional typed consent before registering
+global agent access. Starting the executable directly without a config or an
+explicit mode now uses the global default, so manual integrations must review
+this change during upgrade.
 
 ## Installation
 
