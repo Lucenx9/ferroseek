@@ -130,9 +130,11 @@ struct RawFileConfig {
 
 impl From<RawFileConfig> for FileConfig {
     fn from(raw: RawFileConfig) -> Self {
-        let access_mode = raw
-            .access_mode
-            .unwrap_or(if raw.allow.is_empty() { AccessMode::AllIndexed } else { AccessMode::Restricted });
+        let access_mode = raw.access_mode.unwrap_or(if raw.allow.is_empty() {
+            AccessMode::AllIndexed
+        } else {
+            AccessMode::Restricted
+        });
         FileConfig {
             access_mode,
             deny_exceptions: raw.deny_exceptions,
