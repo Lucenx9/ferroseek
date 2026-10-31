@@ -5,7 +5,7 @@ use std::os::fd::AsRawFd;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -70,11 +70,11 @@ const CHANNEL_BATCHES: usize = 64;
 pub struct Engine {
     tx: SyncSender<Msg>,
     status: Arc<Status>,
-    indexer: Option<JoinHandle<()>>,
-    reader: Option<JoinHandle<()>>,
+    indexer: Mutex<Option<JoinHandle<()>>>,
+    reader: Mutex<Option<JoinHandle<()>>>,
     stop_reader: Arc<AtomicBool>,
     wake: Arc<WakePipe>,
-    _lock: InstanceLock,
+    lock: Mutex<Option<InstanceLock>>,
 }
 
 fn now_unix() -> i64 {
@@ -179,11 +179,11 @@ impl Engine {
         Ok(Engine {
             tx,
             status,
-            indexer: Some(indexer),
-            reader: Some(reader),
+            indexer: Mutex::new(Some(indexer)),
+            reader: Mutex::new(Some(reader)),
             stop_reader,
             wake,
-            _lock: lock,
+            lock: Mutex::new(Some(lock)),
         })
     }
 
@@ -227,26 +227,25 @@ impl Engine {
     }
 
     /// Stops both threads, committing and closing the index cleanly.
-    pub fn shutdown(mut self) {
-        self.stop_threads();
-    }
-
-    fn stop_threads(&mut self) {
+    /// Idempotent; later commands are ignored.
+    pub fn shutdown(&self) {
         self.stop_reader.store(true, Ordering::Release);
         self.wake.wake();
-        if let Some(r) = self.reader.take() {
+        if let Some(r) = self.reader.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = r.join();
         }
         let _ = self.tx.send(Msg::Stop);
-        if let Some(i) = self.indexer.take() {
+        if let Some(i) = self.indexer.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = i.join();
         }
+        // The index is closed; another process may take over now.
+        self.lock.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
 }
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        self.stop_threads();
+        self.shutdown();
     }
 }
 

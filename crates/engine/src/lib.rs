@@ -8,6 +8,7 @@
 pub mod config;
 mod engine;
 mod indexer;
+pub mod logging;
 pub mod inotify;
 pub mod status;
 pub mod sys;
