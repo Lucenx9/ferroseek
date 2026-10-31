@@ -155,8 +155,9 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
 
 For a **new unconfigured server**, `all_indexed` is the default. It returns
 only already-indexed paths and keeps hidden/sensitive-name filtering.
-An existing legacy `mcp.toml` with an `allow` list but no `access_mode`
-continues to use `restricted`, as do existing CLI registrations with `--allow`
+An existing legacy `mcp.toml` without `access_mode` remains
+`restricted` (including policies with only deny/hidden settings), as do
+existing CLI registrations with `--allow`
 and no explicit mode. Explicit `access_mode = "restricted"` always retains
 its prior behavior. **Upgrading an old, completely unconfigured MCP server
 (with no config and no `--allow`) changes its scope from none to all indexed
