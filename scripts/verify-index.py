@@ -25,6 +25,16 @@ def beneath(path, parent):
     return path == parent or path.startswith(parent.rstrip(b'/') + b'/')
 
 
+def has_cachedir_tag(path):
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_NOCTTY
+    try:
+        with os.fdopen(os.open(os.path.join(path, b'CACHEDIR.TAG'), flags), 'rb') as tag:
+            return (stat.S_ISREG(os.fstat(tag.fileno()).st_mode)
+                    and tag.read(43) == b'Signature: 8a477f597d28d172789f06886806bc55')
+    except OSError:
+        return False
+
+
 def filesystem(config, data_dir):
     roots = sorted(set(normalized(p) for p in config['roots']))
     roots = [p for p in roots if not any(p != r and beneath(p, r) for r in roots)]
@@ -45,17 +55,12 @@ def filesystem(config, data_dir):
             md = os.lstat(path)
             kind = 1 if stat.S_ISDIR(md.st_mode) else 0 if stat.S_ISREG(md.st_mode) else 2 if stat.S_ISLNK(md.st_mode) else 3
             found[path] = (kind,) if kind == 1 else (kind, md.st_size, md.st_mtime_ns)
-            if kind != 1 or depth >= config['max_depth']:
+            if kind != 1 or depth > config['max_depth']:
                 continue
             if config['stay_on_filesystem'] and parent_dev is not None and md.st_dev != parent_dev and path in mounts:
                 continue
-            if config['respect_cachedir_tag']:
-                try:
-                    with open(os.path.join(path, b'CACHEDIR.TAG'), 'rb') as f:
-                        if f.read(43) == b'Signature: 8a477f597d28d172789f06886806bc55':
-                            continue
-                except FileNotFoundError:
-                    pass
+            if config['respect_cachedir_tag'] and has_cachedir_tag(path):
+                continue
             with os.scandir(path) as listing:
                 for entry in listing:
                     name = entry.name
