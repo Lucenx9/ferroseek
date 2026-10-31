@@ -562,3 +562,17 @@ fn scoped_prefix_budget_preserves_exact_stem_ranking() {
     assert_eq!(names(&hits), ["ab.txt"]);
     assert!(search(&db, "source/\0 ab").is_empty());
 }
+
+#[test]
+fn reader_roots_lists_root_paths_only() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let a = tx.ensure_root(Path::new("/srv/a"), dir(1)).unwrap();
+    tx.ensure_root(Path::new("/srv/b"), dir(2)).unwrap();
+    tx.upsert(a, b"child", dir(3)).unwrap();
+    tx.commit().unwrap();
+    let mut roots = Reader::open(&db).unwrap().roots().unwrap();
+    roots.sort();
+    assert_eq!(roots, vec![PathBuf::from("/srv/a"), PathBuf::from("/srv/b")]);
+}

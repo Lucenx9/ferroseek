@@ -223,6 +223,29 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   removable filesystems (`/proc/self/mountinfo` fstype) unless they are
   configured explicitly as roots.
 
+## Optional MCP server (`crates/mcp`, `ferroseek-mcp`)
+
+- **Separate binary, stdio only**, using the official `rmcp` 3.8 SDK
+  (features `server`, `macros`, `transport-io`; no HTTP or auth code). It is
+  a child process of the agent and exits on EOF, so it costs nothing when
+  no agent runs it.
+- **Read-only.** It reuses `ferroseek_index::Reader` against the daemon's
+  database. Its only addition to the index crate is `Reader::roots()`, a
+  cheap read of the root rows. It caches one connection, keyed by the
+  database's device and inode, and drops it plus trims the heap 5 s after
+  the last request.
+- **Policy before output.** Only explicitly allowed directories are visible;
+  being indexed is not enough. Hidden components and deny patterns below
+  the allowed directory are filtered. Client paths must be canonical
+  (`..`/`.` are refused, not normalized). Searches are scoped per allowed
+  directory. When a scope contains every index root, the search runs
+  unscoped plus a filter, avoiding the subtree walk that `within` seeds:
+  12.7 → 2.9 ms p50 at 1M.
+- **Bounded output.** Results are capped by count (≤ 200) and serialized
+  bytes (24 KiB). Stale results are dropped after `lstat`.
+- Details, verification and measurements are in `docs/MCP.md` and
+  BENCHMARKS.md §10.
+
 ## Review hardening (2026-10-31)
 
 The inotify reader now returns after one buffer, letting the bounded channel

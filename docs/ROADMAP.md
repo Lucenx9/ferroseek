@@ -83,6 +83,18 @@ compatible.
   only, no telemetry.
 - [ ] A small KCM or settings page for roots and exclusions.
 
+## M3b — Agent access (MCP)
+
+- [x] Optional read-only `ferroseek-mcp` stdio server:
+  - `search_files`, `get_file_info`, `index_status`
+  - explicit allowlist, deny rules, bounded responses
+  - verified with real Claude Code and Codex sessions (docs/MCP.md)
+- [ ] Faster `root` filters on subdirectories (p99 39 ms at 1M) and a
+  cheaper `index_status` (a full COUNT, 135 ms at 1M).
+- [ ] Exact round-tripping of non-UTF-8 paths (currently lossy plus a flag).
+- [ ] No content, semantic or embedding search unless a later milestone
+  explicitly scopes it.
+
 ## M4 — Baloo API compatibility (research)
 
 - [ ] Assess whether a compatible `Baloo::Query` backend, the

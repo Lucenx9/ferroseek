@@ -228,6 +228,12 @@ impl Reader {
         Ok(hits)
     }
 
+    /// Absolute paths of the indexed roots. Cheap (index lookup on
+    /// `parent IS NULL`), unlike [`Reader::stats`].
+    pub fn roots(&self) -> Result<Vec<PathBuf>> {
+        Ok(tree::roots(&self.conn)?.into_iter().map(|(_, p)| p).collect())
+    }
+
     /// Resolves an absolute path to its entry, if indexed.
     pub fn lookup(&self, path: &Path) -> Result<Option<(Id, Meta)>> {
         tree::lookup_path(&self.conn, path)

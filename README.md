@@ -182,6 +182,27 @@ the journal: `journalctl --user -u ferroseek`.
   full cold-machine behavior and non-glibc targets remain unverified. See
   [release readiness](docs/RELEASE_READINESS.md).
 
+## Agents (optional MCP server)
+
+`ferroseek-mcp` is a separate, opt-in binary. It lets MCP clients such as
+Claude Code and Codex search the existing index through three read-only
+tools: `search_files`, `get_file_info` and `index_status`.
+
+- It uses stdio only, starts no indexer and opens the database read-only.
+- Agents see nothing unless you allow specific directories. Dotfiles and
+  secret-looking names stay hidden.
+- It runs only while an agent uses it.
+
+```sh
+cargo build --release -p ferroseek-mcp && install -Dm755 target/release/ferroseek-mcp ~/.local/bin/
+claude mcp add --scope user ferroseek -- ~/.local/bin/ferroseek-mcp --allow ~/Progetti
+codex mcp add ferroseek -- ~/.local/bin/ferroseek-mcp --allow ~/Progetti
+```
+
+See [docs/MCP.md](docs/MCP.md) for the access policy, configuration,
+verification and measured performance. At 1M files, a search has a 2.9 ms
+p50, and an idle server uses 0 % CPU and about 12 MiB RSS.
+
 ## Development
 
 See `CLAUDE.md` for the repository map and conventions, and
@@ -191,6 +212,7 @@ See `CLAUDE.md` for the repository map and conventions, and
 cargo build --release --workspace                       # includes benchmark binary
 cargo test --workspace                                  # isolated unit/integration tests
 tests/dbus-smoke.sh target/release/ferroseekd           # daemon on a private D-Bus session
+tests/mcp-smoke.py                                      # MCP server over stdio, temp index
 target/release/ferroseek-bench --files 100000 --work /tmp/fsb   # benchmarks
 ```
 

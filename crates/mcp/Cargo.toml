@@ -1,0 +1,25 @@
+[package]
+name = "ferroseek-mcp"
+description = "Optional read-only MCP (stdio) server over the FerroSeek file index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ferroseek-mcp"
+path = "src/main.rs"
+
+[dependencies]
+ferroseek-index.workspace = true
+ferroseek-engine.workspace = true
+rmcp = { version = "3.8", default-features = false, features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "io-std", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+toml.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

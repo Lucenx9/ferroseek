@@ -19,6 +19,9 @@ evidence are in `docs/ARCHITECTURE.md`, measurements in
   `control.rs` (`io.github.ferroseek.FerroSeek1`), `open.rs` (launching
   files), `mime.rs` (globs2 → icon).
 - `crates/cli` (`ferroseek`), `crates/bench` (`ferroseek-bench`).
+- `crates/mcp` (`ferroseek-mcp`): optional read-only MCP stdio server (rmcp 3.8).
+  `policy.rs` (allowlist/deny/path validation, pure) and `server.rs` (tools,
+  reader cache, idle release). See `docs/MCP.md`.
 - `data/`: KRunner `.desktop` file, D-Bus `.service` file, systemd unit
   templates (`@BINDIR@`). `scripts/`: install and uninstall.
 - `prototype/backend-bench`: the throwaway backend comparison. Not in the
@@ -130,3 +133,20 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - `scripts/verify-index.py` is an independent read-only desktop oracle. Use
   complete effective config; reports contain counts, not private file paths.
   See docs/DESKTOP_SOAK.md. Never commit real user indexes/configs/logs.
+
+## MCP checkpoint (2026-10-31)
+
+- `ferroseek-mcp` must stay read-only, stdio-only and opt-in. It must never
+  start an indexer, write the index or add a schema change. Its only index
+  API addition is `Reader::roots()`.
+- Every path leaving the process passes `Policy::visible_under` *and* lies
+  inside the requested scope. Client paths are validated, not normalized;
+  never echo refused paths in errors.
+- Structured outputs must satisfy their `outputSchema`: Claude Code
+  rejects responses with missing `required` fields. Fields omitted by serde
+  need `#[serde(default)]`; the protocol test checks this.
+- Live agent checks use `claude -p --mcp-config … --strict-mcp-config` and
+  `codex exec -c mcp_servers.…`, with temp synthetic data. Never register
+  test servers in the user's agent configs.
+- `tests/mcp-smoke.py` and `scripts/benchmark-mcp.py` (results in
+  BENCHMARKS.md §10).

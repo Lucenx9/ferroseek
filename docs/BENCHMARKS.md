@@ -518,3 +518,54 @@ lifecycle tests cover Teardown races and database replacement. Actual
 Plasma activation, results, file/folder opening, live changes, indexing and
 restart were retested; see [release readiness](RELEASE_READINESS.md).
 Baloo remained disabled. No fair Baloo comparison has been performed.
+
+## 10. MCP server: 2026-10-31
+
+These numbers measure `ferroseek-mcp` (docs/MCP.md) on its own, over its
+real stdio JSON-RPC protocol, with `scripts/benchmark-mcp.py`.
+
+- The server opens the generated 100k and 1M indexes read-only. The allowed
+  directory is the corpus root, which contains the index root, so the fast
+  unscoped path is used.
+- The query set is 300 deterministic 3–8 character substrings of real
+  indexed names plus 30 no-hit queries, with 20 warm-up calls first.
+- Latency is the client-side round trip, including JSON encoding and the
+  `lstat` verification of each returned result.
+- Memory and CPU come from `/proc/<pid>`.
+
+Raw reports and hashes are in
+[mcp-2026-10-31](benchmarks/mcp-2026-10-31/README.md).
+
+| metric | 100k | 1M |
+|---|---|---|
+| startup: spawn → `initialize` reply | 1.3 ms | 1.1 ms |
+| `search_files` limit 20, p50 / p95 / p99 / max | 0.90 / 3.90 / 4.34 / 8.21 ms | 2.89 / 5.73 / 10.11 / 67.86 ms |
+| `search_files` with `root` = subdirectory, p50 / p99 | 3.62 / 13.23 ms | 8.54 / 38.74 ms |
+| `get_file_info` p50 / p99 | 0.08 / 0.14 ms | 0.08 / 0.16 ms |
+| `index_status` p50 | 13.3 ms | 135.3 ms |
+| `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.7 KiB |
+| RSS after `initialize` (anonymous) | 5.1 MiB (0.4) | 5.0 MiB (0.4) |
+| RSS / VmHWM after 650 requests | 16.2 / 16.2 MiB | 17.5 / 17.5 MiB |
+| idle RSS 12 s later (anonymous) | 11.5 MiB (4.9) | 12.0 MiB (5.3) |
+| idle CPU, context switches (30 s) | 0.000 %, 0.00/s | 0.000 %, 0.00/s |
+
+Two changes during development were measured on the same 1M index with the
+same query set:
+
+| | before | after |
+|---|---|---|
+| **Unscoped search** when the allowed directory contains every index root (previously always `within`, which seeds a subtree walk) | p50 12.66 ms, p99 91.95 ms | p50 2.89 ms, p99 10.11 ms |
+| **Idle release** (drop the cached reader + `malloc_trim` 5 s after the last request; glibc arenas capped at 2) | idle anonymous memory 15.1 MiB | 3.2–5.3 MiB |
+
+Result counts were identical before and after (5309 results for 330
+queries).
+
+A first version of the idle release woke up about 0.1 times per second
+because of a stored `Notify` permit. It was fixed to 0.00/s.
+
+**Limitations.**
+- Each size was run once, with a warm cache and synthetic names.
+- `root` filters on subdirectories and `index_status` (a full COUNT) are
+  the slow cases.
+- When not running, the server costs nothing: it is a stdio child of the
+  agent and exits on EOF, as the protocol tests verify.
