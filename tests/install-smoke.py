@@ -20,13 +20,18 @@ import install_transaction as tx
 
 with tempfile.TemporaryDirectory(prefix='ferroseek-install-') as tmp:
     root = Path(tmp)
+    runtime = root / 'runtime'; runtime.mkdir(mode=0o700)
     commands = root / 'commands'
     commands.mkdir()
     log = root / 'calls'
     stub = '''#!/bin/sh
 printf '%s %s\\n' "$(basename "$0")" "$*" >> "$TEST_CALLS"
 case "$*" in
-  *show-environment*|*status*) [ "$TEST_MANAGER" = yes ]; exit $?;;
+  *show-environment*) [ "$TEST_MANAGER" = yes ]; exit $?;;
+  *status*) [ "${TEST_BUS:-$TEST_MANAGER}" = yes ]; exit $?;;
+  *NameHasOwner*) if [ "$TEST_OWNER" = yes ]; then echo 'b true'; else echo 'b false'; fi; exit 0;;
+  *GetConnectionUnixProcessID*) echo 'u 999'; exit 0;;
+  *MainPID*) echo 999; exit 0;;
   *is-active*|*is-enabled*) [ "$TEST_ACTIVE" = yes ]; exit $?;;
 esac
 exit 0
@@ -39,10 +44,12 @@ exit 0
         home = root / name
         home.mkdir(exist_ok=True)
         return dict(os.environ, HOME=str(home), XDG_DATA_HOME='relative-data', XDG_CONFIG_HOME='relative-config',
-                    XDG_STATE_HOME=str(home / '.local/state'), CODEX_HOME=str(home / '.codex'),
+                    XDG_STATE_HOME=str(home / '.local/state'), XDG_RUNTIME_DIR=str(runtime), CODEX_HOME=str(home / '.codex'),
                     CLAUDE_CONFIG_DIR=str(home / '.claude-config'), XDG_CURRENT_DESKTOP='KDE',
+                    FERROSEEK_CONFIG=str(home / '.config/ferroseek/config.toml'),
+                    FERROSEEK_DATA_DIR=str(home / '.local/share/ferroseek'),
                     PATH=str(commands) + ':' + os.environ['PATH'], TEST_CALLS=str(log),
-                    TEST_MANAGER='yes', TEST_ACTIVE='no', DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-install-test')
+                    TEST_MANAGER='yes', TEST_ACTIVE='no', TEST_OWNER='no', TEST_BUS='yes', DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-install-test')
     # Interactive recommendations and customization, without relying on a CI TTY.
     def options():
         return SimpleNamespace(core=False, mcp=False, krunner=False, full=False, dry_run=False,
@@ -80,6 +87,8 @@ exit 0
     run(expected=1)  # No implicit non-interactive defaults.
     run('--config', expected=2)
     run('--unexpected', expected=2)
+    preview = run('--core', '--config', str(cfg), '--dry-run')
+    assert 'Create initial config:' in preview.stdout and str(home / '.config/ferroseek/config.toml') in preview.stdout
     run('--core', '--config', str(cfg))
     bindir = home / '.local/bin'
     assert (bindir / 'ferroseekd').read_bytes() == (repo / 'target/release/ferroseekd').read_bytes()
@@ -137,7 +146,7 @@ exit 0
     assert r.returncode == 0, r.stderr
     # Exercise the actual D-Bus argv parser with those same special characters.
     # No systemd manager is contacted: stub detection says unavailable.
-    private = dict(special, TEST_MANAGER='no',
+    private = dict(special, TEST_MANAGER='no', TEST_BUS='no',
                    XDG_DATA_HOME=str(Path(special['HOME']) / '.local/share'),
                    XDG_CONFIG_HOME=str(Path(special['HOME']) / '.config'))
     run('--core', '--config', str(cfg), custom=private)
@@ -152,8 +161,16 @@ exit 0
                                 'io.github.ferroseek.FerroSeek1.Status'],
                                env=dict(private, DBUS_SESSION_BUS_ADDRESS=address), capture_output=True, text=True, timeout=20)
         assert reply.returncode == 0, reply.stderr
-        daemon_pid = int(re.search(r"'pid': '([0-9]+)'", reply.stdout)[1])
-        assert Path(f'/proc/{daemon_pid}/exe').resolve() == Path(special['HOME']) / '.local/bin/ferroseekd'
+        candidate_pid = int(re.search(r"'pid': '([0-9]+)'", reply.stdout)[1])
+        assert Path(f'/proc/{candidate_pid}/exe').resolve() == Path(special['HOME']) / '.local/bin/ferroseekd'
+        daemon_pid = candidate_pid
+        manager_off = root / 'manager-off'; manager_off.mkdir()
+        no_manager = manager_off / 'systemctl'
+        no_manager.write_text('#!/bin/sh\nexit 1\n'); no_manager.chmod(0o755)
+        actual_bus = dict(private, DBUS_SESSION_BUS_ADDRESS=address, PATH=str(manager_off) + ':/usr/bin:/bin')
+        refusal = uninstall('--stop', custom=actual_bus, expected=1)
+        assert 'unmanaged daemon' in refusal.stderr
+        assert (Path(special['HOME']) / '.local/bin/ferroseekd').exists()
     finally:
         if daemon_pid is not None:
             os.kill(daemon_pid, signal.SIGTERM)
@@ -165,7 +182,7 @@ exit 0
     assert not list(Path(bad['HOME']).iterdir())
 
     # Headless/no manager: core works, enabling fails, incompatible KDE is refused.
-    headless = dict(environment('headless'), XDG_CURRENT_DESKTOP='GNOME', TEST_MANAGER='no')
+    headless = dict(environment('headless'), XDG_CURRENT_DESKTOP='GNOME', TEST_MANAGER='no', TEST_BUS='no')
     run('--core', custom=headless)
     run('--core', '--enable', custom=headless, expected=1)
     assert 'SystemdService=' not in (Path(headless['HOME']) / '.local/share/dbus-1/services/io.github.ferroseek.FerroSeek.service').read_text()
@@ -173,6 +190,13 @@ exit 0
     run('--krunner', custom=headless, expected=1)
     run('--full', custom=headless)
     assert not (Path(headless['HOME']) / '.local/share/krunner').exists()
+    unmanaged = dict(headless, TEST_BUS='yes', TEST_OWNER='yes')
+    refusal = uninstall('--stop', custom=unmanaged, expected=1)
+    assert 'unmanaged daemon' in refusal.stderr
+    assert (Path(headless['HOME']) / '.local/bin/ferroseekd').exists()
+    managed = dict(headless, TEST_BUS='yes', TEST_OWNER='yes', TEST_MANAGER='yes', TEST_ACTIVE='yes')
+    uninstall('--stop', custom=managed)
+    assert 'disable --now ferroseek.service' in log.read_text()
 
     # Explicit, previewable agent registration preserves unrelated fields/comments.
     agents = environment('agents é')
@@ -230,6 +254,17 @@ exit 0
     assert targets['one'].read_bytes() == b'old' and targets['one'].stat().st_mode & 0o777 == 0o640
     assert not targets['two'].exists() and not transaction.journal.exists()
 
+    # Content-identical chmod updates must also roll back their original mode.
+    with transaction.locked():
+        with patch.object(tx, 'atomic_write', fail_second):
+            try:
+                transaction.apply({'one': (b'old', b'old', 0o755), 'two': (None, b'new', 0o600)})
+            except OSError:
+                pass
+            else:
+                assert False, 'fault was not injected'
+    assert targets['one'].stat().st_mode & 0o777 == 0o640
+
     # Abrupt termination after the first replace: next lock recovers the journal.
     child = '''import os,sys
 from pathlib import Path
@@ -260,5 +295,25 @@ with x.locked():x.apply({'one':(b'old',b'new',0o755),'two':(None,b'new',0o600)})
     else:
         assert False, 'rollback overwrote an external writer'
     assert targets['one'].read_bytes() == b'external writer'
+
+    # An external write during rollback must not be replaced by an old backup.
+    race_targets = {name: root / ('race-' + name) for name in ['one', 'two', 'three']}
+    race_targets['one'].write_bytes(b'old1'); race_targets['two'].write_bytes(b'old2')
+    race = tx.Transaction(root / 'race-state', race_targets)
+    def modify_during_rollback(path, content, mode):
+        if path == race_targets['three']:
+            raise OSError('injected failure')
+        original(path, content, mode)
+        if path == race_targets['two'] and content == b'old2':
+            race_targets['one'].write_bytes(b'external during rollback')
+    with race.locked():
+        with patch.object(tx, 'atomic_write', modify_during_rollback):
+            try:
+                race.apply({'one': (b'old1', b'new1', 0o644), 'two': (b'old2', b'new2', 0o644), 'three': (None, b'new3', 0o644)})
+            except tx.InstallError:
+                pass
+            else:
+                assert False, 'rollback clobbered concurrent write'
+    assert race.journal.exists() and race_targets['one'].read_bytes() == b'external during rollback'
 
 print('PASS: component selection, upgrades, dry-run, paths, ownership, agent consent, rollback and crash recovery')

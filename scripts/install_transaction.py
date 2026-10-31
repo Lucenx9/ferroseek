@@ -94,13 +94,17 @@ class Transaction:
                 raise InstallError('pending transaction needs the original HOME/XDG/agent environment')
         if not journal.get('committed'):
             for item in journal['files']:
-                current = digest(read(self.targets[item['id']]))
-                if current not in (item['before'], item['after']):
+                dest = self.targets[item['id']]
+                current = (digest(read(dest)), stat.S_IMODE(dest.stat().st_mode) if dest.exists() else None)
+                if current not in ((item['before'], item['mode']), (item['after'], item['after_mode'])):
                     raise InstallError('rollback conflict: a destination changed externally; undo journal retained')
             for i, item in reversed(list(enumerate(journal['files']))):
                 dest = self.targets[item['id']]
-                if digest(read(dest)) == item['before']:
+                current = (digest(read(dest)), stat.S_IMODE(dest.stat().st_mode) if dest.exists() else None)
+                if current == (item['before'], item['mode']):
                     continue
+                if current != (item['after'], item['after_mode']):
+                    raise InstallError('rollback conflict during recovery; undo journal retained')
                 if item['before'] is None:
                     dest.unlink(missing_ok=True)
                     sync_dir(dest.parent)
@@ -131,19 +135,20 @@ class Transaction:
             shutil.rmtree(self.backups)
         self.backups.mkdir(mode=0o700)
         files = []
-        for i, (key, (old, new, _)) in enumerate(changes.items()):
+        for i, (key, (old, new, new_mode)) in enumerate(changes.items()):
             dest = self.targets[key]
-            mode = stat.S_IMODE(dest.stat().st_mode) if old is not None else 0o600
+            mode = stat.S_IMODE(dest.stat().st_mode) if old is not None else None
             if old is not None:
                 atomic_write(self.backups / str(i), old, 0o600)
-            files.append(dict(id=key, path=str(dest), before=digest(old), after=digest(new), mode=mode))
+            files.append(dict(id=key, path=str(dest), before=digest(old), after=digest(new), mode=mode, after_mode=new_mode if new is not None else None))
         journal = dict(files=files, committed=False)
         atomic_write(self.journal, json.dumps(journal).encode(), 0o600)
         try:
-            for key, (old, new, mode) in changes.items():
+            for i, (key, (old, new, mode)) in enumerate(changes.items()):
                 dest = self.targets[key]
                 safe_path(dest)
-                if read(dest) != old:
+                current_mode = stat.S_IMODE(dest.stat().st_mode) if dest.exists() else None
+                if read(dest) != old or current_mode != files[i]['mode']:
                     raise InstallError(f'destination changed during installation: {dest}')
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 if new is None:

@@ -12,12 +12,14 @@ import tempfile
 repo = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
     root = Path(tmp)
+    runtime = root / 'runtime'; runtime.mkdir(mode=0o700)
     commands = root / 'commands'; commands.mkdir()
     for name in ['systemctl', 'busctl', 'gdbus', 'cargo']:
         p = commands / name
         p.write_text('#!/bin/sh\nexit 1\n')
         p.chmod(0o755)
-    env = dict(os.environ, SOURCE_DATE_EPOCH='0', XDG_CURRENT_DESKTOP='KDE',
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith('FERROSEEK_')}
+    env = dict(clean_env, XDG_RUNTIME_DIR=str(runtime), SOURCE_DATE_EPOCH='0', XDG_CURRENT_DESKTOP='KDE',
                PATH=str(commands) + ':' + os.environ['PATH'],
                DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-package-test')
     for component in ['core', 'mcp', 'krunner', 'full']:

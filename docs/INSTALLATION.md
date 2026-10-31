@@ -132,7 +132,9 @@ close their configuration editors during registration.
 
 Core cannot be removed while retained integrations require it. Active/enabled
 systemd installations require `--stop`; the installer never guesses permission
-to stop them. Missing files are harmless and repeat removal is safe. Modified
+to stop them. A daemon owning the current session bus outside this systemd unit
+must be stopped manually; uninstall refuses removal even with `--stop` in that
+case. The ownership check does not activate a daemon. Missing files are harmless and repeat removal is safe. Modified
 managed files cause a refusal, and unowned files are never deleted.
 Configuration, indexes and agent registrations are retained. Remove agent
 entries separately with `claude mcp remove --scope user ferroseek` and

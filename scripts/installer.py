@@ -6,10 +6,13 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+if sys.version_info < (3, 11):
+    sys.exit('FerroSeek installer requires Python 3.11 or newer.')
 import tomllib
 
 from install_transaction import InstallError, Transaction, digest, read, safe_path
@@ -246,7 +249,7 @@ def agent_changes(args, targets, data, env):
     return changes
 
 
-def refresh(env):
+def refresh(env, dry_run=False):
     commands = []
     if env['manager']:
         commands.append(['systemctl', '--user', 'daemon-reload'])
@@ -256,13 +259,48 @@ def refresh(env):
         else:
             commands.append(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.ReloadConfig'])
     for cmd in commands:
-        if not succeeds(cmd):
+        if dry_run:
+            print('Would refresh registration: ' + shlex.join(cmd))
+        elif not succeeds(cmd):
             print('Registration refresh failed; files are installed. Retry: ' + shlex.join(cmd), file=sys.stderr)
+
+
+def active_bus_owner(env):
+    """PID of the current owner, without activating FerroSeek."""
+    if not env['bus']:
+        return None
+    def call(method):
+        name = 'io.github.ferroseek.FerroSeek'
+        if shutil.which('busctl'):
+            cmd = ['busctl', '--user', 'call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', method, 's', name]
+        else:
+            cmd = ['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.' + method, name]
+        result = command(cmd)
+        if result is None or result.returncode:
+            raise InstallError('could not check session D-Bus ownership; no files removed')
+        return result.stdout.strip().lower()
+    owner = call('NameHasOwner')
+    if owner in ['b false', '(false,)']:
+        return None
+    if owner not in ['b true', '(true,)']:
+        raise InstallError('unexpected D-Bus ownership response; no files removed')
+    numbers = re.findall(r'\d+', call('GetConnectionUnixProcessID'))
+    if not numbers or int(numbers[-1]) <= 0:
+        raise InstallError('could not identify D-Bus owner; no files removed')
+    return int(numbers[-1])
 
 
 def install(args, env, layout):
     home, data, config, state, targets = layout
     package = archive_info()
+    existing = load_manifest(targets)
+    if existing['components']:
+        print('Existing managed installation: ' + ', '.join(existing['components']) + ' (version ' + existing.get('version', 'unknown') + ')')
+    elif any(targets[k].exists() for k in BINARIES):
+        print('Existing unmanaged installation files detected; only byte-identical files can be adopted.')
+    else:
+        print('No existing managed installation detected.')
+    print('Installer ownership and rollback state: ' + str(state))
     selected = choose(args, env, package)
     if args.enable and not (env['manager'] and env['bus']):
         raise InstallError('--enable requires an available systemd user manager and session D-Bus')
@@ -281,6 +319,7 @@ def install(args, env, layout):
     initial_config = Path(args.config).read_bytes() if args.config else None
     if initial_config is not None:
         tomllib.loads(initial_config.decode())
+        print(('Preserve existing config: ' if targets['config'].exists() else 'Create initial config: ') + str(targets['config']))
     if args.dry_run:
         # Read-only checks, no build, lock, journal, directory creation or refresh.
         print('Would use archive binaries.' if package else 'Would use existing binaries.' if args.no_build else 'Would build selected Rust packages with --release --locked.')
@@ -295,10 +334,13 @@ def install(args, env, layout):
         agent_changes(args, targets, data, env)
         if args.enable:
             print('Would enable and start ferroseek.service (explicit --enable).')
+        refresh(env, dry_run=True)
         print('Dry run: nothing changed.')
         return
     source = ROOT / ('bin' if package else 'target/release')
     if not package and not args.no_build:
+        if not shutil.which('cargo'):
+            raise InstallError('source installation needs Rust/Cargo; install the toolchain or use a verified binary archive')
         cmd = ['cargo', 'build', '--release', '--locked']
         for key in keys:
             if key in PACKAGES:
@@ -375,10 +417,17 @@ def uninstall(args, env, layout):
         changes['manifest'] = (read(targets['manifest']), (json.dumps(manifest, indent=2) + '\n').encode() if manifest['files'] else None, 0o600)
         return changes
     def check_service():
-        if 'core' in selected and env['manager']:
-            busy = succeeds(['systemctl', '--user', 'is-active', '--quiet', 'ferroseek.service']) or succeeds(['systemctl', '--user', 'is-enabled', '--quiet', 'ferroseek.service'])
-            if busy and not args.stop:
-                raise InstallError('service active or enabled; uninstall needs explicit --stop (never implicit)')
+        if 'core' not in selected:
+            return
+        active = env['manager'] and succeeds(['systemctl', '--user', 'is-active', '--quiet', 'ferroseek.service'])
+        enabled = env['manager'] and succeeds(['systemctl', '--user', 'is-enabled', '--quiet', 'ferroseek.service'])
+        owner = active_bus_owner(env)
+        if owner is not None:
+            pid = command(['systemctl', '--user', 'show', 'ferroseek.service', '--property=MainPID', '--value']) if active else None
+            if pid is None or pid.returncode or pid.stdout.strip() != str(owner):
+                raise InstallError('an unmanaged daemon owns the session bus name; stop it manually before uninstalling')
+        if (active or enabled) and not args.stop:
+            raise InstallError('service active or enabled; uninstall needs explicit --stop (never implicit)')
     if args.dry_run:
         if (state / 'transaction.json').exists():
             print('Pending transaction would be recovered before removal.')
@@ -386,6 +435,9 @@ def uninstall(args, env, layout):
             for key in plan():
                 print('Remove/update: ' + str(targets[key]))
         check_service()
+        if args.stop and 'core' in selected and env['manager']:
+            print('Would explicitly stop and disable ferroseek.service.')
+        refresh(env, dry_run=True)
         print('Dry run: nothing changed.')
         return
     transaction = Transaction(state, targets)
