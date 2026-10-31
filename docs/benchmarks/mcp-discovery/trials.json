@@ -1,0 +1,4220 @@
+[
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 5.573111861000143,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/config/orbit-config.toml`.",
+    "task_success": false,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Incorrect absolute path: omitted alpha/."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 7.277657392000037,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 8.126461349998863,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'orbit-config.toml' -g '\"'! .git'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 8.47801628399975,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'orbit-config.toml' -g '\"'!**/.git/**'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 9.22758933499972,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus. A Glob search and a `find` run returned the same three:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 8.978302491999784,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`\n\nBoth `Glob` and `find` returned the same three paths.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 11.084503293001035,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g release-notes.md'"
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 8.739721251999072,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS -g 'release-notes.md'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 4.570599545000732,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has `services/payments/` in its path:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 5.272808544999862,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has `services/payments/` in its path:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 9.127561133998825,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg 'services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 10.38162604200079,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '/services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "$CORPUS/gamma/services/payments/retry-policy.yaml",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 0,
+    "session_seconds": 4.522892159999174,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 0,
+    "session_seconds": 5.22262830299951,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust source file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`\n\nI searched all `*.rs` files recursively under the corpus root, which covers `alpha`, `beta` and any other subdirectories.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 0,
+    "session_seconds": 10.380055345000073,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "One match:\n\n[$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n```rust\nconst RETRY_WINDOW_LIMIT: usize = 42;\n```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 0,
+    "session_seconds": 11.180513512999823,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "One match:\n\n[$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n```rust\nconst RETRY_WINDOW_LIMIT: usize = 42;\n```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 0,
+    "session_seconds": 8.276910104999843,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name 'fresh-memo.txt'"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/fresh-memo.txt`. It's the only match under the corpus directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 0,
+    "session_seconds": 6.624327413999708,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name fresh-memo.txt"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`\n\nIt's the only match under the corpus directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 0,
+    "session_seconds": 11.330783487999724,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g fresh-memo.txt'"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 0,
+    "session_seconds": 9.428519941000559,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)fresh-memo'\"\\\\.txt\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 0,
+    "session_seconds": 4.621100042999387,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 0,
+    "session_seconds": 5.372142514999723,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 0,
+    "session_seconds": 12.683505140999841,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'archive-map.json' -g '\"'!node_modules'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 0,
+    "session_seconds": 11.686011575999146,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'archive-map.json' -g '\"'!**/.git/**'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 0,
+    "session_seconds": 5.974291382999581,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      }
+    ],
+    "final_answer": "The README.md is in the repository root: `$CORPUS/alpha/README.md`\n\nGit lists it as untracked.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 0,
+    "session_seconds": 4.370222475999981,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      }
+    ],
+    "final_answer": "The Glob search found `README.md` at the repository root. The full path is `$CORPUS/alpha/README.md`.\n\nGit shows it as untracked (`??`), so it hasn't been committed yet.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 0,
+    "session_seconds": 11.430354291000185,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'README.md' -g '\"'!.git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 0,
+    "session_seconds": 11.833348861999184,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g README.md -g '\"'!.git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 8.52742674000001,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.\n\nThe Glob result was a relative path, `config/orbit-config.toml`. I ran `find` to get the full path, and it found only this one match.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 6.373240406999685,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 11.332004263998897,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'orbit-config.toml' -g '\"'!**/.git/**'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 9.179042508001658,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g orbit-config.toml'"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 7.574753480999789,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under `$CORPUS`:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`\n\nI confirmed the list with a plain `find` over the whole directory, so it includes any hidden or git-ignored copies.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 6.626310978001129,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under `$CORPUS`:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`\n\nThe search printed the first one as a bare relative path. I took that to be the file in `alpha`, the working directory. That matches the untracked `release-notes.md` in the git status. I didn't check it separately.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 12.532048232000307,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS -g 'release-notes.md'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 10.228372264000427,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g release-notes.md'"
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 4.520675830000982,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has a path containing `services/payments/`:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 5.322761768000419,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has `services/payments/` in its path:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 9.127378871000474,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg 'services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 8.677147766000417,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg 'services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 1,
+    "session_seconds": 5.472368459999416,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`\n\nI searched with ripgrep, restricted to `*.rs` files.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 1,
+    "session_seconds": 5.672351257000628,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`\n\nI searched only files matching `*.rs`, so occurrences in other file types aren't included.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 1,
+    "session_seconds": 9.077587395999217,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "- [$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n  ```rust\n  const RETRY_WINDOW_LIMIT: usize = 42;\n  ```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 1,
+    "session_seconds": 13.137064750999343,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      },
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --hidden --no-ignore --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found one match:\n\n[$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n```rust\nconst RETRY_WINDOW_LIMIT: usize = 42;\n```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 1,
+    "session_seconds": 7.075031559999843,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name fresh-memo.txt"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/fresh-memo.txt`. It's the only match under the corpus directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 1,
+    "session_seconds": 7.525687500999993,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name fresh-memo.txt"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/fresh-memo.txt`. It's the only match under the corpus directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 1,
+    "session_seconds": 8.927286494999862,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)fresh-memo'\"\\\\.txt\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 1,
+    "session_seconds": 10.379225741000482,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)fresh-memo'\"\\\\.txt\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 1,
+    "session_seconds": 4.422941871000148,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 1,
+    "session_seconds": 4.821414084000935,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 1,
+    "session_seconds": 10.92954224999994,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'archive-map.json' -g '\"'!**/.git/**'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 1,
+    "session_seconds": 9.778019864999806,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g archive-map.json -g '\"'!**/.git/**'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 1,
+    "session_seconds": 5.621757450000587,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "realpath README.md"
+        }
+      }
+    ],
+    "final_answer": "`README.md` is at `$CORPUS/alpha/README.md`, in the repository root. Git shows it as untracked.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 1,
+    "session_seconds": 4.620772351001506,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      }
+    ],
+    "final_answer": "The README.md is in the repository root: `$CORPUS/alpha/README.md`. Git shows it as untracked.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 1,
+    "session_seconds": 10.53120694000063,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'README.md' -g '\"'!.git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 1,
+    "session_seconds": 8.377117459000146,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g README.md -g '\"'!.git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 6.924253836999924,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 7.424833611999929,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.\n\nThe Glob result was a relative path, so I ran `find` to get the full one. `find` returned only this match under `corpus`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 8.47653705599987,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden $CORPUS -g orbit-config.toml -g '\"'! .git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 9.480382869000096,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'orbit-config.toml' -g '\"'!**/.git/**'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 8.376398460999553,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`\n\nA `find` over the whole corpus directory returned the same three.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 7.975955202000478,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus. A `find` over the whole directory returned the same three:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 9.528617793999729,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS -g 'release-notes.md'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 9.279547309000918,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g release-notes.md'"
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 5.471751725999638,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has a path containing `services/payments/`:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 5.02203338399886,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "Only one file under `$CORPUS` has `services/payments/` in its path:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 9.927879609000229,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg 'services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 9.978832511998917,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg 'services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 2,
+    "session_seconds": 4.9720932170002925,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`\n\nI searched only files matching `*.rs`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 2,
+    "session_seconds": 5.322518012000728,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Grep",
+        "arguments": {
+          "pattern": "RETRY_WINDOW_LIMIT",
+          "path": "$CORPUS",
+          "glob": "*.rs",
+          "output_mode": "content"
+        }
+      }
+    ],
+    "final_answer": "Only one Rust file under `$CORPUS` contains `RETRY_WINDOW_LIMIT`:\n\n- `$CORPUS/beta/src/retry.rs:1`: `const RETRY_WINDOW_LIMIT: usize = 42;`\n\nI searched only files matching `*.rs`, so other file types aren't covered.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "content",
+    "repetition": 2,
+    "session_seconds": 9.477808501000254,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' -- 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found one match:\n\n[$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n```rust\nconst RETRY_WINDOW_LIMIT: usize = 42;\n```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "content",
+    "repetition": 2,
+    "session_seconds": 9.77762200899997,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "beta/src/retry.rs"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg -n --glob '*.rs' 'RETRY_WINDOW_LIMIT' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "[$CORPUS/beta/src/retry.rs:1]($CORPUS/beta/src/retry.rs:1)\n\n```rust\nconst RETRY_WINDOW_LIMIT: usize = 42;\n```",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 2,
+    "session_seconds": 6.725466853000398,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name fresh-memo.txt"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/fresh-memo.txt`.\n\nIt's the only match under the corpus directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 2,
+    "session_seconds": 8.476688261998788,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/fresh-memo.txt",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name fresh-memo.txt"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/fresh-memo.txt`.\n\nIt is the only match under `corpus`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "recent",
+    "repetition": 2,
+    "session_seconds": 8.776739573000668,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)fresh-memo'\"\\\\.txt\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "recent",
+    "repetition": 2,
+    "session_seconds": 8.379028374998597,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/fresh-memo.txt"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)fresh-memo'\"\\\\.txt\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/fresh-memo.txt`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 2,
+    "session_seconds": 5.375503999001012,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 2,
+    "session_seconds": 4.620883372999742,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/archive-map.json",
+          "path": "$CORPUS/scratch"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/scratch/archive-map.json`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unindexed",
+    "repetition": 2,
+    "session_seconds": 9.982492450000791,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'archive-map.json' -g '\"'! .git'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unindexed",
+    "repetition": 2,
+    "session_seconds": 9.777415693000876,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "scratch/archive-map.json"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'archive-map.json' -g '\"'! .git'\"' $CORPUS/scratch\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/scratch/archive-map.json`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 2,
+    "session_seconds": 4.52147624600002,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      }
+    ],
+    "final_answer": "The README.md is in the repository root, so its path is `$CORPUS/alpha/README.md`.\n\nGit lists it as untracked.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 2,
+    "session_seconds": 5.02134292700066,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": true,
+    "experiment": "main",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/README.md"
+        }
+      }
+    ],
+    "final_answer": "Found it at `$CORPUS/alpha/README.md`. It's in the repository root and is untracked in git.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "ambiguous",
+    "repetition": 2,
+    "session_seconds": 11.18133101100102,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g README.md -g '\"'! .git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "ambiguous",
+    "repetition": 2,
+    "session_seconds": 9.878047808000701,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/README.md"
+    ],
+    "server_discovered": false,
+    "experiment": "main",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g README.md -g '\"'!.git'\"'\""
+        }
+      }
+    ],
+    "final_answer": "[README.md]($CORPUS/alpha/README.md)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 6.1231447819991445,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`. A live `find` over the corpus returned only this one match.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 0,
+    "session_seconds": 15.236474317000102,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "orbit-config.toml",
+          "root": "$CORPUS"
+        },
+        "ms": 1.1398019996704534,
+        "error": false
+      }
+    ],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "orbit-config.toml",
+          "root": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 7.178763391000757,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus. A live `find` returned them, and it matched the Glob results:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 0,
+    "session_seconds": 12.882613054000103,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)release-notes'\"\\\\.md\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 6.773598780999237,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        },
+        "ms": 1.1709709997376194,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 1
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        }
+      }
+    ],
+    "final_answer": "One file under `$CORPUS` has a path containing `services/payments/`:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nA live glob and the FerroSeek index search both returned only this file.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 0,
+    "session_seconds": 13.233422262999738,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        },
+        "ms": 1.00712499988731,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        }
+      }
+    ],
+    "final_answer": "$CORPUS/gamma/services/payments/retry-policy.yaml",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 6.022659992999252,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "The file is at `$CORPUS/alpha/config/orbit-config.toml`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 1,
+    "session_seconds": 9.327471341001,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden $CORPUS -g orbit-config.toml'"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 8.075942123999994,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "release-notes.md",
+          "root": "$CORPUS"
+        },
+        "ms": 1.118943999244948,
+        "error": false
+      }
+    ],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/release-notes.md",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 1
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "release-notes.md",
+          "root": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under the corpus. A live `find` and the FerroSeek index returned the same three:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 1,
+    "session_seconds": 10.6291503249995,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '(\"'^|/)release-notes'\"\\\\.md\"'$'\"'\""
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 6.423869456999455,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        },
+        "ms": 1.2002059993392322,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 5
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        }
+      }
+    ],
+    "final_answer": "Under `$CORPUS`, one file has a path containing `services/payments/`:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nTwo searches agree on this: a live glob of the filesystem and a FerroSeek index lookup.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 1,
+    "session_seconds": 11.8832047399992,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden --no-ignore $CORPUS | rg '/services/payments/'\""
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/gamma/services/payments/retry-policy.yaml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 6.974185323000711,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/orbit-config.toml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name orbit-config.toml"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "name",
+    "repetition": 2,
+    "session_seconds": 13.035983402000056,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "orbit-config.toml",
+          "root": "$CORPUS"
+        },
+        "ms": 1.1221490003663348,
+        "error": false
+      }
+    ],
+    "expected": [
+      "alpha/config/orbit-config.toml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "orbit-config.toml",
+          "root": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "`$CORPUS/alpha/config/orbit-config.toml`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 6.5249615860011545,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Bash",
+        "arguments": {
+          "command": "find $CORPUS -name release-notes.md -not -path '*/node_modules/*' 2>/dev/null",
+          "description": "Find release-notes.md files in corpus"
+        }
+      }
+    ],
+    "final_answer": "I found three `release-notes.md` files under `$CORPUS`:\n\n- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`\n\nI used a live `find` on the filesystem, so the list doesn't depend on an index. The search skipped `node_modules` directories.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "multi_repo",
+    "repetition": 2,
+    "session_seconds": 12.83376544100065,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "alpha/release-notes.md",
+      "beta/release-notes.md",
+      "gamma/release-notes.md"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc 'rg --files --hidden --no-ignore $CORPUS -g release-notes.md'"
+        }
+      }
+    ],
+    "final_answer": "- `$CORPUS/alpha/release-notes.md`\n- `$CORPUS/beta/release-notes.md`\n- `$CORPUS/gamma/release-notes.md`",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 6.423497484000109,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "guidance",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/services/payments/**",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "One file under `$CORPUS` has a path containing `services/payments/`:\n\n- `$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nI found it with a live glob of the corpus directory, not the FerroSeek index, so the result reflects the current filesystem.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "partial_path",
+    "repetition": 2,
+    "session_seconds": 12.232505840000158,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        },
+        "ms": 1.2067179995938204,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "guidance",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "services/payments/",
+          "root": "$CORPUS",
+          "limit": 200
+        }
+      }
+    ],
+    "final_answer": "$CORPUS/gamma/services/payments/retry-policy.yaml",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 0,
+    "session_seconds": 6.673999951000951,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        },
+        "ms": 1.152816999820061,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 5
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/retry-policy.yaml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's in the `gamma` project, under `services/payments`. A glob of the corpus directory and a search of the FerroSeek index both returned only this file.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 0,
+    "session_seconds": 6.123643177999838,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 1
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/retry-policy.yaml",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's in the `gamma` project, under `services/payments/`. I searched the whole `corpus` directory, which includes `alpha`, and this was the only match. I didn't search anywhere outside `corpus`.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 1,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 0,
+    "session_seconds": 9.981059935000303,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'retry-policy.yaml' -g '\"'!**/.git/**'\"' $FIXTURE\""
+        }
+      }
+    ],
+    "final_answer": "Found it in the `gamma` project:\n\n[services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 0,
+    "session_seconds": 10.080651702999603,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"pwd; rg --files --hidden -g retry-policy.yaml -g '\"'!node_modules'\"' -g '\"'!.git'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found it in the `gamma` project: [services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml).",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 1,
+    "session_seconds": 6.122985850999612,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 1
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/retry-policy.yaml",
+          "path": "$CORPUS"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's in the `gamma` project, under `services/payments/`. I searched everything under `$CORPUS`, including the `alpha` project you're in now, and this was the only match. I didn't search outside that directory.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 1,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 1,
+    "session_seconds": 6.825508456000534,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        },
+        "ms": 1.046358000166947,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 5
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/retry-policy.yaml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's in the `gamma` project, under `services/payments`. A filesystem glob and the FerroSeek index both found only this one copy.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 1,
+    "session_seconds": 9.478121209000165,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'retry-policy.yaml' -g '\"'!node_modules'\"' -g '\"'!.git'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found it in the **gamma** project:\n\n[services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 1,
+    "session_seconds": 8.376251759998922,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'retry-policy.yaml' -g '\"'! .git'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found it in the **gamma** project:\n\n[services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 2,
+    "session_seconds": 6.072715488999165,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        },
+        "ms": 1.0699520007619867,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 1
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's the only match in the index. It's in the `gamma` project under `services/payments`, not in your current `alpha` directory. The file is 12 bytes.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "claude",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 2,
+    "session_seconds": 6.823752426000283,
+    "initialized": false,
+    "tools_listed": true,
+    "selected": true,
+    "mcp_calls": [
+      {
+        "tool": "search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        },
+        "ms": 1.418163999915123,
+        "error": false
+      }
+    ],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": true,
+    "experiment": "exploratory",
+    "model": "claude-sonnet-5-5",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": true,
+    "agent_tools": [
+      {
+        "tool": "ToolSearch",
+        "arguments": {
+          "query": "select:mcp__ferroseek__search_files",
+          "max_results": 5
+        }
+      },
+      {
+        "tool": "Glob",
+        "arguments": {
+          "pattern": "**/retry-policy.yaml",
+          "path": "$CORPUS"
+        }
+      },
+      {
+        "tool": "mcp__ferroseek__search_files",
+        "arguments": {
+          "query": "retry-policy.yaml"
+        }
+      }
+    ],
+    "final_answer": "`retry-policy.yaml` is at:\n\n`$CORPUS/gamma/services/payments/retry-policy.yaml`\n\nIt's in the `gamma` project, under `services/payments`. A filesystem glob of the corpus and the file index both returned only this one match.",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 1,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "baseline",
+    "case": "unknown_location",
+    "repetition": 2,
+    "session_seconds": 8.52765553899917,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "70e92841a6879eca12a86de6cc6eb25dc4f37fe50d949e429094e54f5279822f",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'retry-policy.yaml' -g '\"'!node_modules'\"' -g '\"'!.git'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found it in project `gamma`:\n\n[services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml)",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  },
+  {
+    "client": "codex",
+    "variant": "improved",
+    "case": "unknown_location",
+    "repetition": 2,
+    "session_seconds": 11.93269755700021,
+    "initialized": true,
+    "tools_listed": true,
+    "selected": false,
+    "mcp_calls": [],
+    "expected": [
+      "gamma/services/payments/retry-policy.yaml"
+    ],
+    "server_discovered": false,
+    "experiment": "exploratory",
+    "model": "gpt-6-astra (configured; medium effort)",
+    "metadata_sha256": "24d3a6a4f6a17397896a3563b431e63251471f2dbc49d288653033c1a5ac1304",
+    "explicit_model_tool_retrieval": false,
+    "agent_tools": [
+      {
+        "tool": "command_execution",
+        "arguments": {
+          "command": "/usr/bin/bash -lc \"rg --files --hidden -g 'retry-policy.yaml' -g '\"'!**/.git/**'\"' $CORPUS\""
+        }
+      }
+    ],
+    "final_answer": "Found it in project `gamma`: [services/payments/retry-policy.yaml]($CORPUS/gamma/services/payments/retry-policy.yaml).",
+    "task_success": true,
+    "tool_choice_appropriate": true,
+    "redundant_lookup_calls": 0,
+    "unused_tool_retrieval_calls": 0,
+    "review_note": "Matches independently specified fixture paths; content case includes the correct source line."
+  }
+]

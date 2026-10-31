@@ -369,3 +369,9 @@ deliberately for correctness.
   returned.
 
 Mode benchmarks and reproduction commands: [access-mode validation](benchmarks/mcp-access-modes/README.md).
+
+## Automatic discovery by coding agents
+
+See [tool-discovery guidance and fresh-session evaluation](MCP_DISCOVERY.md)
+for metadata behavior, measured selection outcomes and optional user-level
+instructions. Registration does not guarantee that a model will invoke a tool.

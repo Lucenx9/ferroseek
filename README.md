@@ -256,3 +256,7 @@ No KDE source code is included. The KRunner integration implements the
 Broulik, Alexander Lohnau), and the default exclusion list was written
 independently. Baloo (LGPL-2.1-or-later) was studied as a reference; all
 findings are cited in `docs/RESEARCH.md`.
+
+MCP tool selection and optional agent guidance are documented in
+[the discovery evaluation](docs/MCP_DISCOVERY.md). No global agent instructions
+are installed automatically.

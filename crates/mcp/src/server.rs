@@ -165,23 +165,26 @@ pub struct StatusOutput {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchParams {
-    /// Words that must all appear in the file name (case-insensitive
-    /// substrings). A word containing '/' must appear in the full path.
-    /// Example: "invoice 2024" or "src/ main.rs".
+    /// Filename or partial path to find, not file contents. Space-separated
+    /// words are case-insensitive substrings that must all match: words with
+    /// '/' match the full path, other words match the name. No glob or regex
+    /// syntax. Examples: "invoice 2024", "src/ main.rs", "services/payments/".
     pub query: String,
-    /// Absolute directory to search in; must be an authorized directory
-    /// or inside one. Default: all authorized directories.
+    /// Optional absolute directory to narrow the search; omit for discovery
+    /// across all authorized indexed directories and repositories. Must be
+    /// authorized; cannot expand index coverage. No '.' or '..' components.
     #[serde(default)]
     pub root: Option<String>,
-    /// Maximum number of results (default 20, capped by the server).
+    /// Maximum results (default 20, server policy cap, hard maximum 200).
+    /// Refine the query or increase this if more_available is true.
     #[serde(default)]
     pub limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct InfoParams {
-    /// Absolute path of an indexed file or directory inside an authorized
-    /// directory.
+    /// Absolute authorized indexed path, typically returned by search_files.
+    /// Not a general filesystem stat: unknown or unauthorized paths are refused.
     pub path: String,
 }
 
@@ -567,9 +570,15 @@ impl FerroSeekMcp {
 impl FerroSeekMcp {
     /// Find files and directories by name in the user's FerroSeek index.
     #[tool(
-        description = "Search indexed file and directory names (case-insensitive substrings; all words must \
-                       match; a word containing '/' matches the path). Only directories the user authorized \
-                       are searched. Returns paths with kind, size and modification time; does not read files.",
+        description = "Find files and directories by filename or partial path, especially across multiple \
+                       repositories or when their location is unknown. Searches an existing local index \
+                       without walking each repository; only authorized indexed paths are visible. \
+                       No file-content search: use rg for text in source files. For new or unindexed files, \
+                       a complete live listing, or a simple known-directory lookup, fd, rg --files or direct \
+                       filesystem tools may be preferable. Missing results do not prove a file is absent: \
+                       indexing can lag and exclusions apply. Returns paths, kind, size and modification time; \
+                       deleted entries are filtered. Query words are literal case-insensitive substrings, \
+                       not glob/regex patterns; words containing '/' match paths. No status call is required first.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn search_files(&self, Parameters(p): Parameters<SearchParams>) -> Result<Json<SearchOutput>, String> {
@@ -578,8 +587,10 @@ impl FerroSeekMcp {
 
     /// Metadata of one indexed path.
     #[tool(
-        description = "Get kind, size and modification time of one indexed file or directory inside an \
-                       authorized directory, and whether the index is up to date for it. Does not read content.",
+        description = "Inspect metadata and freshness of a known authorized indexed path, typically from \
+                       search_files: kind, size, modification time, exists and up_to_date. Does not read \
+                       file contents or follow symlinks. Not a general filesystem stat: for a new or \
+                       unindexed path use direct filesystem tools within the user's permitted scope.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn get_file_info(&self, Parameters(p): Parameters<InfoParams>) -> Result<Json<FileInfoOutput>, String> {
@@ -588,8 +599,12 @@ impl FerroSeekMcp {
 
     /// Index availability and statistics.
     #[tool(
-        description = "Report whether the FerroSeek index is available, its size and last update, and which \
-                       directories this server may search.",
+        description = "Diagnose index availability and MCP authorization when a search fails or its scope \
+                       is unclear. Reports access mode, authorized boundaries and result cap; whole-index \
+                       totals, size and last write time appear only if enabled by policy. Authorization \
+                       is not indexed coverage: an allowed boundary need not itself be indexed. Does not \
+                       enumerate all indexed roots or guarantee freshness/completeness. Optional, not a \
+                       prerequisite for search_files.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn index_status(&self) -> Result<Json<StatusOutput>, String> {
@@ -600,8 +615,11 @@ impl FerroSeekMcp {
 #[tool_handler(
     router = self.tool_router,
     name = "ferroseek",
-    instructions = "Read-only file-name search over the user's local FerroSeek index. Use search_files to \
-                    locate files by name or path fragments, get_file_info for metadata of a known path and \
-                    index_status to see which directories are authorized. File contents are not available."
+    instructions = "Find files by name or partial path across indexed directories and repositories with \
+                    search_files, without walking each repository. Authorized indexed paths only; no \
+                    file-content search. Use rg for text; fd, rg --files or direct filesystem tools for \
+                    new/unindexed files or complete live listings. Empty results do not prove absence. \
+                    get_file_info checks known indexed paths; index_status diagnoses availability and \
+                    authorization, not full coverage. Read-only, local stdio."
 )]
 impl ServerHandler for FerroSeekMcp {}

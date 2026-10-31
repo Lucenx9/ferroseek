@@ -1,0 +1,582 @@
+{
+  "baseline": [
+    "Read-only file-name search over the user's local FerroSeek index. Use search_files to locate files by name or path fragments, get_file_info for metadata of a known path and index_status to see which directories are authorized. File contents are not available.",
+    [
+      {
+        "name": "get_file_info",
+        "description": "Get kind, size and modification time of one indexed file or directory inside an authorized directory, and whether the index is up to date for it. Does not read content.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "path": {
+              "description": "Absolute path of an indexed file or directory inside an authorized\ndirectory.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "exists": {
+              "description": "The path still exists on disk.",
+              "type": "boolean"
+            },
+            "kind": {
+              "description": "`file`, `directory`, `symlink` or `other`.",
+              "type": "string"
+            },
+            "modified": {
+              "description": "Last modification time, UTC, RFC 3339.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "non_utf8": {
+              "description": "The real path contains bytes that are not UTF-8; `path` is lossy.\nOmitted when false (`default` keeps it optional in the schema).",
+              "type": "boolean"
+            },
+            "path": {
+              "description": "Absolute path. Non-UTF-8 bytes are replaced (see `non_utf8`).",
+              "type": "string"
+            },
+            "size": {
+              "description": "Size in bytes (files and symlinks only).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "up_to_date": {
+              "description": "The index metadata matches the file on disk (false while a change\nis still being indexed, or if the file is gone).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "exists",
+            "up_to_date"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "index_status",
+        "description": "Report whether the FerroSeek index is available, its size and last update, and which directories this server may search.",
+        "inputSchema": {
+          "properties": {},
+          "type": "object"
+        },
+        "outputSchema": {
+          "$defs": {
+            "AllowedDir": {
+              "properties": {
+                "indexed": {
+                  "description": "The directory is present in the FerroSeek index.",
+                  "type": "boolean"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "indexed"
+              ],
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "access_mode": {
+              "type": "string"
+            },
+            "allowed_dirs": {
+              "description": "Directories this MCP server may expose.",
+              "items": {
+                "$ref": "#/$defs/AllowedDir"
+              },
+              "type": "array"
+            },
+            "available": {
+              "description": "The index database can be opened and queried.",
+              "type": "boolean"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "index_size_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "indexed_directories": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "indexed_files": {
+              "description": "Totals for the whole index, including unauthorized directories.\nOnly reported when `expose_index_totals = true` in mcp.toml.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "last_write": {
+              "description": "When the index was last written (UTC, RFC 3339); opt-in with totals.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_results": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "access_mode",
+            "available",
+            "allowed_dirs",
+            "max_results"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "search_files",
+        "description": "Search indexed file and directory names (case-insensitive substrings; all words must match; a word containing '/' matches the path). Only directories the user authorized are searched. Returns paths with kind, size and modification time; does not read files.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "limit": {
+              "default": null,
+              "description": "Maximum number of results (default 20, capped by the server).",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "description": "Words that must all appear in the file name (case-insensitive\nsubstrings). A word containing '/' must appear in the full path.\nExample: \"invoice 2024\" or \"src/ main.rs\".",
+              "type": "string"
+            },
+            "root": {
+              "default": null,
+              "description": "Absolute directory to search in; must be an authorized directory\nor inside one. Default: all authorized directories.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "outputSchema": {
+          "$defs": {
+            "Entry": {
+              "description": "One file or directory, as returned to agents.",
+              "properties": {
+                "kind": {
+                  "description": "`file`, `directory`, `symlink` or `other`.",
+                  "type": "string"
+                },
+                "modified": {
+                  "description": "Last modification time, UTC, RFC 3339.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "non_utf8": {
+                  "description": "The real path contains bytes that are not UTF-8; `path` is lossy.\nOmitted when false (`default` keeps it optional in the schema).",
+                  "type": "boolean"
+                },
+                "path": {
+                  "description": "Absolute path. Non-UTF-8 bytes are replaced (see `non_utf8`).",
+                  "type": "string"
+                },
+                "size": {
+                  "description": "Size in bytes (files and symlinks only).",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "kind"
+              ],
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "incomplete_due_to_changes": {
+              "description": "Concurrent filesystem changes exhausted bounded retry work; refine or retry.",
+              "type": "boolean"
+            },
+            "more_available": {
+              "description": "More matches exist than were returned (raise `limit` or refine).",
+              "type": "boolean"
+            },
+            "omitted_stale": {
+              "description": "Lower bound on stale indexed matches observed and discarded.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "results": {
+              "description": "Best matches first.",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              },
+              "type": "array"
+            },
+            "truncated_by_size": {
+              "description": "Results were cut to keep the response small.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "results",
+            "more_available",
+            "truncated_by_size",
+            "omitted_stale",
+            "incomplete_due_to_changes"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      }
+    ]
+  ],
+  "improved": [
+    "Find files by name or partial path across indexed directories and repositories with search_files, without walking each repository. Authorized indexed paths only; no file-content search. Use rg for text; fd, rg --files or direct filesystem tools for new/unindexed files or complete live listings. Empty results do not prove absence. get_file_info checks known indexed paths; index_status diagnoses availability and authorization, not full coverage. Read-only, local stdio.",
+    [
+      {
+        "name": "get_file_info",
+        "description": "Inspect metadata and freshness of a known authorized indexed path, typically from search_files: kind, size, modification time, exists and up_to_date. Does not read file contents or follow symlinks. Not a general filesystem stat: for a new or unindexed path use direct filesystem tools within the user's permitted scope.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "path": {
+              "description": "Absolute authorized indexed path, typically returned by search_files.\nNot a general filesystem stat: unknown or unauthorized paths are refused.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "exists": {
+              "description": "The path still exists on disk.",
+              "type": "boolean"
+            },
+            "kind": {
+              "description": "`file`, `directory`, `symlink` or `other`.",
+              "type": "string"
+            },
+            "modified": {
+              "description": "Last modification time, UTC, RFC 3339.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "non_utf8": {
+              "description": "The real path contains bytes that are not UTF-8; `path` is lossy.\nOmitted when false (`default` keeps it optional in the schema).",
+              "type": "boolean"
+            },
+            "path": {
+              "description": "Absolute path. Non-UTF-8 bytes are replaced (see `non_utf8`).",
+              "type": "string"
+            },
+            "size": {
+              "description": "Size in bytes (files and symlinks only).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "up_to_date": {
+              "description": "The index metadata matches the file on disk (false while a change\nis still being indexed, or if the file is gone).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "path",
+            "kind",
+            "exists",
+            "up_to_date"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "index_status",
+        "description": "Diagnose index availability and MCP authorization when a search fails or its scope is unclear. Reports access mode, authorized boundaries and result cap; whole-index totals, size and last write time appear only if enabled by policy. Authorization is not indexed coverage: an allowed boundary need not itself be indexed. Does not enumerate all indexed roots or guarantee freshness/completeness. Optional, not a prerequisite for search_files.",
+        "inputSchema": {
+          "properties": {},
+          "type": "object"
+        },
+        "outputSchema": {
+          "$defs": {
+            "AllowedDir": {
+              "properties": {
+                "indexed": {
+                  "description": "The directory is present in the FerroSeek index.",
+                  "type": "boolean"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "indexed"
+              ],
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "access_mode": {
+              "type": "string"
+            },
+            "allowed_dirs": {
+              "description": "Directories this MCP server may expose.",
+              "items": {
+                "$ref": "#/$defs/AllowedDir"
+              },
+              "type": "array"
+            },
+            "available": {
+              "description": "The index database can be opened and queried.",
+              "type": "boolean"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "index_size_bytes": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "indexed_directories": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "indexed_files": {
+              "description": "Totals for the whole index, including unauthorized directories.\nOnly reported when `expose_index_totals = true` in mcp.toml.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "last_write": {
+              "description": "When the index was last written (UTC, RFC 3339); opt-in with totals.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_results": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "access_mode",
+            "available",
+            "allowed_dirs",
+            "max_results"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "search_files",
+        "description": "Find files and directories by filename or partial path, especially across multiple repositories or when their location is unknown. Searches an existing local index without walking each repository; only authorized indexed paths are visible. No file-content search: use rg for text in source files. For new or unindexed files, a complete live listing, or a simple known-directory lookup, fd, rg --files or direct filesystem tools may be preferable. Missing results do not prove a file is absent: indexing can lag and exclusions apply. Returns paths, kind, size and modification time; deleted entries are filtered. Query words are literal case-insensitive substrings, not glob/regex patterns; words containing '/' match paths. No status call is required first.",
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "limit": {
+              "default": null,
+              "description": "Maximum results (default 20, server policy cap, hard maximum 200).\nRefine the query or increase this if more_available is true.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "description": "Filename or partial path to find, not file contents. Space-separated\nwords are case-insensitive substrings that must all match: words with\n'/' match the full path, other words match the name. No glob or regex\nsyntax. Examples: \"invoice 2024\", \"src/ main.rs\", \"services/payments/\".",
+              "type": "string"
+            },
+            "root": {
+              "default": null,
+              "description": "Optional absolute directory to narrow the search; omit for discovery\nacross all authorized indexed directories and repositories. Must be\nauthorized; cannot expand index coverage. No '.' or '..' components.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "outputSchema": {
+          "$defs": {
+            "Entry": {
+              "description": "One file or directory, as returned to agents.",
+              "properties": {
+                "kind": {
+                  "description": "`file`, `directory`, `symlink` or `other`.",
+                  "type": "string"
+                },
+                "modified": {
+                  "description": "Last modification time, UTC, RFC 3339.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "non_utf8": {
+                  "description": "The real path contains bytes that are not UTF-8; `path` is lossy.\nOmitted when false (`default` keeps it optional in the schema).",
+                  "type": "boolean"
+                },
+                "path": {
+                  "description": "Absolute path. Non-UTF-8 bytes are replaced (see `non_utf8`).",
+                  "type": "string"
+                },
+                "size": {
+                  "description": "Size in bytes (files and symlinks only).",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "kind"
+              ],
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "incomplete_due_to_changes": {
+              "description": "Concurrent filesystem changes exhausted bounded retry work; refine or retry.",
+              "type": "boolean"
+            },
+            "more_available": {
+              "description": "More matches exist than were returned (raise `limit` or refine).",
+              "type": "boolean"
+            },
+            "omitted_stale": {
+              "description": "Lower bound on stale indexed matches observed and discarded.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "results": {
+              "description": "Best matches first.",
+              "items": {
+                "$ref": "#/$defs/Entry"
+              },
+              "type": "array"
+            },
+            "truncated_by_size": {
+              "description": "Results were cut to keep the response small.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "results",
+            "more_available",
+            "truncated_by_size",
+            "omitted_stale",
+            "incomplete_due_to_changes"
+          ],
+          "type": "object"
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "openWorldHint": false
+        }
+      }
+    ]
+  ]
+}

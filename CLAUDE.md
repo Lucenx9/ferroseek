@@ -201,3 +201,14 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   name rules. Hidden filtering and no-symlink metadata traversal remain active.
 - Installer global registration requires typing all_indexed, then client-edit
   consent. Never change the live daemon or existing agent modes during tests.
+
+## MCP discovery evaluation
+
+- Metadata guidance fits within 512 initialization characters; keep the server
+  name and tool names stable. Search descriptions must distinguish filename/path
+  search from contents and authorization from indexed coverage.
+- docs/MCP_DISCOVERY.md records actual fresh-session outcomes, including failures.
+  Metadata alone did not improve primary spontaneous selection; do not claim it did.
+- scripts/benchmark-mcp-discovery.py makes real authenticated model requests only
+  when requested. Profiles/indexes are temporary; raw logs belong in bench-out.
+  tests/mcp-discovery-smoke.py is the offline, credential-free CI counterpart.

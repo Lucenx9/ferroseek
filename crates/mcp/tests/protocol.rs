@@ -17,6 +17,7 @@ struct Mcp {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
+    initialization: Value,
 }
 
 impl Mcp {
@@ -33,13 +34,14 @@ impl Mcp {
             .unwrap();
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut m = Mcp { child, stdin, stdout, next: 1 };
+        let mut m = Mcp { child, stdin, stdout, next: 1, initialization: Value::Null };
         let init = m.request(
             "initialize",
             json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}}),
         );
         assert_eq!(init["result"]["serverInfo"]["name"], "ferroseek", "{init}");
         assert!(init["result"]["capabilities"]["tools"].is_object());
+        m.initialization = init["result"].clone();
         m.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
         m
     }
@@ -167,6 +169,34 @@ fn tools_are_listed_read_only_with_output_schemas() {
         assert!(t["outputSchema"].is_object(), "{t}");
         assert!(t["inputSchema"].is_object(), "{t}");
     }
+}
+
+#[test]
+fn discovery_metadata_explains_scope_fallbacks_and_query_syntax() {
+    let fx = fixture();
+    let mut m = fx.mcp(&[]);
+    let instructions = m.initialization["instructions"].as_str().unwrap();
+    assert!(instructions.chars().count() <= 512, "critical guidance must fit the first 512 characters");
+    for concept in ["repositories", "Authorized indexed", "no file-content", "new/unindexed", "Empty results"] {
+        assert!(instructions.contains(concept), "missing initialization guidance: {concept}");
+    }
+    let r = m.request("tools/list", json!({}));
+    let tools = r["result"]["tools"].as_array().unwrap();
+    let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
+    let search = tool("search_files");
+    let description = search["description"].as_str().unwrap();
+    for concept in
+        ["filename", "partial path", "repositories", "No file-content", "fd", "rg --files", "indexing can lag"]
+    {
+        assert!(description.contains(concept), "missing tool guidance: {concept}");
+    }
+    let params = &search["inputSchema"]["properties"];
+    assert!(params["query"]["description"].as_str().unwrap().contains("No glob or regex"));
+    assert!(params["root"]["description"].as_str().unwrap().contains("omit"));
+    assert!(tool("get_file_info")["description"].as_str().unwrap().contains("Not a general filesystem stat"));
+    let status = tool("index_status")["description"].as_str().unwrap();
+    assert!(status.contains("only if enabled by policy"));
+    assert!(status.contains("not indexed coverage"));
 }
 
 #[test]
