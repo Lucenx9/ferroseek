@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ferroseek_index::{Hit, Kind, Meta, Query, Reader, SearchOptions};
+use ferroseek_index::{Hit, Kind, Meta, PathFilter, Query, Reader, SearchOptions};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
@@ -257,55 +257,85 @@ fn validate_query(q: &str) -> Result<&str, String> {
 
 // ------------------------------------------------------------ core logic (sync)
 
-/// Candidate cap per scope when hidden/denied/stale entries crowd out
-/// visible ones. Beyond it, `more_available` is reported as false.
+/// Candidate cap per scope when *stale* entries (deleted or changed on disk
+/// since indexing) crowd out live ones. Policy filtering happens inside the
+/// index budget and never consumes it.
 pub const MAX_CANDIDATES: usize = 8192;
 
 /// Searches every scope, keeps only policy-visible entries that still
 /// exist, and bounds the response by count and bytes.
 ///
-/// Filtering happens *before* anything is counted: `more_available` is true
-/// only if an extra authorized, existing result was found, so hidden or
-/// denied matches cannot be detected through it. If filtered candidates
-/// crowd the first fetch, the fetch grows (up to [`MAX_CANDIDATES`]).
+/// The access policy and the scope check run *inside* the index search
+/// (`SearchOptions::accept`), before its candidate budget: hidden, denied or
+/// out-of-scope entries can neither be observed (`more_available` counts
+/// only authorized, existing results) nor crowd out visible ones. Only
+/// stale entries, discovered on disk afterwards, can need a larger fetch.
 pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<SearchOutput, String> {
     let q = validate_query(&p.query)?;
     let scopes = policy.scopes(p.root.as_deref()).map_err(|e| e.to_string())?;
     let limit =
         p.limit.map(|l| l as usize).unwrap_or(DEFAULT_LIMIT.min(policy.max_results)).clamp(1, policy.max_results);
     let query = Query::parse(q);
-    let mut fetch = limit * 2 + 16;
-    let (visible, stale) = loop {
-        let mut hits: Vec<Hit> = Vec::new();
-        let mut saturated = false;
-        index.with(|r| {
-            // A scope that contains every index root needs no `within` filter
-            // (which would seed a subtree walk); the checks below keep results
-            // inside the scope. Several such scopes share one query.
-            let roots = r.roots()?;
-            let covers_all = |s: &PathBuf| !roots.is_empty() && roots.iter().all(|root| root.starts_with(s));
-            let (unscoped, scoped): (Vec<&PathBuf>, Vec<&PathBuf>) = scopes.iter().partition(|s| covers_all(s));
-            let mut run = |within: Option<PathBuf>| -> ferroseek_index::Result<()> {
-                let opts = SearchOptions { limit: fetch, within, kind: None, include_hidden: true };
-                let found = r.search(&query, &opts)?;
-                saturated |= found.len() >= fetch;
-                hits.extend(found);
-                Ok(())
-            };
-            if !unscoped.is_empty() {
-                run(None)?;
+    let accept = {
+        // `path` is visible and in scope iff its parent admits children (is
+        // an allowed dir or visible, and is a scope or inside one) and its
+        // own name passes. The parent verdict is memoized: candidates share
+        // a few thousand directories at most, and re-checking every ancestor
+        // per candidate dominated latency (1M: p50 7.0 ms → see BENCHMARKS).
+        let (policy, scopes) = (policy.clone(), scopes.clone());
+        let memo: Mutex<std::collections::HashMap<PathBuf, bool>> = Mutex::new(Default::default());
+        PathFilter(Arc::new(move |path: &Path| {
+            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { return false };
+            if !policy.name_ok(name) {
+                return false;
             }
-            for s in scoped {
-                run(Some(s.clone()))?;
+            let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(v) = memo.get(parent) {
+                return *v;
+            }
+            let v = policy.dir_admits(parent) && scopes.iter().any(|s| parent.starts_with(s));
+            memo.insert(parent.to_path_buf(), v);
+            v
+        }))
+    };
+    let mut fetch = limit + 1;
+    // Per scope (None = one unscoped query): last results and whether the
+    // index returned a full page (more may exist).
+    let mut pages: Vec<(Option<PathBuf>, Vec<Hit>, bool)> = Vec::new();
+    let (visible, stale) = loop {
+        index.with(|r| {
+            if pages.is_empty() {
+                // A scope that contains every index root needs no `within`
+                // (which would seed a subtree walk); `accept` keeps results in
+                // scope. Several such scopes share one query.
+                let roots = r.roots()?;
+                let covers_all = |s: &PathBuf| !roots.is_empty() && roots.iter().all(|root| root.starts_with(s));
+                if scopes.iter().any(covers_all) {
+                    pages.push((None, Vec::new(), true));
+                }
+                pages.extend(scopes.iter().filter(|s| !covers_all(s)).map(|s| (Some(s.clone()), Vec::new(), true)));
+            }
+            for (within, hits, more) in pages.iter_mut().filter(|p| p.2) {
+                let opts = SearchOptions {
+                    limit: fetch,
+                    within: within.clone(),
+                    kind: None,
+                    include_hidden: true,
+                    accept: Some(accept.clone()),
+                };
+                *hits = r.search(&query, &opts)?;
+                *more = hits.len() >= fetch;
             }
             Ok(())
         })?;
+        let mut hits: Vec<&Hit> = pages.iter().flat_map(|p| p.1.iter()).collect();
         hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
         hits.dedup_by_key(|h| h.id);
 
         let mut visible: Vec<(PathBuf, Meta)> = Vec::new();
         let mut stale = 0u32;
         for h in hits {
+            // Defence in depth: `accept` already enforced both checks.
             let Some(base) = policy.visible_under(&h.path) else { continue };
             if !scopes.iter().any(|s| h.path.starts_with(s) && h.path != *s) {
                 continue;
@@ -321,11 +351,12 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
                 }
                 Err(_) => Meta { kind: h.kind, size: h.size, mtime_ns: h.mtime_ns, ino: 0 },
             };
-            visible.push((h.path, meta));
+            visible.push((h.path.clone(), meta));
             if visible.len() > limit {
                 break;
             }
         }
+        let saturated = pages.iter().any(|p| p.2);
         if visible.len() > limit || !saturated || fetch >= MAX_CANDIDATES {
             break (visible, stale);
         }

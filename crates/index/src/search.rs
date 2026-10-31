@@ -54,6 +54,16 @@ impl Query {
     }
 }
 
+/// A caller-supplied predicate on full paths (e.g. an access policy).
+#[derive(Clone)]
+pub struct PathFilter(pub std::sync::Arc<dyn Fn(&std::path::Path) -> bool + Send + Sync>);
+
+impl std::fmt::Debug for PathFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PathFilter(..)")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SearchOptions {
     pub limit: usize,
@@ -63,11 +73,16 @@ pub struct SearchOptions {
     pub kind: Option<Kind>,
     /// Include dotfiles and entries below dot-directories.
     pub include_hidden: bool,
+    /// Only return paths this predicate accepts. It runs where `within` and
+    /// the hidden filter run, *before* candidate budgets, so rejected
+    /// entries never use up the budget. `None` (the default) changes
+    /// nothing.
+    pub accept: Option<PathFilter>,
 }
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions { limit: 20, within: None, kind: None, include_hidden: true }
+        SearchOptions { limit: 20, within: None, kind: None, include_hidden: true, accept: None }
     }
 }
 
@@ -182,7 +197,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                     continue;
                 }
                 let Some(parent) = c.parent else { continue };
-                if !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden {
+                if !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden || opts.accept.is_some() {
                     let Some(dir) = candidate_paths.dir(parent)? else { continue };
                     let path = PathBuf::from(OsStr::from_bytes(&dir.path)).join(OsStr::from_bytes(&c.name));
                     if !path_matches(&path, dir.hidden || c.name.first() == Some(&b'.'), q, opts) {
@@ -286,11 +301,17 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
 
     // Stage 2 needs paths. Filters that depend on the path must see every
     // candidate; otherwise only the head of the name ranking matters.
-    let path_filtered = !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden;
-    if !path_filtered {
+    let path_filtered =
+        !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden || opts.accept.is_some();
+    // `accept` alone already ran on every candidate before its budget (see
+    // add_rows), so the head of the name ranking is as safe to keep as for
+    // an unfiltered search. The other filters keep their existing behaviour.
+    let accept_only = opts.accept.is_some() && q.path_tokens.is_empty() && opts.within.is_none() && opts.include_hidden;
+    if !path_filtered || accept_only {
         ranked.truncate((opts.limit.saturating_mul(3)).max(60));
     }
-    let mut paths = PathCache::new(conn);
+    // Reuse the directory paths resolved while collecting candidates.
+    let mut paths = candidate_paths;
     let now_ns =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
@@ -398,6 +419,9 @@ fn path_matches(path: &std::path::Path, hidden: bool, q: &Query, opts: &SearchOp
         return false;
     }
     if hidden && !opts.include_hidden {
+        return false;
+    }
+    if opts.accept.as_ref().is_some_and(|f| !(f.0)(path)) {
         return false;
     }
     if !q.path_tokens.is_empty() {

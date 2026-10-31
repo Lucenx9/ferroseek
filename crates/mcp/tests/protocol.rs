@@ -584,3 +584,23 @@ fn filtered_candidates_do_not_starve_visible_results() {
     assert!(p[0].ends_with("the-needle-in-a-haystack-notes.txt"), "{p:?}");
     assert_eq!(v["more_available"], false);
 }
+
+#[test]
+fn more_denied_candidates_than_any_cap_still_cannot_starve_or_hide() {
+    // Re-check finding: 8200 denied, higher-ranked matches exceeded the old
+    // MCP-side candidate cap. With the policy inside the index budget they
+    // cost nothing.
+    let mut names: Vec<String> = (0..8200).map(|i| format!("keys/k{:02}/n{i:04}/needle.pem", i % 50)).collect();
+    names.push("docs/the-needle-in-a-haystack-notes.txt".into());
+    names.push("docs/needle".into());
+    let (t, root, db) = many_files_fixture(&names);
+    let mut m = Mcp::spawn(&["--index", db.to_str().unwrap(), "--allow", root.to_str().unwrap()], t.path());
+    let (_, v) = m.call("search_files", json!({"query": "needle", "limit": 1}));
+    let p = Mcp::paths(&v);
+    assert_eq!(p.len(), 1, "{v}");
+    assert!(p[0].ends_with("docs/needle"), "exact name first: {p:?}");
+    assert_eq!(v["more_available"], true, "the other authorized match exists: {v}");
+    let (_, v) = m.call("search_files", json!({"query": "needle", "limit": 5}));
+    assert_eq!(Mcp::paths(&v).len(), 2, "{v}");
+    assert_eq!(v["more_available"], false);
+}

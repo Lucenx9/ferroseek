@@ -19,7 +19,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 pub use schema::{OpenOutcome, SCHEMA_VERSION};
-pub use search::{Hit, Query, SearchOptions};
+pub use search::{Hit, PathFilter, Query, SearchOptions};
 pub use tree::{Change, Child, Txn};
 
 /// Row id of an entry. Stable across renames of the entry or its ancestors.

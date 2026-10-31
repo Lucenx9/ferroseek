@@ -538,22 +538,39 @@ Raw reports and hashes are in
 
 | metric | 100k | 1M |
 |---|---|---|
-| startup: spawn → `initialize` reply | 1.1 ms | 1.2 ms |
-| `search_files` limit 20, p50 / p95 / p99 / max | 1.08 / 4.12 / 4.67 / 9.47 ms | 3.22 / 6.18 / 11.01 / 65.64 ms |
-| `search_files` with `root` = subdirectory, p50 / p99 | 3.92 / 13.04 ms | 10.75 / 38.56 ms |
-| `get_file_info` p50 / p99 | 0.10 / 0.17 ms | 0.09 / 0.18 ms |
-| `index_status` p50 (default: no whole-index totals) | 0.07 ms | 0.06 ms |
-| `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.7 KiB |
-| RSS after `initialize` (anonymous) | 5.2 MiB (0.4) | 5.1 MiB (0.4) |
-| RSS / VmHWM after 650 requests | 13.3 / 13.4 MiB | 15.5 / 15.5 MiB |
-| idle RSS 12 s later (anonymous) | 10.1 MiB (3.5) | 10.6 MiB (4.0) |
+| startup: spawn → `initialize` reply | 1.2 ms | 1.2 ms |
+| `search_files` limit 20, p50 / p95 / p99 / max | 1.31 / 9.02 / 10.04 / 10.78 ms | 5.69 / 13.91 / 18.87 / 70.85 ms |
+| `search_files` with `root` = subdirectory, p50 / p99 | 4.09 / 16.02 ms | 9.91 / 40.84 ms |
+| `get_file_info` p50 / p99 | 0.09 / 0.14 ms | 0.09 / 0.14 ms |
+| `index_status` p50 (default: no whole-index totals) | 0.06 ms | 0.07 ms |
+| `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.6 KiB |
+| RSS after `initialize` (anonymous) | 5.0 MiB (0.4) | 5.1 MiB (0.4) |
+| RSS / VmHWM after 650 requests | 13.5 / 13.5 MiB | 14.3 / 15.3 MiB |
+| idle RSS 12 s later (anonymous) | 9.8 MiB (3.2) | 10.3 MiB (3.6) |
 | idle CPU, context switches (30 s) | 0.000 %, 0.00/s | 0.000 %, 0.00/s |
 
-These numbers come from the build that includes the review fixes. The
-race-safe `openat` metadata walk and the growing candidate fetch cost about
-0.3 ms at the 1M median (2.89 → 3.22 ms), and the result count is
-unchanged (5309). `index_status` went from 135 ms to 0.06 ms because the
-whole-index totals are now opt-in.
+These are final numbers, after both review rounds. Every measured build
+returned the same results (5309 for 330 queries at 1M). The 1M median of
+`search_files` evolved as follows:
+
+| build | p50 | change |
+|---|---|---|
+| first version | 12.66 ms | `within` always set |
+| unscoped fast path | 2.89 ms | |
+| race-safe `openat` metadata walk | 3.22 ms | |
+| policy inside the index budget, first cut | 7.04 ms | |
+| memoized parent verdicts + pre-classified deny patterns | 6.37 ms | |
+| stage 2 reuses the candidate stage's directory cache + head truncation for `accept`-only searches | 5.69 ms | |
+
+The starvation fix inherently resolves every candidate's parent directory;
+that is the remaining cost compared with 3.22 ms. `index_status` went from
+135 ms to 0.07 ms because whole-index totals are now opt-in.
+
+The stage-2 cache reuse also runs for the daemon's own searches. The
+daemon benchmark on a fresh 100k corpus showed no regression: KRunner
+`Match` p50 0.66 / p99 3.36 ms against 0.77 / 3.30 ms in the §8 run, with
+relevance at 100 %. The raw report is `daemon-regression-check-100k.md` in
+the evidence directory.
 
 Two changes during development were measured on the same 1M index with the
 same query set:

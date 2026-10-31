@@ -180,6 +180,7 @@ fn main() -> ExitCode {
                     None
                 },
                 include_hidden: !no_hidden,
+                accept: None,
             };
             let hits = match reader.search(&Query::parse(&query.join(" ")), &opts) {
                 Ok(h) => h,

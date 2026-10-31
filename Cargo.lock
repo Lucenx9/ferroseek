@@ -320,6 +320,7 @@ dependencies = [
  "ferroseek-engine",
  "ferroseek-index",
  "libc",
+ "proptest",
  "rmcp",
  "schemars",
  "serde",

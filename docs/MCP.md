@@ -72,10 +72,13 @@ previous one, then `fstatat(AT_SYMLINK_NOFOLLOW)`
 after indexing, the entry counts as stale; the metadata of whatever the
 symlink points to is never reported.
 
-`more_available` is computed only from authorized, existing results, so
-filtered matches cannot be detected through it. When hidden, denied or
-stale candidates crowd out the first fetch, the server fetches more
-candidates (up to 8192 per scope) instead of returning too little.
+The access policy runs *inside* the index search, through the optional
+`SearchOptions::accept` predicate. It is applied where the index applies
+its own `within`/hidden filters, before its candidate budget. Hidden,
+denied or out-of-scope entries therefore never use up that budget, however
+many there are, and `more_available` reflects only authorized, existing
+results. Only stale entries (changed on disk after indexing) can call for a
+larger fetch, up to 8192 candidates per scope.
 
 `index_status` never reports the database path. Whole-index totals, size and
 last write time describe unauthorized directories too, so they appear only
@@ -190,12 +193,13 @@ every client.
 
 ## Verification performed (2026-10-31)
 
-- **Unit tests** (`crates/mcp/src/policy.rs`, 6): path canonicality,
+- **Unit tests** (`crates/mcp/src/policy.rs`, 8): path canonicality,
   component-wise containment, hidden/deny rules below the allowed
-  directory, config parsing, scopes, non-UTF-8 names.
+  directory, config parsing, scopes, non-UTF-8 names, and a property test
+  that the compiled deny patterns match exactly like the glob matcher.
 - **Unit tests** for the race-safe metadata walk (`crates/mcp/src/beneath.rs`,
   2).
-- **Protocol tests** (`crates/mcp/tests/protocol.rs`, 17). They run the
+- **Protocol tests** (`crates/mcp/tests/protocol.rs`, 18). They run the
   real binary over stdio against indexes built by the real engine:
   - tool listing with schemas and annotations
   - allowlist confinement, traversal refusal without echoing the path
@@ -226,7 +230,7 @@ with regression tests:
 | severity | finding | fix and test |
 |---|---|---|
 | high | `lstat` followed a symlinked *ancestor*: after indexing `allowed/sub/record.txt`, replacing `sub` with a symlink exposed the metadata of an unauthorized file | `stat_beneath` openat walk; `symlinked_ancestor_never_reveals_outside_metadata`, `beneath::tests` |
-| medium | `more_available` was computed before filtering (an oracle for hidden or denied names), and filtered candidates could starve visible ones | filter before counting, growing fetch; `more_available_is_not_an_oracle…`, `filtered_candidates_do_not_starve…` |
+| medium | `more_available` was computed before filtering (an oracle for hidden or denied names), and filtered candidates could starve visible ones | policy runs inside the index budget (`SearchOptions::accept`); `more_available_is_not_an_oracle…`, `filtered_candidates_do_not_starve…`, `more_denied_candidates_than_any_cap…` |
 | medium | `index_status` and errors exposed the database path and whole-index statistics | generic errors, path never reported, totals opt-in; updated status and missing-index tests |
 | medium | the deny list was case-sensitive (`CREDENTIALS/`, `server.PEM`) | ASCII case-insensitive matching; policy unit tests |
 
@@ -234,6 +238,22 @@ The reviewer also confirmed the following as correct: the `rmcp` 3.8 API
 usage and output schemas, the stdio-only and read-only design, containment
 and traversal handling, the unscoped fast path, and the byte and count
 bounds.
+
+**Re-check of the fixes (same model, a new session).**
+- Findings 1, 3 and 4 were confirmed **closed**.
+- Against the original commit, five of the new regression tests failed as
+  expected.
+- 10,000 stat calls showed no file-descriptor growth.
+- Finding 2 was only **partly** closed by the first fix, an MCP-side
+  candidate cap. 8200 denied, higher-ranked matches still starved a
+  visible result and produced a false `more_available: false`. It is now
+  fixed at the root by moving the policy into the index budget, and that
+  exact scenario is a test.
+
+The index-side change is opt-in (`accept: None` everywhere else). The
+daemon's own benchmark showed no regression for KRunner `Match` at 100k
+(p50 0.66 / p99 3.36 ms against 0.77 / 3.30 ms before), with relevance
+still at 100 %.
 
 ## Performance
 
@@ -244,17 +264,22 @@ indexes. Details, commands and raw reports are in
 | at 1M entries | |
 |---|---|
 | startup to `initialize` reply | 1.1 ms |
-| `search_files`, limit 20: p50 / p95 / p99 | 3.22 / 6.18 / 11.01 ms |
+| `search_files`, limit 20: p50 / p95 / p99 | 5.69 / 13.91 / 18.87 ms |
 | `get_file_info` p50 | 0.09 ms |
-| `index_status` p50 (default, no totals) | 0.06 ms |
+| `index_status` p50 (default, no totals) | 0.07 ms |
 | RSS after startup | 5.1 MiB (0.4 MiB anonymous) |
-| idle RSS after a 650-request workload | 10.6 MiB (4.0 MiB anonymous) |
+| idle RSS after a 650-request workload | 10.3 MiB (3.6 MiB anonymous) |
+
+Enforcing the policy inside the index budget costs about 2.5 ms at the 1M
+median compared with the earlier, starvation-prone version (3.22 ms).
+Every candidate's parent directory has to be resolved. This was traded
+deliberately for correctness.
 | idle CPU / wakeups | 0.000 % / 0 per s |
 
 ## Limitations
 
-- **`root` filters on a subdirectory are slower** (1M: p50 10.8 ms, p99
-  39 ms). They use the index's subtree scope. Allowed directories that
+- **`root` filters on a subdirectory are slower** (1M: p50 9.9 ms, p99
+  41 ms). They use the index's subtree scope. Allowed directories that
   contain every index root take a faster unscoped path.
 - **With `expose_index_totals`, `index_status` counts the whole index**
   (about 135 ms at 1M), and the totals include unauthorized directories.

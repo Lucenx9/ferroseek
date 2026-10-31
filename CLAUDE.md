@@ -137,14 +137,17 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 ## MCP checkpoint (2026-10-31)
 
 - `ferroseek-mcp` must stay read-only, stdio-only and opt-in. It must never
-  start an indexer, write the index or add a schema change. Its only index
-  API addition is `Reader::roots()`.
+  start an indexer, write the index or add a schema change. Its index API
+  additions are `Reader::roots()` and `SearchOptions::accept`. The latter
+  must stay `None` for daemon, KRunner and CLI searches; `accept`-only
+  searches may truncate stage 2 like unfiltered ones.
 - Every path leaving the process passes `Policy::visible_under` *and* lies
   inside the requested scope. Client paths are validated, not normalized;
   never echo refused paths in errors.
 - Disk metadata only via `beneath::stat_beneath` (no symlink traversal
   below the allowed dir); never `symlink_metadata` on client-visible paths.
-  Count `more_available` only after filtering. Never return the DB path or
+  Enforce the policy via `accept` (inside the index budget), never only
+  after the search. Never return the DB path or
   whole-index stats unless `expose_index_totals`. Deny matching is ASCII
   case-insensitive. (All from the GPT 6 Astra review, docs/MCP.md.)
 - Structured outputs must satisfy their `outputSchema`: Claude Code

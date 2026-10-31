@@ -83,7 +83,7 @@ pub struct FileConfig {
 #[derive(Clone, Debug)]
 pub struct Policy {
     allow: Vec<PathBuf>,
-    deny: Vec<Vec<u8>>,
+    deny: Vec<Pattern>,
     allow_hidden: bool,
     pub max_results: usize,
     pub expose_index_totals: bool,
@@ -164,6 +164,7 @@ impl Policy {
             deny.extend(DEFAULT_DENY.iter().map(|d| d.as_bytes().to_ascii_lowercase()));
         }
         deny.extend(cfg.deny.iter().map(|d| d.as_bytes().to_ascii_lowercase()));
+        let deny = deny.into_iter().map(Pattern::compile).collect();
         let max_results = cfg.max_results.unwrap_or(50).clamp(1, HARD_MAX_RESULTS);
         Ok(Policy {
             allow,
@@ -195,13 +196,25 @@ impl Policy {
         Some(base)
     }
 
-    fn component_ok(&self, name: &OsStr) -> bool {
+    /// Whether one path component (below an allowed directory) may be shown.
+    pub fn name_ok(&self, name: &OsStr) -> bool {
         let b = name.as_bytes();
         if !self.allow_hidden && b.first() == Some(&b'.') {
             return false;
         }
         let lower = b.to_ascii_lowercase();
-        !self.deny.iter().any(|d| glob_match(d, &lower))
+        !self.deny.iter().any(|d| d.matches(&lower))
+    }
+
+    fn component_ok(&self, name: &OsStr) -> bool {
+        self.name_ok(name)
+    }
+
+    /// Whether children of directory `dir` can be visible, i.e. `dir` is an
+    /// allowed directory or itself visible. Lets callers check a path as
+    /// `dir_admits(parent) && name_ok(name)`, memoizing per directory.
+    pub fn dir_admits(&self, dir: &Path) -> bool {
+        self.allow.iter().any(|a| a == dir) || self.visible_under(dir).is_some()
     }
 
     /// Search scopes for an optional client `root` filter: the root itself
@@ -221,6 +234,44 @@ impl Policy {
                     Err(Denied::NotAllowed)
                 }
             }
+        }
+    }
+}
+
+/// A lowercased deny pattern, pre-classified so the common shapes (exact,
+/// `x*`, `*x`, `*x*`) avoid the general wildcard matcher. Semantics are
+/// identical to `glob_match` on the lowercased name.
+#[derive(Clone, Debug)]
+enum Pattern {
+    Exact(Vec<u8>),
+    Prefix(Vec<u8>),
+    Suffix(Vec<u8>),
+    Contains(Vec<u8>),
+    Glob(Vec<u8>),
+}
+
+impl Pattern {
+    fn compile(p: Vec<u8>) -> Pattern {
+        let wild = |b: &u8| *b == b'*' || *b == b'?';
+        let inner = |s: &[u8]| !s.is_empty() && !s.iter().any(wild);
+        match (p.first(), p.last()) {
+            _ if !p.iter().any(wild) => Pattern::Exact(p),
+            (Some(b'*'), Some(b'*')) if p.len() >= 2 && inner(&p[1..p.len() - 1]) => {
+                Pattern::Contains(p[1..p.len() - 1].to_vec())
+            }
+            (_, Some(b'*')) if inner(&p[..p.len() - 1]) => Pattern::Prefix(p[..p.len() - 1].to_vec()),
+            (Some(b'*'), _) if inner(&p[1..]) => Pattern::Suffix(p[1..].to_vec()),
+            _ => Pattern::Glob(p),
+        }
+    }
+
+    fn matches(&self, name: &[u8]) -> bool {
+        match self {
+            Pattern::Exact(x) => name == x.as_slice(),
+            Pattern::Prefix(x) => name.starts_with(x),
+            Pattern::Suffix(x) => name.ends_with(x),
+            Pattern::Contains(x) => name.windows(x.len()).any(|w| w == x.as_slice()),
+            Pattern::Glob(g) => glob_match(g, name),
         }
     }
 }
@@ -307,6 +358,27 @@ mod tests {
         assert_eq!(p.scopes(Some("/srv/a/../c")), Err(Denied::Malformed));
         assert_eq!(p.scopes(Some("/srv/a/.ssh")), Err(Denied::NotAllowed));
         assert_eq!(policy(&[]).scopes(None), Err(Denied::NoAllowedDirs));
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn compiled_patterns_match_like_glob(
+            pat in "[a-c.*?]{0,6}",
+            name in proptest::collection::vec(proptest::sample::select(b"abc.xyz".to_vec()), 0..10),
+        ) {
+            let p = pat.as_bytes().to_vec();
+            proptest::prop_assert_eq!(Pattern::compile(p.clone()).matches(&name), glob_match(&p, &name));
+        }
+    }
+
+    #[test]
+    fn dir_admits_and_name_ok_compose_to_visible_under() {
+        let p = policy(&["/srv/a"]);
+        for path in ["/srv/a/x", "/srv/a/.h/x", "/srv/a/k.pem", "/srv/a/d/e/f.txt", "/srv/a/secrets/x", "/srv/b/x"] {
+            let path = Path::new(path);
+            let composed = p.dir_admits(path.parent().unwrap()) && p.name_ok(path.file_name().unwrap());
+            assert_eq!(composed, p.visible_under(path).is_some(), "{}", path.display());
+        }
     }
 
     #[test]

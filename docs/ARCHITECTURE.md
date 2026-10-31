@@ -230,10 +230,16 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   a child process of the agent and exits on EOF, so it costs nothing when
   no agent runs it.
 - **Read-only.** It reuses `ferroseek_index::Reader` against the daemon's
-  database. Its only addition to the index crate is `Reader::roots()`, a
-  cheap read of the root rows. It caches one connection, keyed by the
+  database. It adds two opt-in items to the index crate:
+  - `Reader::roots()`, a cheap read of the root rows.
+  - `SearchOptions::accept`, a path predicate applied with the index's own
+    filters, before candidate budgets. `None` everywhere else; the index
+    schema is unchanged. It caches one connection, keyed by the
   database's device and inode, and drops it plus trims the heap 5 s after
   the last request.
+- **Policy inside the budget.** The MCP passes its access policy as
+  `accept`, memoized per parent directory, so denied entries can neither
+  starve results nor be inferred. This came from an independent review.
 - **Policy before output.** Only explicitly allowed directories are visible;
   being indexed is not enough. Hidden components and deny patterns below
   the allowed directory are filtered. Client paths must be canonical
