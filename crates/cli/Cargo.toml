@@ -1,5 +1,20 @@
 [package]
 name = "ferroseek-cli"
+description = "FerroSeek command-line interface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ferroseek"
+path = "src/main.rs"
+
+[dependencies]
+ferroseek-index.workspace = true
+ferroseek-engine.workspace = true
+zbus.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

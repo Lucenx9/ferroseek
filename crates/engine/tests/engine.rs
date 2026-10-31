@@ -69,7 +69,7 @@ fn live_updates_pause_resume_restart() {
 
     // Single writer per index.
     assert!(matches!(Engine::start(&cfg, &paths), Err(EngineError::Busy)));
-    assert!(matches!(index_once(&cfg, &paths, false), Err(EngineError::Busy)));
+    assert!(matches!(index_once(&cfg, &paths, false, false), Err(EngineError::Busy)));
 
     e.shutdown();
     // Changes while stopped are picked up by the startup reconcile.
@@ -150,7 +150,7 @@ fn damaged_index_is_recovered_on_start() {
 fn index_once_without_daemon() {
     let (_t, root, paths, cfg) = setup();
     write(&root.join("x/once.txt"));
-    let s = index_once(&cfg, &paths, false).unwrap();
+    let s = index_once(&cfg, &paths, false, false).unwrap();
     assert_eq!(s.files, 1);
     assert_eq!(hits(&paths, "once"), 1);
     use std::os::unix::fs::PermissionsExt;

@@ -112,12 +112,17 @@ fn refresh_counts(ix: &Indexer, status: &Status) {
 
 /// Indexes the configured roots once, without watching, then returns. For
 /// `ferroseek index` when no daemon is running.
-pub fn index_once(cfg: &Config, paths: &Paths, full: bool) -> Result<Snapshot, EngineError> {
+/// With `rebuild`, the index is emptied first.
+pub fn index_once(cfg: &Config, paths: &Paths, full: bool, rebuild: bool) -> Result<Snapshot, EngineError> {
     let _lock = acquire(paths)?;
     let status = Arc::new(Status::default());
     let mut ix = Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), None, status.clone());
     status.set_state(State::Scanning);
-    ix.sync_roots(if full { Mode::Full } else { Mode::Quick })?;
+    if rebuild {
+        ix.rebuild()?;
+    } else {
+        ix.sync_roots(if full { Mode::Full } else { Mode::Quick })?;
+    }
     ix.scan_to_completion()?;
     status.last_pass_end.store(now_unix(), Relaxed);
     refresh_counts(&ix, &status);
