@@ -1,5 +1,20 @@
 /target
 **/target
+*.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.sqlite-journal
+*.db
+*.db-wal
+*.db-shm
 /bench-out
+
+# Local credentials and runtime artifacts must never be published.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.log
+__pycache__/
+*.py[cod]

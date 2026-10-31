@@ -112,3 +112,23 @@ remaining gates are testing additional distro/Plasma/libc combinations and
 packaging/release delivery; arbitrary HOME-path support is still restricted.
 Broad/short-path fallback costs and mixed-query tail latency are outstanding
 performance work, not hidden by the selective-query improvements.
+
+## Publication audit
+
+Before the initial GitHub push, Gitleaks 8.30.1 scanned the complete `main`
+history and an exported tracked tree with no findings. A separate scan of
+all 207 historical file blobs checked credential patterns, personal local
+paths, email addresses and binary artifacts. The only home paths found were
+synthetic `/home/u` test fixtures. Commit attribution uses GitHub noreply
+addresses. No user index, credential file, desktop screenshot or private
+filesystem listing is tracked; benchmark evidence contains generated-workload
+measurements and aggregate public `/usr/include` results.
+
+The GPL-3.0-or-later manifest declaration, LICENSE, README, repository layout
+and CI were reviewed. Ignore rules now also cover local environment files,
+private-key files, SQLite databases, logs and Python caches. Formatting,
+Clippy, all 72 Rust tests, release builds, installer/benchmark safety tests
+and the private-bus smoke test passed again before publication. These scans
+found no sensitive content; they are not a guarantee against every possible
+secret format. Only `main` and its unchanged ancestors are intended for the
+push; local orchestration/checkpoint refs are excluded. No release is created.
