@@ -59,8 +59,10 @@ not restart KRunner, change KDE configuration or alter Baloo.
 
 ## Optional agent registration
 
-Installing MCP by itself does not grant agents access to any directory or edit their
-configuration. To register it explicitly:
+Installing MCP does not edit agent configuration or connect the server automatically.
+When launched without a policy, the MCP executable now authorizes already-indexed
+paths by default; review existing manual client registrations during upgrades.
+To register it explicitly:
 
 ```sh
 ./scripts/install.sh --mcp --register-claude --allow "$HOME/Projects/example"
@@ -79,17 +81,19 @@ For cross-project discovery, the recommended setup is:
 
 You must type `all_indexed` to confirm the authorization and then `yes` for
 client configuration edits. Redirected input/EOF never enables it implicitly.
-The default mode remains `restricted`; `--mcp-access home` uses indexed HOME
+New agent registrations default to `all_indexed` with typed confirmation;
+`--allow DIR` without an explicit mode and existing policy files without
+`access_mode` preserve the previous restricted behavior. `--mcp-access home` uses indexed HOME
 paths without listing directories. `--allow` is for restricted setup only.
-Interactive setup explains the global recommendation but an empty mode answer
-selects restricted. The engine configuration and running daemon are untouched.
+Interactive setup explains the global recommendation and pressing Enter
+selects `all_indexed`, followed by a mandatory typed confirmation. The engine configuration and running daemon are untouched.
 Global authorization includes any future roots that you separately add to the
 index; it does not itself add roots. Existing different agent entries are still
 refused rather than silently upgraded to broader access.
 
 Each proposed edit displays the file and complete server command and asks you
-to type `yes`. Declining/EOF leaves that agent untouched. No whole-home default
-is selected. Interactive installation can offer detected clients and ask for
+to type `yes`. Declining/EOF leaves that agent untouched. No filesystem roots are added
+by selecting global authorization. Interactive installation can offer detected clients and ask for
 a directory in restricted mode. `--dry-run` previews the registration without asking or writing.
 
 Registration creates only the `ferroseek` stdio entry in the user's Claude Code

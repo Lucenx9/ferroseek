@@ -18,10 +18,10 @@ ferroseek-mcp — read-only MCP server (stdio) for the FerroSeek file index
 
 USAGE: ferroseek-mcp [--access-mode MODE] [--allow DIR]... [--config FILE] [--index FILE]
 
-Only indexed paths can be returned. Authorization defaults to restricted;
+Only indexed paths can be returned. New unconfigured servers default to all_indexed;
 dotfiles and secret-looking names (keys, .env, .ssh, ...) stay hidden.
 
-  --access-mode MODE  all_indexed, home, or restricted (default)
+  --access-mode MODE  all_indexed (default), home, or restricted
   --allow DIR    authorize DIR (repeatable; adds to `allow` in the config)
   --config FILE  policy file (default: $XDG_CONFIG_HOME/ferroseek/mcp.toml)
   --index FILE   index database (default: $XDG_DATA_HOME/ferroseek/index.sqlite)
@@ -84,7 +84,11 @@ fn main() -> ExitCode {
             }
         },
         // A missing default file is fine; an explicitly named one is not.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound && config.is_none() => policy::FileConfig::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && config.is_none() => policy::FileConfig {
+            // Only an unconfigured legacy --allow command implies restricted.
+            access_mode: if allow.is_empty() { policy::AccessMode::AllIndexed } else { policy::AccessMode::Restricted },
+            ..Default::default()
+        },
         Err(e) => {
             eprintln!("ferroseek-mcp: cannot read {}: {e}", config_path.display());
             return ExitCode::from(2);

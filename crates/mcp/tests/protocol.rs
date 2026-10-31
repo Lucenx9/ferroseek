@@ -130,7 +130,7 @@ fn touch(p: &Path, content: &[u8]) {
 
 /// root/work (to be allowed) and root/private (indexed, never allowed).
 fn fixture() -> Fx {
-    let t = tempfile::tempdir().unwrap();
+    let t = tempfile::Builder::new().prefix("ferroseek-mcp-").tempdir().unwrap();
     let root = t.path().join("home");
     touch(&root.join("work/reports/quarterly-report.pdf"), b"pdf");
     touch(&root.join("work/reports/annual report 2024.odt"), b"odt");
@@ -375,15 +375,82 @@ fn invalid_queries_and_unknown_tools_fail_gracefully() {
 }
 
 #[test]
-fn no_allowlist_means_no_access() {
+fn unconfigured_default_is_global_but_explicit_restricted_remains_empty() {
     let fx = fixture();
-    let mut m = Mcp::spawn(&["--index", fx.db.to_str().unwrap()], fx.t.path());
-    let (err, msg) = m.call("search_files", json!({"query": "report"}));
+    let mut global = Mcp::spawn(&["--index", fx.db.to_str().unwrap()], fx.t.path());
+    let (err, status) = global.call("index_status", json!({}));
+    assert!(!err);
+    assert_eq!(status["access_mode"], "all_indexed");
+    let (err, reports) = global.call("search_files", json!({"query": "report"}));
+    assert!(!err, "{reports}");
+    let paths = Mcp::paths(&reports);
+    assert_eq!(paths.len(), 4, "{paths:?}");
+    assert!(paths.contains(&fx.root.join("private/tax-report.pdf").display().to_string()));
+    assert!(!paths.iter().any(|p| p.contains("/.") || p.ends_with(".pem")), "{paths:?}");
+
+    let mut restricted = Mcp::spawn(&["--index", fx.db.to_str().unwrap(), "--access-mode", "restricted"], fx.t.path());
+    let (err, msg) = restricted.call("search_files", json!({"query": "report"}));
     assert!(err && msg.as_str().unwrap().contains("--allow"), "{msg}");
-    let (err, _) = m.call("get_file_info", json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}));
+    let (err, _) =
+        restricted.call("get_file_info", json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}));
     assert!(err);
-    let (_, v) = m.call("index_status", json!({}));
-    assert!(v["allowed_dirs"].as_array().unwrap().is_empty());
+    let (_, status) = restricted.call("index_status", json!({}));
+    assert_eq!(status["access_mode"], "restricted");
+    assert!(status["allowed_dirs"].as_array().unwrap().is_empty());
+
+    // Old user registrations containing --allow and no explicit mode
+    // keep their former restricted boundaries after upgrading the binary.
+    let mut legacy = fx.mcp(&[]);
+    let (_, legacy_status) = legacy.call("index_status", json!({}));
+    assert_eq!(legacy_status["access_mode"], "restricted");
+    let (_, v) = legacy.call("search_files", json!({"query": "tax-report"}));
+    assert!(Mcp::paths(&v).is_empty());
+
+    // A pre-existing policy file with no explicit mode must also remain
+    // restricted, even when it contains options other than allowlists.
+    let old_config = fx.t.path().join("old-mcp.toml");
+    for source in ["", "allow = []", "deny_defaults = false\n"] {
+        fs::write(&old_config, source).unwrap();
+        let mut old =
+            Mcp::spawn(&["--index", fx.db.to_str().unwrap(), "--config", old_config.to_str().unwrap()], fx.t.path());
+        let (_, status) = old.call("index_status", json!({}));
+        assert_eq!(status["access_mode"], "restricted", "{source}");
+        assert!(status["allowed_dirs"].as_array().unwrap().is_empty(), "{status}");
+    }
+}
+
+#[test]
+fn explicit_modes_override_legacy_allowlist_inference() {
+    let fx = fixture();
+    let home = fx.root.join("work");
+    let outside = fx.root.join("private");
+    let config = fx.t.path().join("mcp.toml");
+    for mode in ["home", "all_indexed", "restricted"] {
+        fs::write(&config, format!("access_mode = '{mode}'\n")).unwrap();
+        let args = [
+            "--index",
+            fx.db.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+            "--allow",
+            outside.to_str().unwrap(),
+        ];
+        let mut m = Mcp::spawn(&args, &home);
+        let (_, status) = m.call("index_status", json!({}));
+        assert_eq!(status["access_mode"], mode, "{status}");
+        let (err, results) = m.call("search_files", json!({"query": "tax-report"}));
+        assert!(!err, "{results}");
+        assert_eq!(Mcp::paths(&results).is_empty(), mode == "home", "{mode}: {results}");
+
+        let mut override_args = args.to_vec();
+        override_args.extend(["--access-mode", "home"]);
+        let mut overridden = Mcp::spawn(&override_args, &home);
+        let (_, status) = overridden.call("index_status", json!({}));
+        assert_eq!(status["access_mode"], "home");
+        let (err, results) = overridden.call("search_files", json!({"query": "tax-report"}));
+        assert!(!err, "{results}");
+        assert!(Mcp::paths(&results).is_empty(), "{results}");
+    }
 }
 
 #[test]

@@ -76,7 +76,10 @@ Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. R
 
 The separate `ferroseek-mcp` program uses local stdio, reads the existing index and exits when its client disconnects. It exposes three read-only tools: `search_files`, `get_file_info`, and `index_status`. No second indexer is started.
 
-Installing MCP does **not** grant file access or register an agent without consent:
+Installing MCP does **not** register an agent or change its configuration.
+However, an unconfigured MCP executable now defaults to `all_indexed` when
+started, so review existing manual registrations without an access mode during
+an upgrade:
 
 ```sh
 # Authorize one project for Claude Code
@@ -86,7 +89,7 @@ Installing MCP does **not** grant file access or register an agent without conse
 ./scripts/install.sh --mcp --register-codex --mcp-access all_indexed
 ```
 
-Access modes are `restricted` (**default, no access without allowlists**), `home` and `all_indexed`. Global registration requires typed confirmation. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
+Access modes are `all_indexed` (**new default**), `home`, and `restricted` (explicit allowlists). Guided global registration requires typed confirmation. Legacy `--allow` registrations and old TOML policy files without an explicit mode remain restricted; a previously unconfigured MCP server will gain indexed-path access after upgrading. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
 
 Read the [MCP guide](docs/MCP.md) for configuration and security.
 
