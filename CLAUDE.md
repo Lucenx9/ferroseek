@@ -23,7 +23,8 @@ evidence are in `docs/ARCHITECTURE.md`, measurements in
   `policy.rs` (allowlist/deny/path validation, pure) and `server.rs` (tools,
   reader cache, idle release). See `docs/MCP.md`.
 - `data/`: KRunner `.desktop` file, D-Bus `.service` file, systemd unit
-  templates (`@BINDIR@`). `scripts/`: install and uninstall.
+  templates. `scripts/installer.py`: component planning and registration;
+  `install_transaction.py`: ownership-safe durable rollback; `package.py`: local archives.
 - `prototype/backend-bench`: the throwaway backend comparison. Not in the
   workspace; keep it as evidence.
 
@@ -45,10 +46,9 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
     re-exec themselves).
   - CLI tests set `DBUS_SESSION_BUS_ADDRESS` to a dead socket.
 - **Never modify KDE or Baloo configuration, and never run `balooctl`
-  commands that change state.** Live desktop tests install with
-  `scripts/install.sh --config <tmp config>` and are undone with
-  `scripts/uninstall.sh` without purging user data. Route all live-test data
-  into a private temporary directory and remove only test-created artifacts.
+  commands that change state.** Installer tests use temporary HOME and all
+  XDG/agent roots, stubbed manager commands and private D-Bus activation.
+  Never run installation against the real desktop or interrupt its soak test.
 - **Index changes are state-based.** Event handlers record `(dir_id, name)`
   as dirty, and `resolve()` `lstat`s the current path. Never apply event
   deltas blindly. Never delete on `ENOENT` unless the parent still has its
@@ -173,3 +173,19 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   The scoped early-stop experiment was rejected (no demonstrated gain).
   Never run maintenance harnesses on a desktop data directory; they use
   disposable corpora and a private D-Bus session.
+
+## Modular installer checkpoint
+
+- Installer needs Python 3.11+; shell entrypoints only dispatch. No engine,
+  schema, KRunner protocol or MCP server changes are needed for packaging.
+- Default is interactive; explicit component flags are scriptable. Core is
+  required by integrations; additions preserve previously installed components.
+- Never restart on upgrade. --enable and uninstall --stop are explicit actions.
+  Agent edits require a displayed plan, explicit roots and a separate yes.
+- Ownership is hash-based. Never adopt conflicting legacy/modified files by
+  name alone. Journal recovery refuses externally changed destinations.
+- D-Bus argv has two escaping layers; systemd Exec uses env to handle special
+  executable paths and ':' to disable dollar expansion. Keep real private-bus
+  activation and systemd-analyze checks in tests/install-smoke.py.
+- tests/package-smoke.py checks every component archive without Cargo/network.
+  No release is published; signed artifacts/libc baseline remain future work.

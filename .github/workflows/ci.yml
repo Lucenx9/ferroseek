@@ -24,6 +24,7 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --release --locked --workspace
       - run: python3 tests/install-smoke.py
+      - run: python3 tests/package-smoke.py
       - run: python3 tests/benchmark-smoke.py
       - run: python3 tests/verify-index-smoke.py
       - name: MCP stdio smoke test

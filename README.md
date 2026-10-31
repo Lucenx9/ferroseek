@@ -56,35 +56,52 @@ You need Rust 1.89 or newer. SQLite is compiled in (bundled), so there are
 no system library requirements beyond libc.
 
 ```sh
-cargo build --release
+cargo build --release --locked -p ferroseek-daemon -p ferroseek-cli
 ```
 
-This builds `target/release/ferroseekd` (the daemon) and
-`target/release/ferroseek` (the CLI).
+This builds the core daemon and CLI. `cargo build --release --workspace` also
+builds the optional MCP executable and benchmark tool.
 
 ## Install (per user, no root)
 
+Python 3.11+ is required for installation. From a source checkout:
+
 ```sh
-scripts/install.sh            # build + install to ~/.local
-scripts/install.sh --enable   # …and start indexing now via systemd --user
-kquitapp6 krunner             # make KRunner pick up the new runner
+./scripts/install.sh                # detect environment and recommend components
+./scripts/install.sh --core         # daemon + CLI, including headless Linux
+./scripts/install.sh --krunner      # core + KDE Plasma integration
+./scripts/install.sh --mcp          # core + optional MCP executable
+./scripts/install.sh --full         # all components compatible with this desktop
+./scripts/install.sh --dry-run      # preview; no writes or builds
 ```
 
-It installs:
+Flags combine: `--krunner --mcp`. KRunner is recommended only on KDE;
+GNOME/Hyprland users get core, CLI and optional MCP, without a graphical
+integration claim. Binaries install under `$HOME/.local/bin`; absolute XDG
+data/config locations are honored. No sudo or AUR package is needed.
 
-| file | purpose |
-|---|---|
-| `~/.local/bin/ferroseekd`, `~/.local/bin/ferroseek` | binaries |
-| `~/.local/share/krunner/dbusplugins/ferroseek.desktop` | KRunner D-Bus runner registration |
-| `~/.local/share/dbus-1/services/io.github.ferroseek.FerroSeek.service` | D-Bus activation: KRunner starts the daemon on first use |
-| `~/.config/systemd/user/ferroseek.service` | systemd user unit (`Type=dbus`, `background.slice`, resource limits) |
+Installation preserves configuration/indexes, refuses unrelated-file conflicts,
+and journals file changes for rollback. It never automatically restarts an
+active daemon, KRunner, or changes KDE/Baloo settings. Choose roots with
+`ferroseek config` before starting if you do not want the engine's default
+home-directory indexing. `--enable` explicitly opts into starting the user
+service; KRunner can otherwise activate it on demand.
 
-The installer also asks your session bus to reload its service files, which
-dbus-broker needs before a new service can be activated. It never touches
-system files, Baloo, or KDE configuration.
+MCP registration is separate and asks for confirmation:
 
-To uninstall, run `scripts/uninstall.sh`. Add `--purge` to also delete
-FerroSeek's index and config.
+```sh
+./scripts/install.sh --mcp --register-claude --allow "$HOME/Projects/example"
+./scripts/install.sh --mcp --register-codex --allow "$HOME/Projects/example"
+```
+
+No directory is authorized automatically. Agent configuration and MCP policy
+are otherwise left alone. To uninstall, use `./scripts/uninstall.sh`; active
+services require explicit `--stop`. Config, indexes and agent entries are
+retained. Partial removal supports `--mcp` and `--krunner`.
+
+See the [installation guide](docs/INSTALLATION.md) for migration of legacy
+installations, special paths, rollback, registration, archive verification and
+remaining packaging work. No binary release is published yet.
 
 ## Usage
 

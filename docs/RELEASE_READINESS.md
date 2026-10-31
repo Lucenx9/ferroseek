@@ -146,3 +146,21 @@ and machines, long-run MCP workloads and completion of the separate desktop
 soak. Broad scoped-query tails and approximate large-result ranking remain
 known performance/behavior limitations. No release is published by this
 milestone; the existing desktop installation and soak timer remain unchanged.
+
+
+## Modular installation milestone
+
+The newer installer supersedes the earlier HOME-character restriction and
+implicit service restarts described above. It supports core/KRunner/MCP/full
+selection, headless CLI installs, explicit agent registration, manifest-based
+ownership and durable file rollback. Temporary-HOME tests include actual
+private D-Bus activation from paths with Unicode, spaces and special characters.
+All four local native archive variants have integrity and install/remove tests.
+See [installation](INSTALLATION.md) for exact behavior and limitations.
+
+Publication blockers for prebuilt binaries remain a signed/provenance release
+workflow, a chosen libc baseline and a tested Linux distribution/architecture
+matrix. Existing unmanaged installations with differing files require manual
+migration; modified managed files are deliberately not overwritten. File
+rollback cannot roll back external systemd state or synchronize agent clients'
+concurrent config edits. No release is created by this milestone.

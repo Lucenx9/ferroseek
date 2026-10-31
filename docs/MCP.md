@@ -147,19 +147,20 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
 
 ## Installation
 
-Build it (or use the workspace release build) and install it next to the
-other binaries:
+Install the optional executable and its core dependencies:
 
 ```sh
-cargo build --release -p ferroseek-mcp
-install -Dm755 target/release/ferroseek-mcp ~/.local/bin/ferroseek-mcp
+./scripts/install.sh --mcp
+# Optional registration; prompts before changing the named client's config:
+./scripts/install.sh --mcp --register-claude --allow "$HOME/Projects/example"
+./scripts/install.sh --mcp --register-codex --allow "$HOME/Projects/example"
 ```
 
-To uninstall, run `rm ~/.local/bin/ferroseek-mcp`, remove the client
-registration below, and optionally delete `~/.config/ferroseek/mcp.toml`.
-`scripts/install.sh` and `scripts/uninstall.sh` do not install or remove the
-MCP server; it is opt-in. The daemon must be running, or `ferroseek index`
-must have been run, for there to be an index to query.
+Use `./scripts/uninstall.sh --mcp` to remove only the executable. Agent
+registrations and policy are retained; remove them separately if desired.
+The daemon must be running, or `ferroseek index` must have been run, for there
+to be an index to query. See [installation and safety](INSTALLATION.md).
+The manual client configuration options below remain supported.
 
 ### Claude Code
 
