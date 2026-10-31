@@ -183,6 +183,21 @@ impl<'c> Txn<'c> {
         Ok(())
     }
 
+    /// Invalidates listings below a moved directory, including its own.
+    /// Unvisited listings must remain invalid across an interrupted scan.
+    pub fn invalidate_subtree_listings(&mut self, id: Id) -> Result<()> {
+        self.ops += self
+            .tx
+            .prepare_cached(
+                "WITH RECURSIVE dirs(id) AS (
+                 SELECT id FROM entries WHERE id=?1 AND kind=1 UNION ALL
+                 SELECT e.id FROM entries e INDEXED BY entries_parent_name JOIN dirs ON e.parent=dirs.id WHERE e.kind=1)
+             UPDATE entries SET mtime=0 WHERE id IN (SELECT id FROM dirs)",
+            )?
+            .execute([id])?;
+        Ok(())
+    }
+
     /// Ids of `id` and all directories below it (for dropping watches).
     pub fn subtree_dirs(&self, id: Id) -> Result<Vec<Id>> {
         let mut st = self.tx.prepare_cached(

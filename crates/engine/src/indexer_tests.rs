@@ -195,6 +195,88 @@ fn atomic_save_replaces_file() {
 }
 
 #[test]
+fn rename_rechecks_descendant_path_exclusions() {
+    for restart in [false, true] {
+        let mut f = fx();
+        let mut cfg = Config::default();
+        cfg.exclude_paths.push(f.p("destination/nested/private").to_string_lossy().into_owned());
+        f.ix.st.rules = Rules::new(&cfg, &[]);
+        touch(&f.p("source/nested/private/report.txt"));
+        touch(&f.p("source/nested/public/notes.txt"));
+        f.scan(Mode::Quick);
+        assert!(f.indexed("source/nested/private/report.txt"));
+
+        fs::rename(f.p("source"), f.p("destination")).unwrap();
+        if restart {
+            assert!(f.ix.pump_events().unwrap() > 0);
+            assert!(f.ix.has_work());
+            f.ix.into_writer().close().unwrap();
+            f.ix = make_ix(&f.db, &f.root, &cfg, true);
+            f.scan(Mode::Quick);
+        }
+        f.settle();
+        assert!(!f.indexed("destination/nested/private"));
+        assert!(f.find("report").is_empty());
+        assert!(f.indexed("destination/nested/public/notes.txt"));
+
+        fs::rename(f.p("destination"), f.p("source")).unwrap();
+        f.settle();
+        assert!(f.indexed("source/nested/private/report.txt"));
+    }
+}
+
+#[test]
+fn rename_rechecks_depth_limit_and_drops_watches() {
+    let mut f = fx_with(Config { max_depth: 1, ..Config::default() });
+    touch(&f.p("source/report.txt"));
+    touch(&f.p("source/nested/deeper.txt"));
+    fs::create_dir(f.p("destination")).unwrap();
+    f.scan(Mode::Quick);
+    assert!(f.indexed("source/report.txt"));
+    assert!(!f.indexed("source/nested/deeper.txt"));
+
+    fs::rename(f.p("source"), f.p("destination/source")).unwrap();
+    f.settle();
+    assert!(f.indexed("destination/source"));
+    assert!(f.find("report").is_empty());
+    assert!(!f.indexed("destination/source/nested"));
+    assert_eq!(f.ix.watched_dirs(), 2, "only root and destination remain watched");
+    touch(&f.p("destination/source/later.txt"));
+    f.settle();
+    assert!(!f.indexed("destination/source/later.txt"));
+
+    fs::rename(f.p("destination/source"), f.p("source")).unwrap();
+    f.settle();
+    assert!(f.indexed("source/report.txt"));
+    assert!(f.indexed("source/later.txt"));
+    assert!(!f.indexed("source/nested/deeper.txt"));
+    assert_eq!(f.ix.watched_dirs(), 3);
+}
+
+#[test]
+fn rename_drops_descendant_watches_beyond_depth_limit() {
+    let mut f = fx_with(Config { max_depth: 2, ..Config::default() });
+    touch(&f.p("source/nested/report.txt"));
+    fs::create_dir(f.p("destination")).unwrap();
+    f.scan(Mode::Quick);
+    assert!(f.indexed("source/nested/report.txt"));
+
+    fs::rename(f.p("source"), f.p("destination/source")).unwrap();
+    f.settle();
+    assert!(f.indexed("destination/source/nested"));
+    assert!(f.find("report").is_empty());
+    assert_eq!(f.ix.watched_dirs(), 3, "only root, destination and source remain watched");
+
+    touch(&f.p("destination/source/nested/later.txt"));
+    f.settle();
+    assert!(!f.indexed("destination/source/nested/later.txt"));
+    fs::rename(f.p("destination/source"), f.p("source")).unwrap();
+    f.settle();
+    assert!(f.indexed("source/nested/report.txt"));
+    assert!(f.indexed("source/nested/later.txt"));
+}
+
+#[test]
 fn move_out_of_and_into_the_tree() {
     let mut f = fx();
     let outside = f._t.path().join("outside");

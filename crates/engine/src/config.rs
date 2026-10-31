@@ -270,6 +270,10 @@ pub struct Rules {
 }
 
 impl Rules {
+    pub(crate) fn has_exclusions_below(&self, dir: &Path) -> bool {
+        self.paths.iter().any(|p| p.starts_with(dir))
+    }
+
     /// `extra_paths` are always excluded too (FerroSeek's own data dir).
     pub fn new(cfg: &Config, extra_paths: &[PathBuf]) -> Rules {
         let (globs, exact): (Vec<_>, Vec<_>) = cfg
