@@ -1,8 +1,14 @@
 # FerroSeek: notes for agents
 
-A Rust filename search daemon with a KRunner D-Bus runner. Design and
-evidence are in `docs/ARCHITECTURE.md`, measurements in
-`docs/BENCHMARKS.md`, Baloo/KRunner source analysis in `docs/RESEARCH.md`.
+FerroSeek is a desktop-independent Rust filename/path search engine for
+Linux. The core CLI, optional KDE KRunner D-Bus adapter and optional MCP
+stdio server share one index. Design is in `docs/ARCHITECTURE.md`, measured
+results in `docs/BENCHMARKS.md`, installation in `docs/INSTALLATION.md`,
+and historical Baloo/KRunner research in `docs/RESEARCH.md`.
+
+Documentation should lead with FerroSeek's own capabilities, clearly
+distinguish implemented adapters from future ones, and keep performance
+claims tied to their measured workloads. Do not imply Baloo feature parity.
 
 ## Map
 
