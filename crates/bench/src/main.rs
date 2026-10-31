@@ -338,6 +338,8 @@ fn main() {
     let work = PathBuf::from(get("--work").expect("--work DIR"));
     let bin = PathBuf::from(get("--bin-dir").unwrap_or_else(|| "target/release".into()));
     let seed: u64 = get("--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
+    let only_initial = args.iter().any(|a| a == "--only-initial");
+    let reuse = args.iter().any(|a| a == "--reuse-corpus");
     let bin = fs::canonicalize(&bin).expect("bin dir");
 
     if std::env::var_os("FERROSEEK_BENCH_ISOLATED").is_none() {
@@ -351,7 +353,9 @@ fn main() {
         std::process::exit(st.code().unwrap_or(1));
     }
 
-    let _ = fs::remove_dir_all(&work);
+    if !reuse {
+        let _ = fs::remove_dir_all(&work);
+    }
     fs::create_dir_all(&work).unwrap();
     let work = fs::canonicalize(&work).unwrap();
     let corpus_dir = work.join("corpus");
@@ -360,7 +364,12 @@ fn main() {
     macro_rules! say { ($($t:tt)*) => {{ let l = format!($($t)*); eprintln!("{l}"); out.push_str(&l); out.push('\n'); }} }
 
     let t = Instant::now();
-    let corpus = generate(&corpus_dir, n, seed);
+    let corpus = if reuse && corpus_dir.exists() {
+        // Experiments only: file list is not needed for the initial pass.
+        Corpus { files: vec![PathBuf::new(); n], dirs: n / 20, excluded: 0 }
+    } else {
+        generate(&corpus_dir, n, seed)
+    };
     say!("### {} files (seed {seed})\n", n);
     say!(
         "Corpus: {} files in {} directories (+{} files in excluded `node_modules`/`.git` trees), generated in {:.1}s.\n",
@@ -375,7 +384,8 @@ fn main() {
 
     // 1. Initial indexing, default throttle and unthrottled.
     say!("| metric | value |\n|---|---|");
-    for cpu in [50u32, 100] {
+    let passes: &[u32] = if only_initial { &[100] } else { &[50, 100] };
+    for &cpu in passes {
         let _ = fs::remove_dir_all(work.join("data"));
         write_cfg(cpu);
         let t0 = Instant::now();
@@ -395,7 +405,10 @@ fn main() {
         say!("| ↳ peak RSS (VmHWM) | {} |", mib(st["VmHWM"]));
         say!("| ↳ disk read / written (/proc/pid/io) | {:.1} MiB / {:.1} MiB |", rb as f64 / 1048576.0, wb as f64 / 1048576.0);
         say!("| ↳ indexed files / dirs / watched dirs | {} / {} / {} |", s["files"], s["dirs"], s["watched_dirs"]);
-        if cpu == 50 {
+        if cpu == 50 || only_initial {
+            if only_initial {
+                say!("| index size on disk (db + wal) | {:.1} MiB |", s["disk_bytes"].parse::<f64>().unwrap_or(0.0) / 1048576.0);
+            }
             d.stop();
         } else {
             // Keep this daemon for the remaining measurements.
@@ -483,7 +496,14 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         }
         let stem = name.rsplit_once('.').map(|x| x.0).unwrap_or(name);
         let hits = reader.search(&Query::parse(stem), &SearchOptions { limit: 5, ..Default::default() }).unwrap();
-        if hits.iter().any(|h| h.path.file_name() == f.file_name()) {
+        // Success if the file is in the top 5, or the top 5 are all exact
+        // stem ties (then no ranking could place every duplicate there).
+        let stem_of = |p: &Path| {
+            let n = p.file_name().unwrap().to_string_lossy().to_lowercase();
+            n.rsplit_once('.').map(|x| x.0.to_string()).unwrap_or(n)
+        };
+        let ties = hits.len() == 5 && hits.iter().all(|h| stem_of(&h.path) == stem.to_lowercase());
+        if ties || hits.iter().any(|h| h.path.file_name() == f.file_name()) {
             top5_stem += 1;
         }
         let words: Vec<&str> = stem.split(['-', '_', ' ', '(', ')']).filter(|w| w.chars().count() >= 3).collect();
@@ -494,7 +514,7 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         }
     }
     say(format!(
-        "| relevance (sample {sample}): exact name ranked #1 / stem in top-5 / multi-word recall | {:.1} % / {:.1} % / {:.1} % |",
+        "| relevance (sample {sample}): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | {:.1} % / {:.1} % / {:.1} % |",
         100.0 * top1 as f64 / sample as f64,
         100.0 * top5_stem as f64 / sample as f64,
         100.0 * found_sub as f64 / sample as f64
@@ -593,6 +613,15 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let d = Daemon::start(bin, work);
     d.wait_idle(Duration::from_secs(3600));
     say(format!("| restart on unchanged tree → idle (quick reconcile + watches) | {:.2} s |", t.elapsed().as_secs_f64()));
+    std::thread::sleep(Duration::from_secs(12));
+    let st = proc_status(d.pid());
+    say(format!(
+        "| steady-state idle after restart: RSS (anon / file), VmHWM | {} ({} / {}), {} |",
+        mib(st["VmRSS"]),
+        mib(st["RssAnon"]),
+        mib(st["RssFile"]),
+        mib(st["VmHWM"])
+    ));
     let expected: u64 = d.status().unwrap()["files"].parse().unwrap();
     d.stop();
 

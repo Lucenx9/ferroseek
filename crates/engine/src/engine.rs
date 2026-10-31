@@ -64,6 +64,11 @@ enum Msg {
 const MAX_PENDING_EVENTS: usize = 100_000;
 /// Channel capacity in *read batches* (each up to 64 KiB of events).
 const CHANNEL_BATCHES: usize = 64;
+/// Scan transaction size. Measured on 1M files (docs/BENCHMARKS.md): 1 s
+/// slices write 57% less than 100 ms slices (fewer rewrites of the same
+/// B-tree pages across commits) at no memory cost; events queued during a
+/// slice wait at most this long.
+const SCAN_SLICE: Duration = Duration::from_secs(1);
 /// Quiet time after which caches are released (idle memory floor).
 const RELEASE_AFTER: Duration = Duration::from_secs(5);
 
@@ -369,7 +374,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                     status.set_state(State::Scanning);
                 }
                 let t0 = Instant::now();
-                ix.scan_slice(Duration::from_millis(100))?;
+                ix.scan_slice(SCAN_SLICE)?;
                 let spent = t0.elapsed();
                 // Duty cycle: rest (100-p)/p of the time spent working.
                 scan_not_before = Instant::now() + spent * (100 - duty) / duty;

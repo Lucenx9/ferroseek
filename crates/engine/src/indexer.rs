@@ -161,7 +161,7 @@ impl Indexer {
         while let Some((id, mode)) = self.st.work.pop() {
             self.st.reconcile_dir(&mut tx, id, mode)?;
             done += 1;
-            if start.elapsed() >= budget || tx.ops() >= 20_000 {
+            if start.elapsed() >= budget || tx.ops() >= 200_000 {
                 break;
             }
         }
