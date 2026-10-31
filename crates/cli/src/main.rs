@@ -151,6 +151,10 @@ fn human(bytes: u64) -> String {
 }
 
 fn main() -> ExitCode {
+    // Rust ignores SIGPIPE by default, which turns `ferroseek … | head` into
+    // a panic in println!. Behave like a normal Unix filter instead.
+    // SAFETY: setting a signal disposition before any thread exists.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let cli = Cli::parse();
     let paths = Paths::from_env();
     match cli.cmd {

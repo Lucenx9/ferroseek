@@ -194,6 +194,7 @@ dependencies = [
  "clap",
  "ferroseek-engine",
  "ferroseek-index",
+ "libc",
  "tempfile",
  "zbus",
 ]

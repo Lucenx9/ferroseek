@@ -174,6 +174,7 @@ impl Runner {
                 return Vec::new();
             }
             let mime = mime.get_or_init(MimeDb::load);
+            log::debug!("Match {query:?}: {} results", hits.len());
             hits.iter().map(|h| to_match(h, &query, mime, &home)).collect()
         })
         .await
@@ -198,6 +199,7 @@ impl Runner {
             log::warn!("Run: {} is not in the index; ignoring", path.display());
             return;
         }
+        log::debug!("Run {} action {action_id:?}", path.display());
         let res = match action_id.as_str() {
             "" => open::open_path(&path, token.as_deref()),
             ACTION_OPEN_PARENT => open::show_in_folder(conn, &path, token.as_deref()).await,

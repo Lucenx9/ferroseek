@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[Unit]
+Description=FerroSeek file indexing daemon
+Documentation=https://github.com/Lucenx9/ferroseek
+
+[Service]
+Type=dbus
+BusName=io.github.ferroseek.FerroSeek
+ExecStart=@BINDIR@/ferroseekd
+Restart=on-failure
+RestartSec=5s
+Slice=background.slice
+# Indexing threads already lower themselves to nice 19 + idle I/O; these
+# weights additionally yield to foreground work under contention without
+# slowing KRunner queries when the machine is idle.
+CPUWeight=20
+IOWeight=20
+# Safety net only: measured working set is far below this
+# (docs/BENCHMARKS.md). Applications opened from KRunner run in their own
+# transient scope, so these limits never apply to them.
+MemoryHigh=256M
+MemoryMax=512M
+# No filesystem/namespace sandboxing on purpose: it would be inherited by
+# helper processes (xdg-open) when systemd-run is unavailable.
+
+[Install]
+WantedBy=default.target

@@ -15,6 +15,7 @@ ferroseek-index.workspace = true
 ferroseek-engine.workspace = true
 zbus.workspace = true
 clap.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
