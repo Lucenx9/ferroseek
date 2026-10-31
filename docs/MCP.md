@@ -35,7 +35,7 @@ substrings of the name, and a word containing `/` must match the full path.
 all of the following hold:
 
 1. **It is indexed and inside the selected authorization scope.** In the
-   default `restricted` mode, directories come from `--allow DIR` and/or
+   `restricted` mode, directories come from `--allow DIR` and/or
    `allow = [...]` in `~/.config/ferroseek/mcp.toml`; an empty list grants
    no access. `home` uses HOME and `all_indexed` uses the filesystem root
    as its authorization boundary. Neither mode expands index coverage.
@@ -106,7 +106,7 @@ only authorization scopes, not an enumeration of indexed roots.
 
 ```toml
 # ~/.config/ferroseek/mcp.toml  (all keys optional; unknown keys are errors)
-access_mode = "restricted"
+access_mode = "all_indexed"
 deny_exceptions = []               # exceptions to built-in name denies only
 allow = ["~/Progetti", "~/Documenti/lavoro"]
 deny = ["*.sqlite", "private-*"]   # added to the built-in deny list
@@ -151,8 +151,15 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
 
 ## Access modes
 
-`access_mode = "restricted"` is the backward-compatible default. Existing
-`allow` lists and `--allow DIR` arguments retain their behavior.
+For a **new unconfigured server**, `all_indexed` is the default. It returns
+only already-indexed paths and keeps hidden/sensitive-name filtering.
+An existing legacy `mcp.toml` with an `allow` list but no `access_mode`
+continues to use `restricted`, as do existing CLI registrations with `--allow`
+and no explicit mode. Explicit `access_mode = "restricted"` always retains
+its prior behavior. **Upgrading an old, completely unconfigured MCP server
+(with no config and no `--allow`) changes its scope from none to all indexed
+paths.** Review or set `access_mode = "restricted"` before upgrading if you
+want to preserve zero access.
 
 - `all_indexed`: authorizes any indexed path, including roots added to the
   index later. No manual directory list is required.
