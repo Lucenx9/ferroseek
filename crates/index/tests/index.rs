@@ -406,3 +406,159 @@ fn path_only_queries_find_descendants_without_requiring_parent_name_in_filename(
     assert_eq!(names(&search(&db, "src/")), ["main.rs"]);
     assert_eq!(names(&search(&db, "r/src/")), ["main.rs"]);
 }
+
+#[test]
+fn path_scoping_matches_independent_paths_across_tree_mutations() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/outside/Root"), dir(1)).unwrap();
+    let parent = tx.upsert(root, b"project-src", dir(2)).unwrap().0;
+    let nested = tx.upsert(parent, "Ünicode's".as_bytes(), dir(3)).unwrap().0;
+    let hidden = tx.upsert(parent, b".hidden", dir(4)).unwrap().0;
+    let mut paths = vec![
+        PathBuf::from("/outside/Root/project-src/main.rs"),
+        PathBuf::from("/outside/Root/project-src/Ünicode's/report.txt"),
+        PathBuf::from("/outside/Root/project-src/.hidden/report.txt"),
+        PathBuf::from("/outside/Root/project-src/link"),
+    ];
+    tx.upsert(parent, b"main.rs", file(5)).unwrap();
+    tx.upsert(nested, b"report.txt", file(6)).unwrap();
+    tx.upsert(hidden, b"report.txt", file(7)).unwrap();
+    let mut symlink = file(8);
+    symlink.kind = Kind::Symlink;
+    tx.upsert(parent, b"link", symlink).unwrap();
+    tx.upsert(nested, b"raw-\xff.txt", file(9)).unwrap();
+    paths.push(Path::new("/outside/Root/project-src/Ünicode's").join(OsStr::from_bytes(b"raw-\xff.txt")));
+    tx.commit().unwrap();
+    let check = |expected_paths: &[PathBuf]| {
+        let reader = Reader::open(&db).unwrap();
+        for query in [
+            "src/",
+            "project-src/",
+            "outside/",
+            "root/project",
+            "ünicode's/",
+            "src/main",
+            ".hidden/",
+            "missing/",
+            "ide's/raw",
+            "s/",
+            "//",
+        ] {
+            for include_hidden in [false, true] {
+                let opts = SearchOptions { limit: 10000, include_hidden, ..Default::default() };
+                let mut actual: Vec<_> = reader
+                    .search(&Query::parse(query), &opts)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|h| h.kind != Kind::Dir)
+                    .map(|h| h.path)
+                    .collect();
+                let mut expected: Vec<_> = expected_paths
+                    .iter()
+                    .filter(|p| {
+                        p.to_string_lossy().to_lowercase().contains(query)
+                            && (include_hidden
+                                || !p.components().any(|c| c.as_os_str().as_bytes().first() == Some(&b'.')))
+                    })
+                    .cloned()
+                    .collect();
+                actual.sort();
+                expected.sort();
+                assert_eq!(actual, expected, "query={query}, hidden={include_hidden}");
+            }
+        }
+    };
+    check(&paths);
+    let mut tx = w.transaction().unwrap();
+    tx.rename(parent, root, b"moved-src").unwrap();
+    tx.commit().unwrap();
+    for p in &mut paths {
+        *p = Path::new("/outside/Root/moved-src").join(p.strip_prefix("/outside/Root/project-src").unwrap());
+    }
+    check(&paths);
+    let mut tx = w.transaction().unwrap();
+    tx.delete(parent).unwrap();
+    tx.commit().unwrap();
+    check(&[]);
+}
+
+#[test]
+fn within_above_roots_and_large_scoped_results() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/scope/nested"), dir(1)).unwrap();
+    let d = tx.upsert(root, b"source", dir(2)).unwrap().0;
+    for i in 0..3000 {
+        tx.upsert(d, format!("file-{i}.txt").as_bytes(), file(i + 3)).unwrap();
+    }
+    tx.commit().unwrap();
+    let reader = Reader::open(&db).unwrap();
+    for within in ["/scope", "/scope/nested", "/scope/nested/source"] {
+        let hits = reader
+            .search(
+                &Query::parse("source/ file-"),
+                &SearchOptions { limit: 4000, within: Some(within.into()), ..Default::default() },
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 3000);
+    }
+}
+
+#[test]
+fn searches_observe_one_snapshot_during_directory_renames() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/snapshot"), dir(1)).unwrap();
+    let d = tx.upsert(root, b"left", dir(2)).unwrap().0;
+    for i in 0..100 {
+        tx.upsert(d, format!("report-{i}").as_bytes(), file(i + 3)).unwrap();
+    }
+    tx.commit().unwrap();
+    let handle = std::thread::spawn(move || {
+        for i in 0..100 {
+            let mut tx = w.transaction().unwrap();
+            tx.rename(d, root, if i % 2 == 0 { b"right" } else { b"left" }).unwrap();
+            tx.commit().unwrap();
+        }
+        w.close().unwrap();
+    });
+    let reader = Reader::open(&db).unwrap();
+    for _ in 0..100 {
+        let hits = reader
+            .search(&Query::parse("snapshot/ report"), &SearchOptions { limit: 200, ..Default::default() })
+            .unwrap();
+        assert_eq!(hits.len(), 100);
+        let parent = hits[0].path.parent().unwrap();
+        assert!(hits.iter().all(|h| h.path.parent() == Some(parent)));
+    }
+    handle.join().unwrap();
+}
+
+#[test]
+fn scoped_prefix_budget_preserves_exact_stem_ranking() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/rank"), dir(1)).unwrap();
+    let source = tx.upsert(root, b"source", dir(2)).unwrap().0;
+    let early = tx.upsert(source, b"early", dir(3)).unwrap().0;
+    let late = tx.upsert(source, b"late", dir(4)).unwrap().0;
+    for i in 0..350 {
+        tx.upsert(early, format!("abzzzz{i:04}").as_bytes(), file(i + 10)).unwrap();
+    }
+    for i in 0..4100 {
+        tx.upsert(early, format!("unrelated{i}").as_bytes(), file(i + 1000)).unwrap();
+    }
+    tx.upsert(late, b"ab.txt", file(6000)).unwrap();
+    tx.commit().unwrap();
+    let hits = Reader::open(&db)
+        .unwrap()
+        .search(&Query::parse("source/ ab"), &SearchOptions { limit: 1, ..Default::default() })
+        .unwrap();
+    assert_eq!(names(&hits), ["ab.txt"]);
+    assert!(search(&db, "source/\0 ab").is_empty());
+}

@@ -222,7 +222,10 @@ impl Reader {
 
     /// Ranked filename/path search; see [`Query`] for the syntax.
     pub fn search(&self, query: &Query, opts: &SearchOptions) -> Result<Vec<Hit>> {
-        search::run(&self.conn, query, opts)
+        let tx = self.conn.unchecked_transaction()?;
+        let hits = search::run(&tx, query, opts)?;
+        tx.commit()?;
+        Ok(hits)
     }
 
     /// Resolves an absolute path to its entry, if indexed.

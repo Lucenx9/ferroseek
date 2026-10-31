@@ -34,6 +34,9 @@ pub struct Query {
 
 impl Query {
     pub fn parse(q: &str) -> Query {
+        if q.contains('\0') {
+            return Query::default();
+        }
         let mut out = Query::default();
         for t in q.split_whitespace() {
             let t = t.to_lowercase();
@@ -156,6 +159,8 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     if q.is_empty() || opts.limit == 0 {
         return Ok(Vec::new());
     }
+    let scope = directory_scope(conn, q, opts)?;
+    let restriction = scope.map(|s| format!(" AND e.parent IN ({s})")).unwrap_or_default();
     let mut cands: HashMap<Id, Cand> = HashMap::new();
     let mut candidate_paths = PathCache::new(conn);
     let mut add_rows =
@@ -197,34 +202,72 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     let long: Vec<&String> = q.name_tokens.iter().filter(|t| t.chars().count() >= 3).collect();
     let fts_cap = FTS_CANDIDATES.max(opts.limit.saturating_mul(4));
     let prefix_cap = PREFIX_CANDIDATES.max(opts.limit);
-    if let Some(first) = q.name_tokens.first() {
-        // Fetch exact and prefix candidates separately using index ranges.
-        let joined = q.name_tokens.join(" ");
+    let small_scope = if !restriction.is_empty() {
+        let sql = format!("SELECT count(*) FROM (SELECT 1 FROM entries e WHERE 1{restriction} LIMIT 4097)");
+        conn.query_row(&sql, [], |r| r.get::<_, i64>(0))? <= 4096
+    } else {
+        false
+    };
+    if small_scope {
+        let prefix = if long.is_empty() {
+            q.name_tokens
+                .first()
+                .map(|s| {
+                    format!(
+                        " AND e.key >= '{}' AND e.key < '{}'",
+                        s.replace('\'', "''"),
+                        format!("{s}\u{10ffff}").replace('\'', "''")
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         add_rows(
-            &mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE e.key = ?1"))?,
-            &[&joined],
-            100,
-        )?;
-        let upper = format!("{first}\u{10FFFF}");
-        add_rows(
-            &mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2"))?,
-            &[first, &upper],
-            prefix_cap,
+            &mut conn
+                .prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE 1{restriction}{prefix} ORDER BY e.id"))?,
+            &[],
+            4096,
         )?;
     } else {
-        // No filename constraint can safely narrow a full-path substring.
-        // Stream rows and retain only the bounded set passing path filters.
-        add_rows(&mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e"))?, &[], fts_cap)?;
-    }
-    if !long.is_empty() {
-        add_rows(
-            &mut conn.prepare_cached(&format!(
-                "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
-                 WHERE names MATCH ?1"
-            ))?,
-            &[&fts_phrase(&long)],
-            fts_cap,
-        )?;
+        if let Some(first) = q.name_tokens.first() {
+            // Fetch exact and prefix candidates separately using index ranges.
+            let joined = q.name_tokens.join(" ");
+            add_rows(
+                &mut conn.prepare_cached(&format!(
+                    "SELECT {COLS} FROM entries e WHERE e.key = ?1{restriction} ORDER BY e.id"
+                ))?,
+                &[&joined],
+                100,
+            )?;
+            let upper = format!("{first}\u{10FFFF}");
+            add_rows(
+                &mut conn.prepare_cached(&format!(
+                    "SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2{restriction} ORDER BY e.key, e.id"
+                ))?,
+                &[first, &upper],
+                prefix_cap,
+            )?;
+        } else {
+            // No filename constraint can safely narrow a full-path substring.
+            // Stream rows and retain only the bounded set passing path filters.
+            add_rows(
+                &mut conn
+                    .prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE 1{restriction} ORDER BY e.id"))?,
+                &[],
+                fts_cap,
+            )?;
+        }
+        if !long.is_empty() {
+            add_rows(
+                &mut conn.prepare_cached(&format!(
+                    "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
+                 WHERE names MATCH ?1{restriction} ORDER BY e.id"
+                ))?,
+                &[&fts_phrase(&long)],
+                fts_cap,
+            )?;
+        }
     }
 
     // Verify every name token (FTS is exact for trigrams, but short tokens
@@ -283,6 +326,71 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
     hits.truncate(opts.limit);
     Ok(hits)
+}
+
+/// Restrict candidates to descendants of a necessary directory component.
+/// Full path verification still runs: this is a superset, not the matcher.
+fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<Option<String>> {
+    let seed = if let Some(within) = &opts.within {
+        let mut ids = Vec::new();
+        if let Some((id, meta)) = crate::tree::lookup_path(conn, within)?
+            && meta.kind == Kind::Dir
+        {
+            ids.push(id);
+        }
+        for (id, path) in crate::tree::roots(conn)? {
+            if path.starts_with(within) {
+                ids.push(id);
+            }
+        }
+        if ids.is_empty() {
+            return Ok(Some("SELECT NULL WHERE 0".into()));
+        }
+        format!(
+            "SELECT id FROM entries WHERE id IN ({})",
+            ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
+        )
+    } else {
+        let anchor = q
+            .path_tokens
+            .iter()
+            .flat_map(|p| {
+                let (dirs, _) = p.rsplit_once('/').unwrap();
+                dirs.split('/')
+            })
+            .filter(|p| p.chars().count() >= 3)
+            .max_by_key(|p| p.chars().count());
+        let Some(anchor) = anchor else { return Ok(None) };
+        // Quote separately for the FTS phrase grammar and SQL string grammar.
+        let phrase = format!("\"{}\"", anchor.replace('"', "\"\""));
+        format!(
+            "SELECT e.id FROM names JOIN entries e ON e.id=names.rowid WHERE names MATCH '{}' AND e.kind=1",
+            phrase.replace('\'', "''")
+        )
+    };
+    // Do not expand a root or a broad set of directories just to discard
+    // the scope later. These cases retain the original streaming strategy.
+    let mut seeds = conn.prepare(&format!("{seed} LIMIT 257"))?;
+    let ids: Vec<Id> = seeds.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    if ids.len() > 256 || crate::tree::roots(conn)?.iter().any(|(id, _)| ids.contains(id)) {
+        return Ok(None);
+    }
+    if ids.is_empty() {
+        return Ok(Some("SELECT NULL WHERE 0".into()));
+    }
+    let seed_ids = ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "WITH RECURSIVE dirs(id) AS (SELECT id FROM entries WHERE id IN ({seed_ids}) UNION SELECT e.id FROM entries e INDEXED BY entries_parent_name JOIN dirs ON e.parent=dirs.id WHERE e.kind=1 LIMIT 257) SELECT id FROM dirs"
+    );
+    let mut st = conn.prepare(&sql)?;
+    let dirs: Vec<Id> = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    if dirs.len() > 256 {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "SELECT id FROM entries WHERE id IN ({})",
+        dirs.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
+    )))
 }
 
 fn path_matches(path: &std::path::Path, hidden: bool, q: &Query, opts: &SearchOptions) -> bool {

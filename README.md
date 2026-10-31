@@ -50,7 +50,7 @@ faster than Baloo.**
 
 ## Build
 
-You need Rust 1.85 or newer. SQLite is compiled in (bundled), so there are
+You need Rust 1.89 or newer. SQLite is compiled in (bundled), so there are
 no system library requirements beyond libc.
 
 ```sh

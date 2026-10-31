@@ -297,15 +297,17 @@ impl State {
         let Some(ino) = &self.ino else { return };
         match ino.add_watch(path, inotify::DIR_MASK) {
             Ok(wd) => {
-                if let Some(prev) = self.watches.insert(wd, id) {
-                    if prev != id && self.by_id.get(&prev) == Some(&wd) {
-                        self.by_id.remove(&prev);
-                    }
+                if let Some(prev) = self.watches.insert(wd, id)
+                    && prev != id
+                    && self.by_id.get(&prev) == Some(&wd)
+                {
+                    self.by_id.remove(&prev);
                 }
-                if let Some(old) = self.by_id.insert(id, wd) {
-                    if old != wd && self.watches.get(&old) == Some(&id) {
-                        self.watches.remove(&old);
-                    }
+                if let Some(old) = self.by_id.insert(id, wd)
+                    && old != wd
+                    && self.watches.get(&old) == Some(&id)
+                {
+                    self.watches.remove(&old);
                 }
             }
             Err(e) if e.raw_os_error() == Some(libc::ENOSPC) => {
@@ -333,10 +335,10 @@ impl State {
     }
 
     fn forget_wd(&mut self, wd: i32) {
-        if let Some(id) = self.watches.remove(&wd) {
-            if self.by_id.get(&id) == Some(&wd) {
-                self.by_id.remove(&id);
-            }
+        if let Some(id) = self.watches.remove(&wd)
+            && self.by_id.get(&id) == Some(&wd)
+        {
+            self.by_id.remove(&id);
         }
     }
 
@@ -480,10 +482,11 @@ impl State {
         match fs::symlink_metadata(&full) {
             Ok(md) => {
                 let meta = Meta::from_metadata(&md);
-                if let Some(c) = &existing {
-                    if c.meta.kind == Kind::Dir && meta.kind != Kind::Dir {
-                        self.drop_children(tx, c.id)?;
-                    }
+                if let Some(c) = &existing
+                    && c.meta.kind == Kind::Dir
+                    && meta.kind != Kind::Dir
+                {
+                    self.drop_children(tx, c.id)?;
                 }
                 let (id, change) = tx.upsert(dir, name, meta)?;
                 if meta.kind == Kind::Dir {
@@ -540,10 +543,10 @@ impl State {
         };
         match src {
             Some(c) if !self.rules.excluded(&tdpath, &tname) => {
-                if let Some(dst) = tx.child(tdir, &tname)? {
-                    if dst.id != c.id {
-                        self.drop_subtree(tx, dst.id)?;
-                    }
+                if let Some(dst) = tx.child(tdir, &tname)?
+                    && dst.id != c.id
+                {
+                    self.drop_subtree(tx, dst.id)?;
                 }
                 tx.rename(c.id, tdir, &tname)?;
                 // Refresh metadata (cheap) and pick up anything unusual.

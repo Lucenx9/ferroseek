@@ -353,20 +353,20 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                 return Ok(false);
             }
             let now = Instant::now();
-            if let Some(t) = first_event {
-                if now >= t + debounce || pending.len() >= 8192 {
-                    ix.apply_events(std::mem::take(&mut pending))?;
-                    first_event = None;
-                }
+            if let Some(t) = first_event
+                && (now >= t + debounce || pending.len() >= 8192)
+            {
+                ix.apply_events(std::mem::take(&mut pending))?;
+                first_event = None;
             }
             if ix.has_retries() && first_event.is_none() && now.duration_since(last_event) >= Duration::from_secs(1) {
                 ix.idle_tick()?;
             }
-            if let Some(p) = next_periodic {
-                if now >= p {
-                    ix.schedule_all(Mode::Quick)?;
-                    next_periodic = periodic.map(|d| now + d);
-                }
+            if let Some(p) = next_periodic
+                && now >= p
+            {
+                ix.schedule_all(Mode::Quick)?;
+                next_periodic = periodic.map(|d| now + d);
             }
             if ix.has_work() && now >= scan_not_before {
                 if !scanning {

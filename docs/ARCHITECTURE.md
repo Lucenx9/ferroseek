@@ -234,3 +234,23 @@ key atomically invalidates all reconciled directory mtimes before storing
 the new key. Interrupted scans leave unvisited directories invalid, so a
 restart completes the policy transition. The first launch after this change
 also revisits directory listings. No schema version change is needed.
+
+## Bounded directory scopes (optimization pass)
+
+Path filtering reuses `names` FTS5 to locate a necessary directory component
+before the last slash. It then follows the existing `entries_parent_name`
+index, never materializing full paths in persistent storage. Raw paths are
+still constructed and checked for every accepted candidate. There is no
+new schema, persistent index, or directory-rename write amplification.
+
+Scope selection falls back to the original strategy for root anchors or
+more than 256 seed/descendant directories. Recursive traversal explicitly
+uses the parent index: SQLite otherwise chose an expensive automatic index
+in profiling. Scopes with at most 4096 entries are searched directly; larger
+scopes combine the existing filename strategy with SQL parent filtering.
+Prefix candidates retain key/id ordering before their budget is applied.
+The entire search holds one SQLite read snapshot.
+
+The bounded probe does not guarantee constant latency: very wide directories
+and short directory components remain potential scan costs. Candidate
+ranking remains approximate for large result sets, as documented previously.

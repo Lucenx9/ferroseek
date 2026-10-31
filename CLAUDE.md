@@ -88,3 +88,13 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   restart 9.4 MiB. These are warm-cache measurements, not before/after gains.
 - Legacy relevance percentages count skipped samples as successes; do not
   cite them as accuracy evidence. The limitation is explicit in the report.
+
+## Path optimization checkpoint
+
+- Path searches derive bounded directory scopes from existing name FTS and
+  parent indexes; no schema change. Root/broad anchors fall back; short path
+  components may still scan. Preserve explicit prefix ordering before caps.
+- All search stages share one read transaction. Tests compare independent
+  path lists and exercise concurrent directory renames.
+- Rust minimum is 1.89 (locked dependencies require it). Raising it enables
+  Clippy's let-chain suggestions, applied without behavioral changes.
