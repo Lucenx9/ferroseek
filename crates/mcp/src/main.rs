@@ -84,7 +84,7 @@ fn main() -> ExitCode {
                 legacy_config_without_mode =
                     toml::from_str::<toml::Table>(&s).is_ok_and(|t| !t.contains_key("access_mode"));
                 c
-            },
+            }
             Err(e) => {
                 eprintln!("ferroseek-mcp: invalid {}: {e}", config_path.display());
                 return ExitCode::from(2);
