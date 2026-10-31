@@ -172,7 +172,7 @@ def choose(args, env, package):
                         setattr(args, 'register_' + agent, True)
                 if (args.register_claude or args.register_codex) and not args.allow:
                     print('Recommended: all_indexed searches existing indexed coverage, including future indexed roots. It never expands indexing.')
-                    mode = input('MCP access [all_indexed/home/restricted; Enter = restricted]: ').strip() or 'restricted'
+                    mode = input('MCP access [all_indexed/home/restricted; Enter = all_indexed]: ').strip() or 'all_indexed'
                     if mode not in ['all_indexed', 'home', 'restricted']:
                         raise InstallError('unknown MCP access mode')
                     args.mcp_access = mode
@@ -192,7 +192,9 @@ def choose(args, env, package):
 
 def agent_changes(args, targets, data, env):
     changes = {}
-    mode = getattr(args, 'mcp_access', 'restricted')
+    # Existing --allow users remain restricted unless a mode is selected.
+    # New registrations recommend all_indexed but require typed confirmation.
+    mode = args.mcp_access or ('restricted' if args.allow else 'all_indexed')
     if mode != 'restricted' and args.allow:
         raise InstallError('--allow is only used with restricted MCP access')
     if mode == 'all_indexed' and not args.dry_run:
@@ -481,7 +483,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ['full', 'core', 'mcp', 'krunner', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
         parser.add_argument('--' + flag, action='store_true')
-    parser.add_argument('--mcp-access', choices=['restricted', 'home', 'all_indexed'], default='restricted', help='agent authorization; all_indexed requires typed confirmation')
+    parser.add_argument('--mcp-access', choices=['restricted', 'home', 'all_indexed'], default=None, help='agent authorization; default all_indexed for new registrations, with typed confirmation; --allow implies restricted')
     parser.add_argument('--config', help='initial engine TOML; never replace an existing config')
     parser.add_argument('--allow', action='append', default=[], metavar='DIR', help='explicit MCP directory for agent registration (repeatable)')
     parser.add_argument('--uninstall', action='store_true', help=argparse.SUPPRESS)
@@ -495,7 +497,7 @@ def main():
             raise InstallError('installation options cannot be used for uninstall')
         if not args.uninstall and args.stop:
             raise InstallError('--stop is only for uninstall')
-        if args.mcp_access != 'restricted' and not (args.register_claude or args.register_codex):
+        if args.mcp_access is not None and not (args.register_claude or args.register_codex):
             raise InstallError('--mcp-access requires agent registration; for manual setup use ferroseek-mcp --access-mode')
         if args.allow and not (args.register_claude or args.register_codex):
             raise InstallError('--allow requires --register-claude or --register-codex')
