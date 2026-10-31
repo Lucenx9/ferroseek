@@ -86,6 +86,86 @@ fn helpful_errors() {
 }
 
 #[test]
+fn json_search_preserves_paths_metadata_order_and_filters() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("files");
+    fs::create_dir_all(root.join("report-folder")).unwrap();
+    let special = root.join("report-folder/report \"caffè\"\n$(touch nope).txt");
+    fs::write(&special, b"hello").unwrap();
+    fs::write(root.join("report.txt"), b"abc").unwrap();
+    fs::write(root.join(".report-hidden"), b"x").unwrap();
+    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\nindex_hidden = true\n", root.display()))
+        .unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+
+    let output = run(t.path(), &["search", "--json", "--no-hidden", "report"]);
+    assert!(output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["version"], 1);
+    let hits = response["results"].as_array().unwrap();
+    assert_eq!(hits.len(), 3);
+    let raw = run(t.path(), &["search", "-0", "--no-hidden", "report"]);
+    let raw_paths: Vec<_> = raw.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()).collect();
+    for (hit, path) in hits.iter().zip(raw_paths) {
+        assert_eq!(hit["path"].as_str().unwrap().as_bytes(), path);
+        assert!(hit["score"].is_number());
+        assert!(hit["mtime_ns"].as_i64().unwrap() > 0);
+        assert!(hit.get("path_bytes").is_none());
+    }
+    let file = hits.iter().find(|h| h["path"].as_str() == special.to_str()).unwrap();
+    assert_eq!(file["name"], special.file_name().unwrap().to_str().unwrap());
+    assert_eq!(file["size"], 5);
+    assert_eq!(file["kind"], "file");
+
+    let scoped =
+        run(t.path(), &["search", "--json", "--in", root.join("report-folder").to_str().unwrap(), "-n", "1", "report"]);
+    let response: serde_json::Value = serde_json::from_slice(&scoped.stdout).unwrap();
+    assert_eq!(response["results"].as_array().unwrap().len(), 1);
+    assert_eq!(response["results"][0]["path"], special.to_str().unwrap());
+    let dirs = run(t.path(), &["search", "--json", "--dirs", "report"]);
+    let response: serde_json::Value = serde_json::from_slice(&dirs.stdout).unwrap();
+    assert_eq!(response["results"].as_array().unwrap().len(), 1);
+    assert_eq!(response["results"][0]["kind"], "directory");
+
+    let empty = run(t.path(), &["search", "--json", "no-such-name"]);
+    assert_eq!(empty.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&empty.stdout).unwrap(),
+        serde_json::json!({
+            "version": 1, "results": []
+        })
+    );
+    for flag in ["--long", "-0"] {
+        assert_eq!(run(t.path(), &["search", "--json", flag, "report"]).status.code(), Some(2));
+    }
+    let missing = tempfile::tempdir().unwrap();
+    let error = run(missing.path(), &["search", "--json", "report"]);
+    assert_eq!(error.status.code(), Some(2));
+    assert!(error.stdout.is_empty());
+}
+
+#[test]
+fn json_non_utf8_paths_are_lossless_and_not_openable_as_display_text() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("files");
+    fs::create_dir(&root).unwrap();
+    let path = root.join(std::ffi::OsString::from_vec(b"report-\xff.txt".to_vec()));
+    fs::write(&path, b"x").unwrap();
+    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\n", root.display())).unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+    let output = run(t.path(), &["search", "--json", "report"]);
+    assert!(output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let hit = &response["results"][0];
+    assert!(hit["path"].is_null());
+    let bytes: Vec<u8> = serde_json::from_value(hit["path_bytes"].clone()).unwrap();
+    assert_eq!(bytes, path.as_os_str().as_bytes());
+    let raw = run(t.path(), &["search", "-0", "report"]);
+    assert_eq!(raw.stdout, [path.as_os_str().as_bytes(), b"\0"].concat());
+}
+
+#[test]
 fn special_cache_tags_do_not_block_indexing() {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::OpenOptionsExt;

@@ -9,11 +9,11 @@ decisions and historical measurements are retained with their evidence.
   over configured Linux directories, kept current with inotify, without
   root privileges or mandatory graphical dependencies.
 - **Goal:** one persistent search index shared by the CLI and optional
-  integrations: KRunner for KDE Plasma and MCP for agents.
+  integrations: KRunner for KDE Plasma, Noctalia's launcher and MCP for agents.
 - **Future option:** bounded, opt-in text-content search measured separately.
 - **Non-goal for the MVP:** replacing the Baloo framework API (`Baloo::Query`,
   KIO `baloosearch:/`, tags or Dolphin search integration). GNOME, Rofi and
-  other launchers are planned adapters, not currently implemented.
+  other launchers beyond Noctalia are planned adapters, not currently implemented.
 
 ## Workspace layout
 
@@ -204,10 +204,13 @@ creates or maintains a second index.
 CLI ────────────┐
 KRunner (KDE) ──┼──> shared FerroSeek index <── inotify indexing engine
 MCP (agents) ───┘
+Noctalia ──> CLI (search --json) ──> same index
 ```
 
-Only these interfaces are currently implemented. GNOME, Rofi and
-other launchers are future adapters.
+The optional Noctalia v5 adapter lives in `integrations/noctalia/ferroseek`.
+It uses argument-array subprocesses, coalesces input while a query is in flight,
+and opens results through `xdg-open`. See [setup and validation limits](NOCTALIA.md).
+GNOME, Rofi and other launchers are future adapters.
 
 ## KRunner integration
 

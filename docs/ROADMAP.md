@@ -36,6 +36,7 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 ## Desktop and terminal integrations
 
 - [x] Core CLI and KDE KRunner.
+- [x] Optional Noctalia v5 `/ferro` provider and versioned CLI JSON output; isolated CLI/mock-host tests. See [setup and remaining desktop validation](NOCTALIA.md).
 - [ ] Rofi adapter: validate real query/update capabilities rather than assuming arbitrary per-keystroke search.
 - [ ] GNOME Shell SearchProvider2 adapter, tested under a real GNOME session.
 - [ ] Evaluate bounded dmenu/Fuzzel/Wofi workflows and Walker/Elephant integration.

@@ -9,7 +9,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use ferroseek_engine::{Config, EngineError, Paths, index_once, ipc};
-use ferroseek_index::{Kind, Query, Reader, SearchOptions};
+use ferroseek_index::{Hit, Kind, Query, Reader, SearchOptions};
+use serde::Serialize;
 
 #[derive(Parser)]
 #[command(name = "ferroseek", version, about = "Fast, lightweight file name search for Linux")]
@@ -47,6 +48,9 @@ enum Cmd {
         /// Separate results with NUL (for xargs -0); paths are raw bytes.
         #[arg(short = '0', long)]
         null: bool,
+        /// Emit a versioned JSON object with ranked results and metadata.
+        #[arg(long, conflicts_with_all = ["long", "null"])]
+        json: bool,
     },
     /// Show daemon and index status.
     Status,
@@ -123,6 +127,45 @@ fn kind_char(k: Kind) -> char {
     }
 }
 
+#[derive(Serialize)]
+struct JsonHit<'a> {
+    // Never turn a lossy display path into a path a client might open.
+    path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_bytes: Option<&'a [u8]>,
+    name: std::borrow::Cow<'a, str>,
+    kind: &'static str,
+    size: u64,
+    mtime_ns: i64,
+    score: f32,
+}
+
+impl<'a> From<&'a Hit> for JsonHit<'a> {
+    fn from(hit: &'a Hit) -> Self {
+        let path = hit.path.to_str();
+        Self {
+            path,
+            path_bytes: path.is_none().then(|| hit.path.as_os_str().as_bytes()),
+            name: hit.path.file_name().unwrap_or(hit.path.as_os_str()).to_string_lossy(),
+            kind: match hit.kind {
+                Kind::File => "file",
+                Kind::Dir => "directory",
+                Kind::Symlink => "symlink",
+                Kind::Other => "other",
+            },
+            size: hit.size,
+            mtime_ns: hit.mtime_ns,
+            score: hit.score,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct JsonSearch<'a> {
+    version: u32,
+    results: Vec<JsonHit<'a>>,
+}
+
 fn fmt_time(ns: i64) -> String {
     // UTC, dependency-free (civil-from-days, Howard Hinnant).
     let secs = ns.div_euclid(1_000_000_000);
@@ -158,7 +201,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let paths = Paths::from_env();
     match cli.cmd {
-        Cmd::Search { query, limit, within, dirs, files, no_hidden, long, null } => {
+        Cmd::Search { query, limit, within, dirs, files, no_hidden, long, null, json } => {
             let reader = match Reader::open(&paths.index_file()) {
                 Ok(r) => r,
                 Err(e) => {
@@ -187,6 +230,20 @@ fn main() -> ExitCode {
                 Err(e) => return die(e),
             };
             let mut out = std::io::stdout().lock();
+            if json {
+                let response = JsonSearch { version: 1, results: hits.iter().map(JsonHit::from).collect() };
+                if let Err(e) = serde_json::to_writer(&mut out, &response) {
+                    return if e.io_error_kind() == Some(std::io::ErrorKind::BrokenPipe) {
+                        ExitCode::SUCCESS
+                    } else {
+                        die(e)
+                    };
+                }
+                if let Err(e) = writeln!(out) {
+                    return if e.kind() == std::io::ErrorKind::BrokenPipe { ExitCode::SUCCESS } else { die(e) };
+                }
+                return if hits.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS };
+            }
             for h in &hits {
                 let r = if long {
                     writeln!(

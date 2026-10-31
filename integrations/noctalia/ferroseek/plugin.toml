@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+id = "lucenx9/ferroseek"
+name = "FerroSeek"
+version = "0.1.0"
+# Argument-array subprocess execution, without shell interpolation.
+plugin_api = 24
+author = "Lucenx9"
+license = "GPL-3.0-or-later"
+icon = "file-search"
+description = "Search the existing FerroSeek filename and path index."
+tags = ["launcher", "utility", "productivity"]
+dependencies = ["ferroseek", "xdg-open"]
+
+[[setting]]
+key = "binary"
+type = "string"
+label_key = "settings.binary"
+default = "ferroseek"
+
+[[setting]]
+key = "directory"
+type = "folder"
+label_key = "settings.directory"
+description_key = "settings.directory_description"
+default = ""
+
+[[setting]]
+key = "max_results"
+type = "int"
+label_key = "settings.max_results"
+default = 30
+min = 1
+max = 100
+
+[[launcher_provider]]
+id = "files"
+entry = "launcher.luau"
+prefix = "ferro"
+glyph = "file-search"
+debounce_ms = 100
+include_in_global_search = false
