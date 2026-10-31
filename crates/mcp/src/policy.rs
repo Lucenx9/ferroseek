@@ -64,9 +64,9 @@ pub const MAX_PATH_BYTES: usize = 4096;
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AccessMode {
+    #[default]
     AllIndexed,
     Home,
-    #[default]
     Restricted,
 }
 
@@ -89,8 +89,10 @@ impl AccessMode {
 }
 
 /// `~/.config/ferroseek/mcp.toml`. Unknown keys are rejected.
+/// New, unconfigured servers use all_indexed. Old TOML allowlists without
+/// an access_mode remain restricted (never silently broaden on upgrade).
 #[derive(Debug, Default, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[serde(from = "RawFileConfig")]
 pub struct FileConfig {
     pub access_mode: AccessMode,
     /// Exceptions to built-in secret-name rules; custom deny rules still win.
@@ -109,6 +111,43 @@ pub struct FileConfig {
     /// `index_status`. Off by default: they describe unauthorized
     /// directories too.
     pub expose_index_totals: bool,
+}
+
+/// Distinguish an omitted mode from a user-selected one so configurations
+/// predating access_mode keep their explicit allowlist boundaries.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct RawFileConfig {
+    access_mode: Option<AccessMode>,
+    deny_exceptions: Vec<String>,
+    allow: Vec<String>,
+    deny: Vec<String>,
+    deny_defaults: Option<bool>,
+    allow_hidden: bool,
+    max_results: Option<usize>,
+    expose_index_totals: bool,
+}
+
+impl From<RawFileConfig> for FileConfig {
+    fn from(raw: RawFileConfig) -> Self {
+        let access_mode = raw.access_mode.unwrap_or_else(|| {
+            if raw.allow.is_empty() {
+                AccessMode::AllIndexed
+            } else {
+                AccessMode::Restricted
+            }
+        });
+        FileConfig {
+            access_mode,
+            deny_exceptions: raw.deny_exceptions,
+            allow: raw.allow,
+            deny: raw.deny,
+            deny_defaults: raw.deny_defaults,
+            allow_hidden: raw.allow_hidden,
+            max_results: raw.max_results,
+            expose_index_totals: raw.expose_index_totals,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -336,8 +375,13 @@ mod tests {
 
     #[test]
     fn modes_and_exceptions_preserve_explicit_denials() {
+        assert_eq!(FileConfig::default().access_mode, AccessMode::AllIndexed);
+        let empty: FileConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.access_mode, AccessMode::AllIndexed);
         let legacy: FileConfig = toml::from_str("allow = [\"/work\"]").unwrap();
         assert_eq!(legacy.access_mode, AccessMode::Restricted);
+        let explicit: FileConfig = toml::from_str("access_mode = 'restricted'").unwrap();
+        assert_eq!(explicit.access_mode, AccessMode::Restricted);
         let cfg: FileConfig =
             toml::from_str("access_mode = 'all_indexed'\ndeny_exceptions = ['*.pem', '.env']\ndeny = ['private*']")
                 .unwrap();
@@ -350,7 +394,14 @@ mod tests {
     }
 
     fn policy(allow: &[&str]) -> Policy {
-        Policy::new(&FileConfig { allow: allow.iter().map(|s| s.to_string()).collect(), ..Default::default() }, &[])
+        Policy::new(
+            &FileConfig {
+                access_mode: AccessMode::Restricted,
+                allow: allow.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            },
+            &[],
+        )
             .unwrap()
     }
 
@@ -396,6 +447,7 @@ mod tests {
     #[test]
     fn config_options() {
         let cfg = FileConfig {
+            access_mode: AccessMode::Restricted,
             allow: vec!["/srv/a".into(), "/srv/a/nested".into(), "/srv/b".into()],
             deny: vec!["*.sqlite".into()],
             deny_defaults: Some(false),
