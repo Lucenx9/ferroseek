@@ -76,7 +76,10 @@ Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. R
 
 The separate `ferroseek-mcp` program uses local stdio, reads the existing index and exits when its client disconnects. It exposes three read-only tools: `search_files`, `get_file_info`, and `index_status`. No second indexer is started.
 
-Installing the MCP binary does **not** register an agent or change its configuration. An unconfigured MCP server now defaults to `all_indexed` when launched, so existing manual MCP registrations without an access mode should be reviewed before upgrading:
+Installing MCP does **not** register an agent or change its configuration.
+However, an unconfigured MCP executable now defaults to `all_indexed` when
+started, so review existing manual registrations without an access mode during
+an upgrade:
 
 ```sh
 # Authorize one project for Claude Code
