@@ -375,15 +375,39 @@ fn invalid_queries_and_unknown_tools_fail_gracefully() {
 }
 
 #[test]
-fn no_allowlist_means_no_access() {
+fn unconfigured_default_is_global_but_explicit_restricted_remains_empty() {
     let fx = fixture();
-    let mut m = Mcp::spawn(&["--index", fx.db.to_str().unwrap()], fx.t.path());
-    let (err, msg) = m.call("search_files", json!({"query": "report"}));
+    let mut global = Mcp::spawn(&["--index", fx.db.to_str().unwrap()], fx.t.path());
+    let (err, status) = global.call("index_status", json!({}));
+    assert!(!err);
+    assert_eq!(status["access_mode"], "all_indexed");
+    // Fixture is under a hidden temporary ancestor on some systems, so
+    // do not assume hidden paths are globally visible by default.
+    let (err, _) = global.call("search_files", json!({"query": "report"}));
+    assert!(!err);
+
+    let mut restricted = Mcp::spawn(
+        &["--index", fx.db.to_str().unwrap(), "--access-mode", "restricted"],
+        fx.t.path(),
+    );
+    let (err, msg) = restricted.call("search_files", json!({"query": "report"}));
     assert!(err && msg.as_str().unwrap().contains("--allow"), "{msg}");
-    let (err, _) = m.call("get_file_info", json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}));
+    let (err, _) = restricted.call(
+        "get_file_info",
+        json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}),
+    );
     assert!(err);
-    let (_, v) = m.call("index_status", json!({}));
-    assert!(v["allowed_dirs"].as_array().unwrap().is_empty());
+    let (_, status) = restricted.call("index_status", json!({}));
+    assert_eq!(status["access_mode"], "restricted");
+    assert!(status["allowed_dirs"].as_array().unwrap().is_empty());
+
+    // Old user registrations containing --allow and no explicit mode
+    // keep their former restricted boundaries after upgrading the binary.
+    let mut legacy = fx.mcp(&[]);
+    let (_, legacy_status) = legacy.call("index_status", json!({}));
+    assert_eq!(legacy_status["access_mode"], "restricted");
+    let (_, v) = legacy.call("search_files", json!({"query": "tax-report"}));
+    assert!(Mcp::paths(&v).is_empty());
 }
 
 #[test]
