@@ -269,7 +269,7 @@ exit 0
     run('--mcp', '--register-codex', '--dry-run', custom=default_env)
     run('--mcp', '--register-codex', custom=default_env, expected=1)
     assert not default_cfg.exists()
-    run('--mcp', '--register-codex', custom=default_env, text='all_indexed\\nyes\\n')
+    run('--mcp', '--register-codex', custom=default_env, text='all_indexed\nyes\n')
     default_entry = tomllib.loads(default_cfg.read_text())['mcp_servers']['ferroseek']
     assert default_entry['args'][-2:] == ['--access-mode', 'all_indexed']
     uninstall(custom=default_env)
