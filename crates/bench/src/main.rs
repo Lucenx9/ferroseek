@@ -61,7 +61,7 @@ fn file_name(r: &mut Rng, i: usize) -> Vec<u8> {
         0..=1 => format!("IMG_20{:02}{:02}{:02}_{:06}.jpg", 15 + r.below(11), r.below(12) + 1, r.below(28) + 1, i),
         2..=4 => {
             let (a, b) = (r.pick(WORDS), r.pick(WORDS));
-            format!("{}{}{}.{}", &a[..1].to_uppercase(), &a[1..], cap(b), r.pick(EXTS))
+            format!("{}{}{}.{}", a[..1].to_uppercase(), &a[1..], cap(b), r.pick(EXTS))
         }
         5..=7 => format!("{}_{}.{}", r.pick(WORDS), i % 997, r.pick(EXTS)),
         8 => format!(".{}rc", r.pick(WORDS)), // hidden: excluded by default
