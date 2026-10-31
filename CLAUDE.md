@@ -139,8 +139,9 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - `ferroseek-mcp` must stay read-only, stdio-only and opt-in. It must never
   start an indexer, write the index or add a schema change. Its index API
   additions are `Reader::roots()` and `SearchOptions::accept`. The latter
-  must stay `None` for daemon, KRunner and CLI searches; `accept`-only
-  searches may truncate stage 2 like unfiltered ones.
+  must stay `None` for daemon, KRunner and CLI searches. `accept`-only
+  searches use an exact top-k early stop (name score + MAX_BONUS bound).
+  Never truncate them by name score: depth and recency can reorder.
 - Every path leaving the process passes `Policy::visible_under` *and* lies
   inside the requested scope. Client paths are validated, not normalized;
   never echo refused paths in errors.

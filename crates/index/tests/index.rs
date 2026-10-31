@@ -576,3 +576,38 @@ fn reader_roots_lists_root_paths_only() {
     roots.sort();
     assert_eq!(roots, vec![PathBuf::from("/srv/a"), PathBuf::from("/srv/b")]);
 }
+
+#[test]
+fn accept_only_searches_return_the_true_top_k() {
+    // Review regression: truncating the name ranking before depth/recency
+    // adjustments dropped the best final result. 70 equal names deep in the
+    // tree (recent) vs one at the root (old, highest id): the root one must
+    // win, exactly as the full ranking says.
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as i64;
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let mut ino = 10;
+    for i in 0..70 {
+        let mut parent = root;
+        for d in 0..12 {
+            ino += 1;
+            parent = tx.upsert(parent, format!("b{i}-{d}").as_bytes(), dir(ino)).unwrap().0;
+        }
+        ino += 1;
+        tx.upsert(parent, b"needle.txt", Meta { kind: Kind::File, size: 1, mtime_ns: now, ino }).unwrap();
+    }
+    tx.upsert(root, b"needle.txt", Meta { kind: Kind::File, size: 1, mtime_ns: 1_000, ino: 99_999 }).unwrap();
+    tx.commit().unwrap();
+    let r = Reader::open(&db).unwrap();
+    let accept = Some(ferroseek_index::PathFilter(std::sync::Arc::new(|_: &Path| true)));
+    let q = Query::parse("needle");
+    let full = r.search(&q, &SearchOptions { limit: 1000, accept: accept.clone(), ..Default::default() }).unwrap();
+    assert_eq!(full.len(), 71);
+    for k in [1, 2, 5, 20] {
+        let top = r.search(&q, &SearchOptions { limit: k, accept: accept.clone(), ..Default::default() }).unwrap();
+        assert_eq!(top, full[..k].to_vec(), "top-{k} must equal the head of the full ranking");
+    }
+    assert_eq!(full[0].path, Path::new("/r/needle.txt"));
+}

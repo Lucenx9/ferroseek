@@ -539,17 +539,17 @@ Raw reports and hashes are in
 | metric | 100k | 1M |
 |---|---|---|
 | startup: spawn → `initialize` reply | 1.2 ms | 1.2 ms |
-| `search_files` limit 20, p50 / p95 / p99 / max | 1.31 / 9.02 / 10.04 / 10.78 ms | 5.69 / 13.91 / 18.87 / 70.85 ms |
-| `search_files` with `root` = subdirectory, p50 / p99 | 4.09 / 16.02 ms | 9.91 / 40.84 ms |
-| `get_file_info` p50 / p99 | 0.09 / 0.14 ms | 0.09 / 0.14 ms |
-| `index_status` p50 (default: no whole-index totals) | 0.06 ms | 0.07 ms |
-| `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.6 KiB |
+| `search_files` limit 20, p50 / p95 / p99 / max | 1.30 / 9.26 / 9.97 / 10.92 ms | 4.81 / 12.08 / 15.74 / 71.67 ms |
+| `search_files` with `root` = subdirectory, p50 / p99 | 3.92 / 16.83 ms | 9.12 / 42.34 ms |
+| `get_file_info` p50 / p99 | 0.09 / 0.16 ms | 0.09 / 0.17 ms |
+| `index_status` p50 (default: no whole-index totals) | 0.07 ms | 0.06 ms |
+| `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.9 KiB |
 | RSS after `initialize` (anonymous) | 5.0 MiB (0.4) | 5.1 MiB (0.4) |
-| RSS / VmHWM after 650 requests | 13.5 / 13.5 MiB | 14.3 / 15.3 MiB |
-| idle RSS 12 s later (anonymous) | 9.8 MiB (3.2) | 10.3 MiB (3.6) |
+| RSS / VmHWM after 650 requests | 12.9 / 13.2 MiB | 15.3 / 15.9 MiB |
+| idle RSS 12 s later (anonymous) | 10.4 MiB (3.8) | 11.4 MiB (4.8) |
 | idle CPU, context switches (30 s) | 0.000 %, 0.00/s | 0.000 %, 0.00/s |
 
-These are final numbers, after both review rounds. Every measured build
+These are final numbers, after all three review rounds. Every measured build
 returned the same results (5309 for 330 queries at 1M). The 1M median of
 `search_files` evolved as follows:
 
@@ -560,10 +560,11 @@ returned the same results (5309 for 330 queries at 1M). The 1M median of
 | race-safe `openat` metadata walk | 3.22 ms | |
 | policy inside the index budget, first cut | 7.04 ms | |
 | memoized parent verdicts + pre-classified deny patterns | 6.37 ms | |
-| stage 2 reuses the candidate stage's directory cache + head truncation for `accept`-only searches | 5.69 ms | |
+| stage 2 reuses the candidate stage's directory cache + head truncation for `accept`-only searches | 5.69 ms | a ranking bug, found in review round 3 |
+| truncation replaced by an exact top-k early stop (final) | 4.81 ms | |
 
 The starvation fix inherently resolves every candidate's parent directory;
-that is the remaining cost compared with 3.22 ms. `index_status` went from
+that is the remaining cost (about 1.6 ms) compared with 3.22 ms. `index_status` went from
 135 ms to 0.07 ms because whole-index totals are now opt-in.
 
 The stage-2 cache reuse also runs for the daemon's own searches. The

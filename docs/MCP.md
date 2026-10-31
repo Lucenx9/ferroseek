@@ -250,6 +250,21 @@ bounds.
   fixed at the root by moving the policy into the index budget, and that
   exact scenario is a test.
 
+**Third round (same model, a new session).** It confirmed **finding 2
+closed**, using a filesystem-computed oracle with 10,500 denied and hidden
+entries, ties, scoped and unscoped searches, short tokens, `/` tokens and
+stale entries. It also checked the compiled deny patterns exhaustively
+(1,365 patterns × 781 names). It found two new medium issues introduced by
+the latency optimization, both now fixed:
+
+- **Ranking.** Truncating the name ranking before the depth and recency
+  adjustments could drop the best *final* result. It is replaced by an
+  exact top-k early stop (stop once `name score + 6` falls below the k-th
+  best final score). Test: `accept_only_searches_return_the_true_top_k`,
+  which fails with the old truncation.
+- **Memory.** The per-search memo of parent verdicts is now bounded (4096
+  directories).
+
 The index-side change is opt-in (`accept: None` everywhere else). The
 daemon's own benchmark showed no regression for KRunner `Match` at 100k
 (p50 0.66 / p99 3.36 ms against 0.77 / 3.30 ms before), with relevance
@@ -264,13 +279,13 @@ indexes. Details, commands and raw reports are in
 | at 1M entries | |
 |---|---|
 | startup to `initialize` reply | 1.1 ms |
-| `search_files`, limit 20: p50 / p95 / p99 | 5.69 / 13.91 / 18.87 ms |
+| `search_files`, limit 20: p50 / p95 / p99 | 4.81 / 12.08 / 15.74 ms |
 | `get_file_info` p50 | 0.09 ms |
-| `index_status` p50 (default, no totals) | 0.07 ms |
+| `index_status` p50 (default, no totals) | 0.06 ms |
 | RSS after startup | 5.1 MiB (0.4 MiB anonymous) |
-| idle RSS after a 650-request workload | 10.3 MiB (3.6 MiB anonymous) |
+| idle RSS after a 650-request workload | 11.4 MiB (4.8 MiB anonymous) |
 
-Enforcing the policy inside the index budget costs about 2.5 ms at the 1M
+Enforcing the policy inside the index budget costs about 1.6 ms at the 1M
 median compared with the earlier, starvation-prone version (3.22 ms).
 Every candidate's parent directory has to be resolved. This was traded
 deliberately for correctness.
@@ -278,8 +293,8 @@ deliberately for correctness.
 
 ## Limitations
 
-- **`root` filters on a subdirectory are slower** (1M: p50 9.9 ms, p99
-  41 ms). They use the index's subtree scope. Allowed directories that
+- **`root` filters on a subdirectory are slower** (1M: p50 9.1 ms, p99
+  42 ms). They use the index's subtree scope. Allowed directories that
   contain every index root take a faster unscoped path.
 - **With `expose_index_totals`, `index_status` counts the whole index**
   (about 135 ms at 1M), and the totals include unauthorized directories.

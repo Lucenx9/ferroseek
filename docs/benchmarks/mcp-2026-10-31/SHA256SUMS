@@ -1,4 +1,4 @@
-5e62ca8b3473b4f55fe3e84a6cdb6d7b2fb0ad11df18667d16f9dd0b8b2a9920  target/release/ferroseek-mcp
-0b9081fe9beeb47cc242be038b42c5efb58d6df59f5e234edacd1b882724d595  target/release/ferroseekd
+249a303797a354ec2e0dec173b241786e837a4b1b634938104566266746a21f4  target/release/ferroseek-mcp
+f5c153da46bdb19948df8c541c887709a39f064e12f9c2babf39e0000d5e318e  target/release/ferroseekd
 fe7b5d9971ff69239b82daa6b8bbc0425614e32bd60851ee0b836dbfbf4ffe95  ~/.cache/ferroseek-bench-100000/data/index.sqlite
 03bd48f6d984cd50d47b8d8474b6d55779dcaa651a442ad9744aa5bacd052d5c  ~/.cache/ferroseek-bench-1000000/data/index.sqlite

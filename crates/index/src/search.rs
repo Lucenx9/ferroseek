@@ -304,18 +304,28 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     let path_filtered =
         !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden || opts.accept.is_some();
     // `accept` alone already ran on every candidate before its budget (see
-    // add_rows), so the head of the name ranking is as safe to keep as for
-    // an unfiltered search. The other filters keep their existing behaviour.
+    // add_rows). Instead of truncating the name ranking (which can drop the
+    // best *final* score), such searches stop early with an exact bound: the
+    // only positive adjustment below is the recency bonus, so a candidate
+    // can never end above `name score + MAX_BONUS`.
     let accept_only = opts.accept.is_some() && q.path_tokens.is_empty() && opts.within.is_none() && opts.include_hidden;
-    if !path_filtered || accept_only {
+    if !path_filtered {
         ranked.truncate((opts.limit.saturating_mul(3)).max(60));
     }
+    const MAX_BONUS: f32 = 6.0;
+    // Min-heap of the best `limit` final scores so far (accept-only path).
+    let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TotalF32>> = std::collections::BinaryHeap::new();
     // Reuse the directory paths resolved while collecting candidates.
     let mut paths = candidate_paths;
     let now_ns =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
     for (id, c) in ranked {
+        if accept_only && best.len() >= opts.limit && best.peek().is_some_and(|k| c.score + MAX_BONUS < k.0.0) {
+            // `ranked` is sorted by name score: no later candidate can enter
+            // the top `limit` (ties are kept: the comparison is strict).
+            break;
+        }
         let Some(parent) = c.parent else { continue };
         let Some(dir) = paths.dir(parent)? else { continue };
         let mut path = dir.path.to_vec();
@@ -337,9 +347,15 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         let age_days = (now_ns - c.mtime) as f64 / 86_400e9;
         if c.mtime > 0 && age_days >= 0.0 {
             if age_days < 7.0 {
-                score += 6.0;
+                score += MAX_BONUS;
             } else if age_days < 30.0 {
                 score += 3.0;
+            }
+        }
+        if accept_only {
+            best.push(std::cmp::Reverse(TotalF32(score)));
+            if best.len() > opts.limit {
+                best.pop();
             }
         }
         hits.push(Hit { id, path, kind: c.kind, size: c.size, mtime_ns: c.mtime, score });
@@ -412,6 +428,21 @@ fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result
         "SELECT id FROM entries WHERE id IN ({})",
         dirs.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
     )))
+}
+
+/// `f32` ordered by `total_cmp`, for the top-k heap.
+#[derive(Clone, Copy, PartialEq)]
+struct TotalF32(f32);
+impl Eq for TotalF32 {}
+impl PartialOrd for TotalF32 {
+    fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for TotalF32 {
+    fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&o.0)
+    }
 }
 
 fn path_matches(path: &std::path::Path, hidden: bool, q: &Query, opts: &SearchOptions) -> bool {

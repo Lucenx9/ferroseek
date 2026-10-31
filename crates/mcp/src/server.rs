@@ -261,6 +261,8 @@ fn validate_query(q: &str) -> Result<&str, String> {
 /// since indexing) crowd out live ones. Policy filtering happens inside the
 /// index budget and never consumes it.
 pub const MAX_CANDIDATES: usize = 8192;
+/// Upper bound on memoized parent-directory verdicts per search.
+const MEMO_DIRS: usize = 4096;
 
 /// Searches every scope, keeps only policy-visible entries that still
 /// exist, and bounds the response by count and bytes.
@@ -294,6 +296,11 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
                 return *v;
             }
             let v = policy.dir_admits(parent) && scopes.iter().any(|s| parent.starts_with(s));
+            // Bounded: a broad query over many excluded directories must not
+            // grow memory without limit; recomputing is always correct.
+            if memo.len() >= MEMO_DIRS {
+                memo.clear();
+            }
             memo.insert(parent.to_path_buf(), v);
             v
         }))
