@@ -8,11 +8,18 @@
 #             and config (~/.config/ferroseek). Nothing else is touched.
 set -euo pipefail
 PURGE=0
+if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--purge" ) ]]; then
+    echo "usage: $0 [--purge]" >&2; exit 2
+fi
 [[ "${1:-}" == "--purge" ]] && PURGE=1
 
 BINDIR="$HOME/.local/bin"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
+# Match the application's XDG handling: relative paths are ignored.
+[[ "$DATA" == /* ]] || DATA="$HOME/.local/share"
+[[ "$CONF" == /* ]] || CONF="$HOME/.config"
+
 
 if command -v systemctl >/dev/null; then
     systemctl --user disable --now ferroseek.service 2>/dev/null || true
@@ -35,6 +42,7 @@ reload_bus() {
 }
 
 command -v systemctl >/dev/null && systemctl --user daemon-reload || true
+reload_bus
 
 if [[ $PURGE == 1 ]]; then
     for d in "$DATA/ferroseek" "$CONF/ferroseek"; do

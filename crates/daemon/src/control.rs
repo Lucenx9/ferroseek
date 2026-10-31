@@ -32,25 +32,28 @@ impl Control {
         m.insert("index_path".into(), self.paths.index_file().to_string_lossy().into_owned());
         m.insert("version".into(), env!("CARGO_PKG_VERSION").into());
         m.insert("pid".into(), std::process::id().to_string());
-        ferroseek_engine::sys::trim_heap();
         m
     }
 
     async fn pause(&self) {
-        self.engine.pause();
+        let engine = self.engine.clone();
+        zruntime::unblock(move || engine.pause()).await;
     }
 
     async fn resume(&self) {
-        self.engine.resume();
+        let engine = self.engine.clone();
+        zruntime::unblock(move || engine.resume()).await;
     }
 
     /// Reconcile all roots; `full` re-stats every file.
     async fn reindex(&self, full: bool) {
-        self.engine.reindex(full);
+        let engine = self.engine.clone();
+        zruntime::unblock(move || engine.reindex(full)).await;
     }
 
     /// Drop the index and rebuild it from scratch.
     async fn rebuild(&self) {
-        self.engine.rebuild();
+        let engine = self.engine.clone();
+        zruntime::unblock(move || engine.rebuild()).await;
     }
 }

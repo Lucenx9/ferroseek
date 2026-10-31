@@ -11,6 +11,7 @@
 #   --config FILE  install FILE as ~/.config/ferroseek/config.toml if no
 #                  config exists yet (never overwrites)
 set -euo pipefail
+CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 
 BUILD=1 ENABLE=0 CONFIG=""
@@ -18,7 +19,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-build) BUILD=0 ;;
         --enable) ENABLE=1 ;;
-        --config) CONFIG="$2"; shift ;;
+        --config) [[ $# -ge 2 ]] || { echo "--config needs a file" >&2; exit 2; }; CONFIG="$2"; shift ;;
         -h|--help) sed -n '3,13p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
@@ -33,6 +34,18 @@ fi
 BINDIR="$HOME/.local/bin"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}"
+# Match the application's XDG handling: relative paths are ignored.
+[[ "$DATA" == /* ]] || DATA="$HOME/.local/share"
+[[ "$CONF" == /* ]] || CONF="$HOME/.config"
+
+# Service Exec fields and systemd specifiers have separate quoting rules.
+# Reject unsupported binary paths before writing anything.
+if [[ ! "$BINDIR" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+    echo "unsupported HOME path for service installation: use only letters, digits, _, ., / and -" >&2
+    exit 2
+fi
+[[ -z "$CONFIG" || "$CONFIG" == /* ]] || CONFIG="$CALLER_DIR/$CONFIG"
+[[ -z "$CONFIG" || -f "$CONFIG" ]] || { echo "config file not found: $CONFIG" >&2; exit 2; }
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
 [[ $BUILD == 1 ]] && cargo build --release --locked -p ferroseek-daemon -p ferroseek-cli
@@ -74,13 +87,14 @@ reload_bus() {
 
 if command -v systemctl >/dev/null; then
     systemctl --user daemon-reload
-    reload_bus
     if [[ $ENABLE == 1 ]]; then
         systemctl --user enable --now ferroseek.service
     elif systemctl --user is-active --quiet ferroseek.service; then
         systemctl --user restart ferroseek.service   # pick up the new binary
     fi
 fi
+
+reload_bus
 
 cat <<MSG
 

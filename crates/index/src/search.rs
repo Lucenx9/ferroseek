@@ -262,7 +262,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             add_rows(
                 &mut conn.prepare_cached(&format!(
                     "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
-                 WHERE names MATCH ?1{restriction} ORDER BY e.id"
+                 WHERE names MATCH ?1{restriction} ORDER BY names.rowid"
                 ))?,
                 &[&fts_phrase(&long)],
                 fts_cap,

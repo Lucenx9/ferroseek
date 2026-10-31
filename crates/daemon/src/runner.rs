@@ -217,8 +217,12 @@ impl Runner {
     async fn teardown(&self) {
         // End of a KRunner session: release reader connections and their
         // page caches until the next session.
-        self.pool.clear();
-        ferroseek_engine::sys::trim_heap();
+        let pool = self.pool.clone();
+        zruntime::unblock(move || {
+            pool.clear();
+            ferroseek_engine::sys::trim_heap();
+        })
+        .await;
     }
 }
 

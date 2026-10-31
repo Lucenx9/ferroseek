@@ -22,8 +22,16 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - run: cargo build --release --locked -p ferroseek-daemon -p ferroseek-cli
+      - run: cargo build --release --locked --workspace
+      - run: python3 tests/install-smoke.py
       - name: D-Bus smoke test (private session bus)
         run: tests/dbus-smoke.sh target/release/ferroseekd
       - name: Benchmark smoke run (10k files)
         run: target/release/ferroseek-bench --files 10000 --work "$RUNNER_TEMP/bench" > bench.md && cat bench.md
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - run: cargo check --workspace --all-targets --locked
