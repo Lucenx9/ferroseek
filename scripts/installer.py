@@ -197,7 +197,7 @@ def agent_changes(args, targets, data, env):
     mode = args.mcp_access or ('restricted' if args.allow else 'all_indexed')
     if mode != 'restricted' and args.allow:
         raise InstallError('--allow is only used with restricted MCP access')
-    if mode == 'all_indexed' and not args.dry_run:
+    if mode == 'all_indexed' and (args.register_claude or args.register_codex) and not args.dry_run:
         print('all_indexed authorizes all currently and subsequently indexed paths, subject to MCP exclusions. Indexing roots are unchanged.')
         try:
             consent = input('Type all_indexed to explicitly authorize global indexed access: ').strip()
