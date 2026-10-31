@@ -386,16 +386,11 @@ fn unconfigured_default_is_global_but_explicit_restricted_remains_empty() {
     let (err, _) = global.call("search_files", json!({"query": "report"}));
     assert!(!err);
 
-    let mut restricted = Mcp::spawn(
-        &["--index", fx.db.to_str().unwrap(), "--access-mode", "restricted"],
-        fx.t.path(),
-    );
+    let mut restricted = Mcp::spawn(&["--index", fx.db.to_str().unwrap(), "--access-mode", "restricted"], fx.t.path());
     let (err, msg) = restricted.call("search_files", json!({"query": "report"}));
     assert!(err && msg.as_str().unwrap().contains("--allow"), "{msg}");
-    let (err, _) = restricted.call(
-        "get_file_info",
-        json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}),
-    );
+    let (err, _) =
+        restricted.call("get_file_info", json!({"path": fx.root.join("work/src/main.rs").to_str().unwrap()}));
     assert!(err);
     let (_, status) = restricted.call("index_status", json!({}));
     assert_eq!(status["access_mode"], "restricted");
