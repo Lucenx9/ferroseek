@@ -89,7 +89,7 @@ an upgrade:
 ./scripts/install.sh --mcp --register-codex --mcp-access all_indexed
 ```
 
-Access modes are `all_indexed` (**new default**), `home`, and `restricted` (explicit allowlists). Guided global registration requires typed confirmation. Legacy `--allow` registrations and older TOML allowlists without an explicit mode remain restricted; a previously unconfigured MCP server will gain indexed-path access after upgrading. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
+Access modes are `all_indexed` (**new default**), `home`, and `restricted` (explicit allowlists). Guided global registration requires typed confirmation. Legacy `--allow` registrations and old TOML policy files without an explicit mode remain restricted; a previously unconfigured MCP server will gain indexed-path access after upgrading. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
 
 Read the [MCP guide](docs/MCP.md) for configuration and security.
 
