@@ -262,6 +262,18 @@ exit 0
     assert not (Path(global_env['HOME']) / '.config/ferroseek/config.toml').exists()
     uninstall(custom=global_env)
 
+    # No --mcp-access is now a global recommendation, but never silently
+    # activates: declined/EOF registration preserves the existing config.
+    default_env = environment('new-global-default')
+    default_cfg = Path(default_env['CODEX_HOME']) / 'config.toml'
+    run('--mcp', '--register-codex', '--dry-run', custom=default_env)
+    run('--mcp', '--register-codex', custom=default_env, expected=1)
+    assert not default_cfg.exists()
+    run('--mcp', '--register-codex', custom=default_env, text='all_indexed\\nyes\\n')
+    default_entry = tomllib.loads(default_cfg.read_text())['mcp_servers']['ferroseek']
+    assert default_entry['args'][-2:] == ['--access-mode', 'all_indexed']
+    uninstall(custom=default_env)
+
     # Transaction failures restore original bytes/modes, including agent configs.
     state = root / 'transaction'; targets = {'one': root / 'one', 'two': root / 'two'}
     targets['one'].write_bytes(b'old'); targets['one'].chmod(0o640)
