@@ -159,3 +159,9 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   test servers in the user's agent configs.
 - `tests/mcp-smoke.py` and `scripts/benchmark-mcp.py` (results in
   BENCHMARKS.md §10).
+
+- Stale-prefix recovery filters deleted entries inside the candidate budget
+  only after the normal query was starved. Preserve authorization before
+  filesystem access. `omitted_stale` is a lower bound; concurrent retry
+  exhaustion sets `incomplete_due_to_changes`. The 8300-deletion protocol
+  regression covers scoped/unscoped queries and limits 1/10.

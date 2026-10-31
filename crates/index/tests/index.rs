@@ -611,3 +611,42 @@ fn accept_only_searches_return_the_true_top_k() {
     }
     assert_eq!(full[0].path, Path::new("/r/needle.txt"));
 }
+
+#[test]
+fn scoped_policy_search_orders_by_final_score() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let scope = tx.upsert(root, b"scope", dir(2)).unwrap().0;
+    let mut expected = Vec::new();
+    for depth in 0..20 {
+        let mut parent = scope;
+        let mut path = PathBuf::from("/r/scope");
+        for d in 0..depth {
+            let name = format!("d{depth:02}-{d:02}");
+            parent = tx.upsert(parent, name.as_bytes(), dir(10 + depth)).unwrap().0;
+            path.push(name);
+        }
+        tx.upsert(parent, b"needle.txt", Meta { kind: Kind::File, size: 1, mtime_ns: 0, ino: 100 + depth }).unwrap();
+        expected.push(path.join("needle.txt"));
+    }
+    tx.commit().unwrap();
+    let r = Reader::open(&db).unwrap();
+    for q in ["needle", "scope/ needle", "ne"] {
+        for k in [1, 5, 20] {
+            let hits = r
+                .search(
+                    &Query::parse(q),
+                    &SearchOptions {
+                        limit: k,
+                        within: Some(PathBuf::from("/r/scope")),
+                        accept: Some(ferroseek_index::PathFilter(std::sync::Arc::new(|_: &Path| true))),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(hits.iter().map(|h| h.path.clone()).collect::<Vec<_>>(), expected[..k]);
+        }
+    }
+}

@@ -604,3 +604,33 @@ fn more_denied_candidates_than_any_cap_still_cannot_starve_or_hide() {
     assert_eq!(Mcp::paths(&v).len(), 2, "{v}");
     assert_eq!(v["more_available"], false);
 }
+
+#[test]
+fn more_than_8192_deleted_matches_do_not_hide_live_matches() {
+    let mut names: Vec<String> = (0..8300).map(|i| format!("gone/d{i:04}/needle.txt")).collect();
+    names.extend(["live/a-long-needle-survivor.txt".into(), "live/another-needle-survivor.txt".into()]);
+    let (t, root, db) = many_files_fixture(&names);
+    fs::remove_dir_all(root.join("gone")).unwrap();
+    let mut m = Mcp::spawn(&["--index", db.to_str().unwrap(), "--allow", root.to_str().unwrap()], t.path());
+    for scope in [None, Some(root.to_str().unwrap())] {
+        let mut args = json!({"query": "needle", "limit": 1});
+        if let Some(scope) = scope {
+            args["root"] = json!(scope);
+        }
+        let (err, v) = m.call("search_files", args.clone());
+        assert!(!err, "{v}");
+        assert_eq!(v["results"].as_array().unwrap().len(), 1, "{v}");
+        assert_eq!(v["more_available"], true, "{v}");
+        args["limit"] = json!(10);
+        let (err, v) = m.call("search_files", args);
+        assert!(!err, "{v}");
+        assert_eq!(
+            Mcp::paths(&v),
+            vec![
+                root.join("live/a-long-needle-survivor.txt").display().to_string(),
+                root.join("live/another-needle-survivor.txt").display().to_string(),
+            ]
+        );
+        assert_eq!(v["more_available"], false, "{v}");
+    }
+}

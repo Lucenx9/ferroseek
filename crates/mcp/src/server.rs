@@ -114,8 +114,10 @@ pub struct SearchOutput {
     pub more_available: bool,
     /// Results were cut to keep the response small.
     pub truncated_by_size: bool,
-    /// Indexed matches dropped because they no longer exist on disk.
+    /// Lower bound on stale indexed matches observed and discarded.
     pub omitted_stale: u32,
+    /// Concurrent filesystem changes exhausted bounded retry work; refine or retry.
+    pub incomplete_due_to_changes: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -257,9 +259,8 @@ fn validate_query(q: &str) -> Result<&str, String> {
 
 // ------------------------------------------------------------ core logic (sync)
 
-/// Candidate cap per scope when *stale* entries (deleted or changed on disk
-/// since indexing) crowd out live ones. Policy filtering happens inside the
-/// index budget and never consumes it.
+/// Retry cap for paths changing between candidate validation and response
+/// construction. Stable deleted entries are filtered before the index budget.
 pub const MAX_CANDIDATES: usize = 8192;
 /// Upper bound on memoized parent-directory verdicts per search.
 const MEMO_DIRS: usize = 4096;
@@ -271,7 +272,8 @@ const MEMO_DIRS: usize = 4096;
 /// (`SearchOptions::accept`), before its candidate budget: hidden, denied or
 /// out-of-scope entries can neither be observed (`more_available` counts
 /// only authorized, existing results) nor crowd out visible ones. Only
-/// stale entries, discovered on disk afterwards, can need a larger fetch.
+/// stale entries trigger a second query with disk validation inside the
+/// candidate budget, so an arbitrarily long deleted prefix cannot starve it.
 pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<SearchOutput, String> {
     let q = validate_query(&p.query)?;
     let scopes = policy.scopes(p.root.as_deref()).map_err(|e| e.to_string())?;
@@ -305,11 +307,26 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
             v
         }))
     };
+    let mut live_filter = false;
+    let mut observed_stale = 0;
     let mut fetch = limit + 1;
     // Per scope (None = one unscoped query): last results and whether the
     // index returned a full page (more may exist).
     let mut pages: Vec<(Option<PathBuf>, Vec<Hit>, bool)> = Vec::new();
-    let (visible, stale) = loop {
+    let (visible, incomplete_due_to_changes) = loop {
+        let candidate_filter = if live_filter {
+            let lexical = accept.clone();
+            let policy = policy.clone();
+            PathFilter(Arc::new(move |path: &Path| {
+                if !(lexical.0)(path) {
+                    return false;
+                }
+                let Some(base) = policy.visible_under(path) else { return false };
+                !disk_meta(base, path).is_err_and(|e| diverged(&e))
+            }))
+        } else {
+            accept.clone()
+        };
         index.with(|r| {
             if pages.is_empty() {
                 // A scope that contains every index root needs no `within`
@@ -328,7 +345,7 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
                     within: within.clone(),
                     kind: None,
                     include_hidden: true,
-                    accept: Some(accept.clone()),
+                    accept: Some(candidate_filter.clone()),
                 };
                 *hits = r.search(&query, &opts)?;
                 *more = hits.len() >= fetch;
@@ -363,9 +380,20 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
                 break;
             }
         }
+        observed_stale = observed_stale.max(stale);
         let saturated = pages.iter().any(|p| p.2);
-        if visible.len() > limit || !saturated || fetch >= MAX_CANDIDATES {
-            break (visible, stale);
+        if visible.len() > limit || !saturated {
+            break (visible, false);
+        }
+        if !live_filter && stale > 0 {
+            // Deleted matches must not consume the index candidate budget.
+            // Pay per-candidate filesystem checks only on this recovery path.
+            live_filter = true;
+            pages.clear();
+            continue;
+        }
+        if fetch >= MAX_CANDIDATES {
+            break (visible, true);
         }
         fetch = (fetch * 4).min(MAX_CANDIDATES);
     };
@@ -374,7 +402,8 @@ pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<
         results: Vec::new(),
         more_available: visible.len() > limit,
         truncated_by_size: false,
-        omitted_stale: stale,
+        omitted_stale: observed_stale,
+        incomplete_due_to_changes,
     };
     let mut bytes = 2usize;
     for (path, meta) in visible.into_iter().take(limit) {

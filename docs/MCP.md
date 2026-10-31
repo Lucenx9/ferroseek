@@ -18,7 +18,7 @@ search FerroSeek's **existing** file-name index.
 
 | tool | input | output |
 |---|---|---|
-| `search_files` | `query` (required), `root` (optional absolute dir), `limit` (optional) | `results[]` (`path`, `kind`, `size`, `modified`, `non_utf8`), `more_available`, `truncated_by_size`, `omitted_stale` |
+| `search_files` | `query` (required), `root` (optional absolute dir), `limit` (optional) | `results[]` (`path`, `kind`, `size`, `modified`, `non_utf8`), `more_available`, `truncated_by_size`, `omitted_stale`, `incomplete_due_to_changes` |
 | `get_file_info` | `path` (absolute) | `path`, `kind`, `size`, `modified`, `exists`, `up_to_date` |
 | `index_status` | — | `available`, `error`, `allowed_dirs[]` (`path`, `indexed`), `max_results`. With `expose_index_totals`: whole-index totals, size, `last_write` |
 
@@ -77,8 +77,17 @@ The access policy runs *inside* the index search, through the optional
 its own `within`/hidden filters, before its candidate budget. Hidden,
 denied or out-of-scope entries therefore never use up that budget, however
 many there are, and `more_available` reflects only authorized, existing
-results. Only stale entries (changed on disk after indexing) can call for a
-larger fetch, up to 8192 candidates per scope.
+results. If deleted entries crowd out live results, the request retries with
+filesystem validation inside the candidate budget too. A stable deleted
+prefix longer than 8192 entries no longer hides live matches. This fallback
+uses the same no-symlink metadata checks and only touches authorized paths.
+
+Concurrent changes between candidate validation and response construction can
+still require larger fetches, bounded at 8192 per scope. If that retry budget
+is exhausted, `incomplete_due_to_changes` is true: refine or retry the query.
+It is not a general filesystem snapshot/race detector. `omitted_stale` is a
+lower bound on discarded stale matches, not a full count. Existing index
+candidate limits still make ranking approximate for very broad queries.
 
 `index_status` never reports the database path. Whole-index totals, size and
 last write time describe unauthorized directories too, so they appear only
