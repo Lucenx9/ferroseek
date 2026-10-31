@@ -634,3 +634,126 @@ fn more_than_8192_deleted_matches_do_not_hide_live_matches() {
         assert_eq!(v["more_available"], false, "{v}");
     }
 }
+
+#[test]
+fn access_modes_only_expose_indexed_policy_approved_paths() {
+    let t = tempfile::Builder::new().prefix("ferro-modes-").tempdir().unwrap();
+    let home = t.path().join("home");
+    let outside = t.path().join("outside");
+    for path in [
+        home.join("one/report.txt"),
+        home.join("two/report.txt"),
+        outside.join("report.txt"),
+        outside.join("report.pem"),
+        outside.join("blocked-report.txt"),
+        outside.join("node_modules/report.txt"),
+        outside.join(".hidden-report.txt"),
+        outside.join("credentials/report.txt"),
+    ] {
+        touch(&path, b"fixture");
+    }
+    let paths = Paths { config_file: t.path().join("engine.toml"), data_dir: t.path().join("data") };
+    index(
+        &Config {
+            roots: vec![home.to_string_lossy().into_owned(), outside.to_string_lossy().into_owned()],
+            index_hidden: true,
+            ..Default::default()
+        },
+        &paths,
+    );
+    touch(&outside.join("new-report.txt"), b"not indexed");
+    let policy = t.path().join("policy.toml");
+    fs::write(&policy, "deny = [\"blocked*\"]\ndeny_exceptions = [\"report.pem\", \"blocked*\"]\n").unwrap();
+    for (mode, expected) in [
+        (
+            "all_indexed",
+            vec![
+                home.join("one/report.txt"),
+                home.join("two/report.txt"),
+                outside.join("report.txt"),
+                outside.join("report.pem"),
+            ],
+        ),
+        ("home", vec![home.join("one/report.txt"), home.join("two/report.txt")]),
+        ("restricted", vec![home.join("one/report.txt")]),
+    ] {
+        let allowed = home.join("one");
+        let mut m = Mcp::spawn(
+            &[
+                "--index",
+                paths.index_file().to_str().unwrap(),
+                "--config",
+                policy.to_str().unwrap(),
+                "--access-mode",
+                mode,
+                "--allow",
+                allowed.to_str().unwrap(),
+            ],
+            &home,
+        );
+        let (err, found) = m.call("search_files", json!({"query":"report", "limit":100}));
+        assert!(!err, "{found}");
+        let mut expected: Vec<_> = expected.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        expected.sort();
+        assert_eq!(Mcp::paths(&found), expected, "{mode}");
+        for path in [
+            outside.join("new-report.txt"),
+            outside.join("node_modules/report.txt"),
+            outside.join("blocked-report.txt"),
+            outside.join(".hidden-report.txt"),
+            outside.join("credentials/report.txt"),
+        ] {
+            assert!(m.call("get_file_info", json!({"path":path})).0, "{mode}: {path:?}");
+        }
+        assert_eq!(m.call("index_status", json!({})).1["access_mode"], mode);
+    }
+    // Global mode follows new indexed roots without manual authorization edits.
+    let mut m = Mcp::spawn(&["--index", paths.index_file().to_str().unwrap(), "--access-mode", "all_indexed"], &home);
+    let extra = t.path().join("extra");
+    touch(&extra.join("unique-global.txt"), b"x");
+    touch(&extra.join("sub/linked.txt"), b"indexed");
+    assert!(Mcp::paths(&m.call("search_files", json!({"query":"unique-global"})).1).is_empty());
+    index(
+        &Config {
+            roots: vec![
+                home.to_string_lossy().into_owned(),
+                outside.to_string_lossy().into_owned(),
+                extra.to_string_lossy().into_owned(),
+            ],
+            ..Default::default()
+        },
+        &paths,
+    );
+    assert_eq!(
+        Mcp::paths(&m.call("search_files", json!({"query":"unique-global"})).1),
+        vec![extra.join("unique-global.txt").to_string_lossy().into_owned()]
+    );
+    // Default secret protection still applies without exceptions.
+    assert!(!Mcp::paths(&m.call("search_files", json!({"query":"report"})).1).iter().any(|p| p.ends_with(".pem")));
+    // A symlink inserted after indexing cannot expose non-indexed metadata.
+    let target = t.path().join("not-indexed");
+    touch(&target.join("linked.txt"), &[b'x'; 12345]);
+    fs::remove_dir_all(extra.join("sub")).unwrap();
+    std::os::unix::fs::symlink(target, extra.join("sub")).unwrap();
+    assert!(Mcp::paths(&m.call("search_files", json!({"query":"linked.txt"})).1).is_empty());
+    let (err, info) = m.call("get_file_info", json!({"path":extra.join("sub/linked.txt")}));
+    assert!(!err, "{info}");
+    assert_eq!(info["exists"], false);
+    assert_eq!(info["size"], 7);
+}
+
+#[test]
+fn invalid_modes_and_home_fail_closed_at_startup() {
+    let t = tempfile::tempdir().unwrap();
+    for (mode, home) in [("invalid", "/tmp"), ("home", "/"), ("home", "relative"), ("home", "/tmp/../home")] {
+        let out = Command::new(env!("CARGO_BIN_EXE_ferroseek-mcp"))
+            .args(["--access-mode", mode])
+            .env("XDG_CONFIG_HOME", t.path())
+            .env("HOME", home)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "{mode}, {home}");
+        assert!(out.stdout.is_empty());
+    }
+}

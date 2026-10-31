@@ -191,3 +191,13 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   activation and systemd-analyze checks in tests/install-smoke.py.
 - tests/package-smoke.py checks every component archive without Cargo/network.
   No release is published; signed artifacts/libc baseline remain future work.
+
+## MCP access modes
+
+- restricted remains the default and preserves legacy allowlists. all_indexed
+  uses / as an authorization boundary ONLY; all results still originate from
+  Reader search/lookup. home uses the process HOME, never engine root mutation.
+- Custom deny always wins over deny_exceptions; exceptions only relax built-in
+  name rules. Hidden filtering and no-symlink metadata traversal remain active.
+- Installer global registration requires typing all_indexed, then client-edit
+  consent. Never change the live daemon or existing agent modes during tests.

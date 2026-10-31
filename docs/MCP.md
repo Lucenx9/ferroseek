@@ -34,10 +34,11 @@ substrings of the name, and a word containing `/` must match the full path.
 **Being indexed does not authorize access.** An agent sees a path only when
 all of the following hold:
 
-1. **It is strictly below an explicitly allowed directory.** Allowed
-   directories come from `--allow DIR` and/or `allow = [...]` in
-   `~/.config/ferroseek/mcp.toml`. With no allowed directories, every tool
-   refuses every path.
+1. **It is indexed and inside the selected authorization scope.** In the
+   default `restricted` mode, directories come from `--allow DIR` and/or
+   `allow = [...]` in `~/.config/ferroseek/mcp.toml`; an empty list grants
+   no access. `home` uses HOME and `all_indexed` uses the filesystem root
+   as its authorization boundary. Neither mode expands index coverage.
 2. **No component below that directory is a dotfile or dot-directory**,
    unless `allow_hidden = true`.
 3. **No component below it matches a deny pattern.** Matching is ASCII
@@ -47,8 +48,8 @@ all of the following hold:
    `.netrc`, `.env`/`*.env`, `id_rsa*`/`id_ed25519*`…, `*.pem`, `*.key`,
    `*.p12`, `*.kdbx`, `*secret*`, `*credential*` and similar (see
    `crates/mcp/src/policy.rs`). `deny = [...]` adds patterns, and
-   `deny_defaults = false` drops the built-in list. (Three of these four
-   points come from the independent review; see below.)
+   `deny_defaults = false` drops the built-in list. `deny_exceptions` can
+   override built-in patterns, but never custom denies or hidden filtering.
 
 Path handling:
 
@@ -57,7 +58,8 @@ Path handling:
 - Containment is checked by path component, so `/home/u/Progetti` does not
   authorize `/home/u/ProgettiX`.
 - Error messages never echo a refused path.
-- `"/"` cannot be allowed.
+- `--allow /` remains refused in restricted setup; global access is an
+  explicit mode selection.
 
 Containment is lexical and matches what the index stores, because the index
 never follows symlinks. A symlink in an allowed directory is reported as a
@@ -72,7 +74,7 @@ previous one, then `fstatat(AT_SYMLINK_NOFOLLOW)`
 after indexing, the entry counts as stale; the metadata of whatever the
 symlink points to is never reported.
 
-The access policy runs *inside* the index search, through the optional
+In all three modes, the access policy runs *inside* the index search, through the optional
 `SearchOptions::accept` predicate. It is applied where the index applies
 its own `within`/hidden filters, before its candidate budget. Hidden,
 denied or out-of-scope entries therefore never use up that budget, however
@@ -98,12 +100,14 @@ logs.
 Searches run per allowed directory. Unauthorized entries are filtered from
 the candidate set, and every result is checked against the policy before it
 leaves the process. `index_status` reports index totals as numbers but lists
-only the allowed directories, never the other indexed roots.
+only authorization scopes, not an enumeration of indexed roots.
 
 ### `mcp.toml`
 
 ```toml
 # ~/.config/ferroseek/mcp.toml  (all keys optional; unknown keys are errors)
+access_mode = "restricted"
+deny_exceptions = []               # exceptions to built-in name denies only
 allow = ["~/Progetti", "~/Documenti/lavoro"]
 deny = ["*.sqlite", "private-*"]   # added to the built-in deny list
 deny_defaults = true               # set false to drop the built-in list
@@ -144,6 +148,49 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
     Because of the text mirror, the full JSON-RPC message is at most about
     48 KiB.
   - At most 32 allowed directories.
+
+## Access modes
+
+`access_mode = "restricted"` is the backward-compatible default. Existing
+`allow` lists and `--allow DIR` arguments retain their behavior.
+
+- `all_indexed`: authorizes any indexed path, including roots added to the
+  index later. No manual directory list is required.
+- `home`: authorizes indexed paths beneath the server process's absolute HOME.
+- `restricted`: authorizes only explicit allowlisted directories.
+
+Select with `--access-mode MODE` or `access_mode` in the MCP policy TOML.
+The CLI mode overrides the policy file. Allowlist entries only determine scope
+in restricted mode. **Coverage and authorization are separate:** selecting a
+mode never scans the filesystem, starts an indexer, changes engine roots or
+makes unindexed files discoverable. `get_file_info` requires an index lookup
+before touching filesystem metadata in every mode.
+
+`index_status.access_mode` reports the selected authorization. `allowed_dirs`
+reports authorization scopes, not a promise of complete coverage; its `indexed`
+flag tests whether that exact directory has an index entry. Thus `/` can be
+reported with `indexed=false` in global mode even when descendant roots are
+indexed. Global mode uses `/` internally as a filter boundary, not an engine root.
+
+Hidden/name protections still apply. Global mode checks every absolute path
+component (including indexed root names), and refuses symlink traversal below
+`/`; restricted mode retains its explicit-root semantics. `home` applies the
+same checks below HOME. The underlying bounded candidate ranking is unchanged.
+
+```toml
+access_mode = "all_indexed"
+# Optional exceptions to BUILT-IN name-deny rules only:
+deny_exceptions = ["public-certificate.pem"]
+# Explicit denies always win, including over exceptions:
+deny = ["private-project", "*.backup"]
+```
+
+Exceptions are case-insensitive component globs. They do not override hidden
+filtering, authorization boundaries or indexing exclusions. Existing
+`deny_defaults = false` and `allow_hidden` remain available; defaults stay on
+and off respectively. Editing the mode in a policy file or passing the CLI
+option is an explicit server configuration choice; the interactive installer
+requires additional typed consent before enabling global agent access.
 
 ## Installation
 
@@ -198,18 +245,21 @@ command = "/home/YOU/.local/bin/ferroseek-mcp"
 args = ["--allow", "/home/YOU/Progetti"]
 ```
 
-Prefer listing allowed directories in `mcp.toml`: one policy then applies to
-every client.
+These examples retain restricted access. For global discovery, replace the
+`--allow DIR` arguments with `--access-mode all_indexed` after deciding to
+authorize current and future indexed coverage. Alternatively, keep the access
+mode and allowlist in `mcp.toml` so the policy applies to every client; explicit
+CLI mode arguments take precedence.
 
 ## Verification performed (2026-10-31)
 
-- **Unit tests** (`crates/mcp/src/policy.rs`, 8): path canonicality,
+- **Unit tests** (`crates/mcp/src/policy.rs`, 9): path canonicality,
   component-wise containment, hidden/deny rules below the allowed
   directory, config parsing, scopes, non-UTF-8 names, and a property test
   that the compiled deny patterns match exactly like the glob matcher.
 - **Unit tests** for the race-safe metadata walk (`crates/mcp/src/beneath.rs`,
   2).
-- **Protocol tests** (`crates/mcp/tests/protocol.rs`, 18). They run the
+- **Protocol tests** (`crates/mcp/tests/protocol.rs`). They run the
   real binary over stdio against indexes built by the real engine:
   - tool listing with schemas and annotations
   - allowlist confinement, traversal refusal without echoing the path
@@ -317,3 +367,5 @@ deliberately for correctness.
   `indexed: false`.
 - **Matching is name-based, not semantic.** File contents are never read or
   returned.
+
+Mode benchmarks and reproduction commands: [access-mode validation](benchmarks/mcp-access-modes/README.md).

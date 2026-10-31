@@ -16,11 +16,12 @@ use rmcp::ServiceExt;
 const HELP: &str = "\
 ferroseek-mcp — read-only MCP server (stdio) for the FerroSeek file index
 
-USAGE: ferroseek-mcp [--allow DIR]... [--config FILE] [--index FILE]
+USAGE: ferroseek-mcp [--access-mode MODE] [--allow DIR]... [--config FILE] [--index FILE]
 
-Agents can only see paths strictly below explicitly allowed directories;
+Only indexed paths can be returned. Authorization defaults to restricted;
 dotfiles and secret-looking names (keys, .env, .ssh, ...) stay hidden.
 
+  --access-mode MODE  all_indexed, home, or restricted (default)
   --allow DIR    authorize DIR (repeatable; adds to `allow` in the config)
   --config FILE  policy file (default: $XDG_CONFIG_HOME/ferroseek/mcp.toml)
   --index FILE   index database (default: $XDG_DATA_HOME/ferroseek/index.sqlite)
@@ -44,12 +45,16 @@ fn main() -> ExitCode {
         libc::mallopt(libc::M_ARENA_MAX, 2);
     }
     let mut allow = Vec::new();
+    let mut mode = None;
     let mut config: Option<PathBuf> = None;
     let mut index: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
         let r = match a.as_str() {
+            "--access-mode" => {
+                value("--access-mode").and_then(|v| policy::AccessMode::parse(&v)).map(|v| mode = Some(v))
+            }
             "--allow" => value("--allow").map(|v| allow.push(v)),
             "--config" => value("--config").map(|v| config = Some(v.into())),
             "--index" => value("--index").map(|v| index = Some(v.into())),
@@ -70,7 +75,7 @@ fn main() -> ExitCode {
     }
 
     let config_path = config.clone().unwrap_or_else(default_config);
-    let file_cfg = match std::fs::read_to_string(&config_path) {
+    let mut file_cfg = match std::fs::read_to_string(&config_path) {
         Ok(s) => match toml::from_str::<policy::FileConfig>(&s) {
             Ok(c) => c,
             Err(e) => {
@@ -85,6 +90,9 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(mode) = mode {
+        file_cfg.access_mode = mode;
+    }
     let policy = match policy::Policy::new(&file_cfg, &allow) {
         Ok(p) => p,
         Err(e) => {

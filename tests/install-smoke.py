@@ -245,6 +245,23 @@ exit 0
     uninstall(custom=agents)
     assert cp.read_bytes() == oldc and xp.read_bytes() == oldx
 
+    # Global setup needs explicit consent, including on redirected stdin.
+    global_env = environment('global-agent')
+    global_cfg = Path(global_env['CODEX_HOME']) / 'config.toml'
+    global_flags = ['--mcp', '--register-codex', '--register-claude', '--mcp-access', 'all_indexed']
+    run(*global_flags, '--dry-run', custom=global_env)
+    assert not global_cfg.exists()
+    run(*global_flags, custom=global_env, expected=1)
+    assert not global_cfg.exists()
+    run(*global_flags, custom=global_env, text='all_indexed\nyes\nyes\n')
+    global_entry = tomllib.loads(global_cfg.read_text())['mcp_servers']['ferroseek']
+    assert global_entry['args'][-2:] == ['--access-mode', 'all_indexed']
+    assert '--allow' not in global_entry['args']
+    claude_entry = json.loads((Path(global_env['CLAUDE_CONFIG_DIR']) / '.claude.json').read_text())['mcpServers']['ferroseek']
+    assert claude_entry['args'] == global_entry['args']
+    assert not (Path(global_env['HOME']) / '.config/ferroseek/config.toml').exists()
+    uninstall(custom=global_env)
+
     # Transaction failures restore original bytes/modes, including agent configs.
     state = root / 'transaction'; targets = {'one': root / 'one', 'two': root / 'two'}
     targets['one'].write_bytes(b'old'); targets['one'].chmod(0o640)

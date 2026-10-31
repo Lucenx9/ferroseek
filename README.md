@@ -94,8 +94,10 @@ MCP registration is separate and asks for confirmation:
 ./scripts/install.sh --mcp --register-codex --allow "$HOME/Projects/example"
 ```
 
-No directory is authorized automatically. Agent configuration and MCP policy
-are otherwise left alone. To uninstall, use `./scripts/uninstall.sh`; active
+For cross-project discovery, add `--mcp-access all_indexed` instead of `--allow`;
+typed confirmation is required. `restricted` remains the default. No indexing
+roots are expanded and no directory is authorized automatically. Agent
+configuration and MCP policy are otherwise left alone. To uninstall, use `./scripts/uninstall.sh`; active
 services require explicit `--stop`. Config, indexes and agent entries are
 retained. Partial removal supports `--mcp` and `--krunner`.
 

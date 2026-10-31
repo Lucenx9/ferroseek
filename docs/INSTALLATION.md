@@ -59,7 +59,7 @@ not restart KRunner, change KDE configuration or alter Baloo.
 
 ## Optional agent registration
 
-Installing MCP does not grant agents access to any directory or edit their
+Installing MCP by itself does not grant agents access to any directory or edit their
 configuration. To register it explicitly:
 
 ```sh
@@ -70,17 +70,35 @@ configuration. To register it explicitly:
   --allow "$HOME/Projects/one" --allow "$HOME/Projects/two"
 ```
 
+For cross-project discovery, the recommended setup is:
+
+```sh
+./scripts/install.sh --mcp --register-codex --mcp-access all_indexed
+./scripts/install.sh --mcp --register-claude --mcp-access all_indexed
+```
+
+You must type `all_indexed` to confirm the authorization and then `yes` for
+client configuration edits. Redirected input/EOF never enables it implicitly.
+The default mode remains `restricted`; `--mcp-access home` uses indexed HOME
+paths without listing directories. `--allow` is for restricted setup only.
+Interactive setup explains the global recommendation but an empty mode answer
+selects restricted. The engine configuration and running daemon are untouched.
+Global authorization includes any future roots that you separately add to the
+index; it does not itself add roots. Existing different agent entries are still
+refused rather than silently upgraded to broader access.
+
 Each proposed edit displays the file and complete server command and asks you
 to type `yes`. Declining/EOF leaves that agent untouched. No whole-home default
 is selected. Interactive installation can offer detected clients and ask for
-a directory. `--dry-run` previews the registration without asking or writing.
+a directory in restricted mode. `--dry-run` previews the registration without asking or writing.
 
 Registration creates only the `ferroseek` stdio entry in the user's Claude Code
 JSON or Codex TOML configuration. Other settings/servers are retained; Codex
 comments are retained. Identical entries are no-ops; differing existing entries
 are refused, not overwritten. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honored.
-The existing FerroSeek MCP policy stays in effect, including prior allowlists
-and exclusions. No policy file is automatically broadened or disabled. MCP
+MCP exclusions stay in effect. Registration explicitly sets the selected mode
+in the client command; an existing allowlist sets scope only in restricted
+mode. No policy file is rewritten. MCP
 still only reads the existing index and stays off when no client runs it.
 See [MCP security and tools](MCP.md).
 

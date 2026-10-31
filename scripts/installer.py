@@ -171,6 +171,12 @@ def choose(args, env, package):
                     if env[agent] and input(f'Offer registration for {agent}? [y/N] ').strip().lower() == 'y':
                         setattr(args, 'register_' + agent, True)
                 if (args.register_claude or args.register_codex) and not args.allow:
+                    print('Recommended: all_indexed searches existing indexed coverage, including future indexed roots. It never expands indexing.')
+                    mode = input('MCP access [all_indexed/home/restricted; Enter = restricted]: ').strip() or 'restricted'
+                    if mode not in ['all_indexed', 'home', 'restricted']:
+                        raise InstallError('unknown MCP access mode')
+                    args.mcp_access = mode
+                if (args.register_claude or args.register_codex) and not args.allow and getattr(args, 'mcp_access', 'restricted') == 'restricted':
                     directory = input('Directory to authorize for MCP (absolute path; empty = no registration): ').strip()
                     if directory:
                         args.allow = [directory]
@@ -186,12 +192,23 @@ def choose(args, env, package):
 
 def agent_changes(args, targets, data, env):
     changes = {}
+    mode = getattr(args, 'mcp_access', 'restricted')
+    if mode != 'restricted' and args.allow:
+        raise InstallError('--allow is only used with restricted MCP access')
+    if mode == 'all_indexed' and not args.dry_run:
+        print('all_indexed authorizes all currently and subsequently indexed paths, subject to MCP exclusions. Indexing roots are unchanged.')
+        try:
+            consent = input('Type all_indexed to explicitly authorize global indexed access: ').strip()
+        except EOFError:
+            consent = ''
+        if consent != 'all_indexed':
+            raise InstallError('global indexed access was not confirmed; configuration unchanged')
     for agent in ['claude', 'codex']:
         if not getattr(args, 'register_' + agent):
             continue
         if not env[agent]:
             raise InstallError(f'{agent} CLI is not available; install it before registration')
-        if not args.allow:
+        if mode == 'restricted' and not args.allow:
             raise InstallError('agent registration requires explicit --allow DIR; no home-directory default')
         roots = []
         for value in args.allow:
@@ -203,7 +220,7 @@ def agent_changes(args, targets, data, env):
             roots.append(str(p))
         if len(roots) > 32:
             raise InstallError('at most 32 MCP directories are allowed')
-        argv = ['--index', str(data / 'ferroseek/index.sqlite')]
+        argv = ['--index', str(data / 'ferroseek/index.sqlite'), '--access-mode', mode]
         if targets['policy'].exists():
             argv += ['--config', str(targets['policy'])]
         for root in roots:
@@ -464,6 +481,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for flag in ['full', 'core', 'mcp', 'krunner', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
         parser.add_argument('--' + flag, action='store_true')
+    parser.add_argument('--mcp-access', choices=['restricted', 'home', 'all_indexed'], default='restricted', help='agent authorization; all_indexed requires typed confirmation')
     parser.add_argument('--config', help='initial engine TOML; never replace an existing config')
     parser.add_argument('--allow', action='append', default=[], metavar='DIR', help='explicit MCP directory for agent registration (repeatable)')
     parser.add_argument('--uninstall', action='store_true', help=argparse.SUPPRESS)
@@ -477,6 +495,8 @@ def main():
             raise InstallError('installation options cannot be used for uninstall')
         if not args.uninstall and args.stop:
             raise InstallError('--stop is only for uninstall')
+        if args.mcp_access != 'restricted' and not (args.register_claude or args.register_codex):
+            raise InstallError('--mcp-access requires agent registration; for manual setup use ferroseek-mcp --access-mode')
         if args.allow and not (args.register_claude or args.register_codex):
             raise InstallError('--allow requires --register-claude or --register-codex')
         layout = paths()

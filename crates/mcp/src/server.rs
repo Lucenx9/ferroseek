@@ -140,6 +140,7 @@ pub struct AllowedDir {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct StatusOutput {
+    pub access_mode: String,
     /// The index database can be opened and queried.
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -455,6 +456,7 @@ pub fn status(policy: &Policy, index: &IndexAccess) -> StatusOutput {
         Ok((stats, allowed))
     });
     let mut out = StatusOutput {
+        access_mode: policy.access_mode.name().into(),
         available: false,
         error: None,
         indexed_files: None,

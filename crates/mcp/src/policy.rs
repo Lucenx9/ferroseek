@@ -2,8 +2,8 @@
 //! Access policy for MCP clients.
 //!
 //! Being in the index does not authorize an agent to see a path. A path is
-//! visible only when it is strictly below an explicitly allowed directory,
-//! and no component *below* that directory is a dotfile (unless
+//! visible only within the selected authorization scope (explicit directories,
+//! HOME, or all indexed paths), and no component below that boundary is a dotfile (unless
 //! `allow_hidden`) or matches a deny rule (secrets, keys, credentials).
 //! Everything is lexical: the index never follows symlinks, so containment
 //! is decided on the same path form the index stores.
@@ -60,10 +60,41 @@ pub const MAX_QUERY_BYTES: usize = 512;
 /// Maximum accepted input path length in bytes (PATH_MAX).
 pub const MAX_PATH_BYTES: usize = 4096;
 
+/// Authorization only: none of these modes starts or expands indexing.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessMode {
+    AllIndexed,
+    Home,
+    #[default]
+    Restricted,
+}
+
+impl AccessMode {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "all_indexed" => Ok(Self::AllIndexed),
+            "home" => Ok(Self::Home),
+            "restricted" => Ok(Self::Restricted),
+            _ => Err("access mode must be all_indexed, home or restricted".into()),
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::AllIndexed => "all_indexed",
+            Self::Home => "home",
+            Self::Restricted => "restricted",
+        }
+    }
+}
+
 /// `~/.config/ferroseek/mcp.toml`. Unknown keys are rejected.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct FileConfig {
+    pub access_mode: AccessMode,
+    /// Exceptions to built-in secret-name rules; custom deny rules still win.
+    pub deny_exceptions: Vec<String>,
     /// Directories agents may search. `~` expands. Nothing by default.
     pub allow: Vec<String>,
     /// Extra deny patterns (added to the defaults).
@@ -82,6 +113,9 @@ pub struct FileConfig {
 
 #[derive(Clone, Debug)]
 pub struct Policy {
+    pub access_mode: AccessMode,
+    exceptions: Vec<Pattern>,
+    custom_deny: Vec<Pattern>,
     allow: Vec<PathBuf>,
     deny: Vec<Pattern>,
     allow_hidden: bool,
@@ -157,6 +191,18 @@ impl Policy {
         if allow.len() > MAX_ALLOWED_DIRS {
             return Err(format!("at most {MAX_ALLOWED_DIRS} allowed directories are supported"));
         }
+        match cfg.access_mode {
+            AccessMode::Restricted => {}
+            AccessMode::AllIndexed => allow = vec![PathBuf::from("/")],
+            AccessMode::Home => {
+                let home = std::env::var("HOME").map_err(|_| "home mode requires HOME")?;
+                let home = parse_client_path(&home).map_err(|_| "home mode requires an absolute, well-formed HOME")?;
+                if home == Path::new("/") {
+                    return Err("home mode refuses HOME=/".into());
+                }
+                allow = vec![home];
+            }
+        }
         let mut deny: Vec<Vec<u8>> = Vec::new();
         if cfg.deny_defaults.unwrap_or(true) {
             // Deny matching is ASCII case-insensitive (patterns and names are
@@ -167,6 +213,13 @@ impl Policy {
         let deny = deny.into_iter().map(Pattern::compile).collect();
         let max_results = cfg.max_results.unwrap_or(50).clamp(1, HARD_MAX_RESULTS);
         Ok(Policy {
+            access_mode: cfg.access_mode,
+            exceptions: cfg
+                .deny_exceptions
+                .iter()
+                .map(|s| Pattern::compile(s.as_bytes().to_ascii_lowercase()))
+                .collect(),
+            custom_deny: cfg.deny.iter().map(|s| Pattern::compile(s.as_bytes().to_ascii_lowercase())).collect(),
             allow,
             deny,
             allow_hidden: cfg.allow_hidden,
@@ -203,7 +256,8 @@ impl Policy {
             return false;
         }
         let lower = b.to_ascii_lowercase();
-        !self.deny.iter().any(|d| d.matches(&lower))
+        !self.custom_deny.iter().any(|d| d.matches(&lower))
+            && (!self.deny.iter().any(|d| d.matches(&lower)) || self.exceptions.iter().any(|d| d.matches(&lower)))
     }
 
     fn component_ok(&self, name: &OsStr) -> bool {
@@ -280,6 +334,21 @@ impl Pattern {
 mod tests {
     use super::*;
 
+    #[test]
+    fn modes_and_exceptions_preserve_explicit_denials() {
+        let legacy: FileConfig = toml::from_str("allow = [\"/work\"]").unwrap();
+        assert_eq!(legacy.access_mode, AccessMode::Restricted);
+        let cfg: FileConfig =
+            toml::from_str("access_mode = 'all_indexed'\ndeny_exceptions = ['*.pem', '.env']\ndeny = ['private*']")
+                .unwrap();
+        let p = Policy::new(&cfg, &[]).unwrap();
+        assert!(p.visible_under(Path::new("/work/public.pem")).is_some());
+        for path in ["/work/private.pem", "/work/.env", "/credentials/public.pem", "/.hidden/public.pem"] {
+            assert!(p.visible_under(Path::new(path)).is_none(), "{path}");
+        }
+        assert!(toml::from_str::<FileConfig>("access_mode = 'unknown'").is_err());
+    }
+
     fn policy(allow: &[&str]) -> Policy {
         Policy::new(&FileConfig { allow: allow.iter().map(|s| s.to_string()).collect(), ..Default::default() }, &[])
             .unwrap()
@@ -333,6 +402,7 @@ mod tests {
             allow_hidden: true,
             max_results: Some(10_000),
             expose_index_totals: false,
+            ..Default::default()
         };
         let p = Policy::new(&cfg, &["/srv/c".into()]).unwrap();
         assert_eq!(p.allowed_dirs(), &[PathBuf::from("/srv/a"), PathBuf::from("/srv/b"), PathBuf::from("/srv/c")]);

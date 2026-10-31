@@ -610,3 +610,10 @@ budget: all survivors returned in five paired trials, without a measurable
 ordinary-query latency change. The million-file scoped p95 remains around
 89 ms in this workload. An unconvincing scoped-ranking optimization was
 rejected. This work did not modify the live desktop service or its soak test.
+
+## MCP access-mode regression check
+
+See [the isolated access-mode comparison](benchmarks/mcp-access-modes/README.md)
+for five process repetitions on 20,000 synthetic files, independent result
+oracles, stdio round trips, and resource measurements. This is a selective
+warm-cache regression check, not a new million-file or desktop benchmark.
