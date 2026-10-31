@@ -1,20 +1,19 @@
 # FerroSeek architecture
 
-Status: MVP architecture, last updated 2026-10-31. Decisions are recorded
-with the evidence that drove them.
+Status: filename/path MVP architecture, updated 2026-10-31. Technical
+decisions and historical measurements are retained with their evidence.
 
 ## Goals and non-goals
 
-- **Goal:** filename and path search over user directories, kept current in
-  near real time by inotify. It should have low, flat idle memory, run without
-  root, and be reachable from KRunner through the official `org.kde.krunner1`
-  D-Bus protocol, the same mechanism Baloo's own runner uses
-  (`/usr/share/krunner/dbusplugins/plasma-runner-baloosearch.desktop`).
-- **Goal:** plain-text content search (TXT/Markdown) as an opt-in second
-  stage.
+- **Goal:** lightweight, desktop-independent filename and path discovery
+  over configured Linux directories, kept current with inotify, without
+  root privileges or mandatory graphical dependencies.
+- **Goal:** one persistent search index shared by the CLI and optional
+  integrations: KRunner for KDE Plasma and MCP for agents.
+- **Future option:** bounded, opt-in text-content search measured separately.
 - **Non-goal for the MVP:** replacing the Baloo framework API (`Baloo::Query`,
-  KIO `baloosearch:/`, tags, Dolphin integration). Those are roadmap items in
-  `docs/ROADMAP.md`.
+  KIO `baloosearch:/`, tags or Dolphin search integration). GNOME, Rofi and
+  other launchers are planned adapters, not currently implemented.
 
 ## Workspace layout
 
@@ -24,9 +23,11 @@ with the evidence that drove them.
 | `crates/engine` (`ferroseek-engine`) | lib | config/XDG/exclusions, mount policy, scanner (reconciliation), inotify watcher, indexing pipeline (batching, pause, throttle, status) |
 | `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control interface, KRunner runner |
 | `crates/cli` (`ferroseek`) | bin | `search`, `status`, `pause`, `resume`, `index`, `rebuild`, `config` |
+| `crates/mcp` (`ferroseek-mcp`) | bin | optional read-only stdio MCP adapter and access policy, independent of KDE |
 | `crates/bench` (`ferroseek-bench`) | bin | deterministic corpus generator and benchmark runner |
 
-The brief proposed eight crates. The deletion test merged three of them:
+The original engineering brief proposed eight crates. Several of those
+responsibilities were consolidated before adding the optional MCP adapter:
 
 - **search → index.** The query SQL depends on the schema. A separate crate
   would be a pass-through that reaches into index internals.
@@ -92,10 +93,9 @@ it is idempotent, and races between the scan and events converge.
   `HashMap`s, `i32 → i64` and its inverse, about 40 B per watched directory.
   The path is recomputed from the database when the batch is applied, so it
   is always current. inotify is bound directly through `libc`
-  (`crates/engine/src/inotify.rs`), with four syscalls. The `inotify` crate
-  panics on unknown mask bits and needs stored handles to remove a watch;
-  the `notify` crate's recursive mode would also watch excluded trees such
-  as `node_modules`. Inside one debounce window:
+  (`crates/engine/src/inotify.rs`) using a small syscall surface.
+  Watches are installed only on selected indexed directories; inside one
+  debounce window:
   - `IN_MOVED_FROM`/`IN_MOVED_TO` pairs with the same cookie become a tree
     rename. That is O(1), and the watch stays valid because inotify follows
     the inode.
@@ -107,13 +107,14 @@ it is idempotent, and races between the scan and events converge.
   path no longer points at the same inode, the parent directory was moved by
   an event not yet processed. The parent is re-reconciled in a later batch
   instead of deleting data.
-- **Overflow and suspend.** On `IN_Q_OVERFLOW`, after a pause, at startup,
-  and on a timer (default every 6 h), a quick reconcile of every root runs.
-  inotify keeps its queue across suspend, so suspend loses events only
-  through overflow, which this covers.
+- **Lost events and suspend.** Queue overflow and discarded event batches
+  trigger a full reconciliation; ordinary startup and periodic checks
+  normally use the quicker directory-mtime pass. There is not yet a
+  dedicated logind-triggered reconciliation on resume; unusual missed
+  events remain a validation target.
 - **Watch exhaustion.** If `inotify_add_watch` returns `ENOSPC`, the daemon
-  keeps going in degraded mode. Those subtrees are covered only by periodic
-  reconciliation, and `status` reports how many directories are unwatched.
+  keeps going in degraded mode. Unwatched subtrees depend on reconciliation;
+  `status` reports `watch_limit_hit`. Per-root coverage is future work.
 
 ## Threads and backpressure
 
@@ -154,8 +155,9 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   - calls `malloc_trim`
 
   The daemon caps glibc at 2 malloc arenas.
-- No tokio. zbus 6 drives itself with its own small runtime (`zruntime`),
-  and everything else is plain threads.
+- The **daemon/engine** do not use Tokio: zbus 6 uses `zruntime`
+  and indexing uses plain threads. The **optional MCP process** uses its
+  own Tokio current-thread runtime and bounded blocking pool for stdio.
 - **Measured (1M files):**
   - 0.000 % idle CPU and 0 context switches per second over 30 s
   - 9.2 MiB steady-state idle RSS after a restart (3.1 MiB anonymous)
@@ -186,6 +188,22 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   for hidden ancestors, and a recency bonus. The KRunner relevance is the
   score mapped into (0, 1).
 
+## Adapter boundaries
+
+The indexer and read-only `Reader` work without a desktop environment.
+KRunner is a D-Bus adapter served by the daemon; MCP is an independent
+stdio process which opens the *same* SQLite index read-only. Neither
+creates or maintains a second index.
+
+```text
+CLI ────────────┐
+KRunner (KDE) ──┼──> shared FerroSeek index <── inotify indexing engine
+MCP (agents) ───┘
+```
+
+Only these interfaces are currently implemented. GNOME, Rofi and
+other launchers are future adapters.
+
 ## KRunner integration
 
 - `~/.local/share/krunner/dbusplugins/ferroseek.desktop`: `X-Plasma-API=DBus`,
@@ -213,7 +231,7 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 
 ## Security and privacy
 
-- No network code and no telemetry.
+- No network search service or telemetry. The core and MCP interfaces are local.
 - Data lives in `$XDG_DATA_HOME/ferroseek` (mode 0700, DB 0600) and config
   in `$XDG_CONFIG_HOME/ferroseek/config.toml`.
 - Symlinks are never followed: entries are `lstat`ed, and a symlink is
@@ -240,13 +258,13 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 - **Policy inside the budget.** The MCP passes its access policy as
   `accept`, memoized per parent directory, so denied entries can neither
   starve results nor be inferred. This came from an independent review.
-- **Policy before output.** Only explicitly allowed directories are visible;
-  being indexed is not enough. Hidden components and deny patterns below
-  the allowed directory are filtered. Client paths must be canonical
-  (`..`/`.` are refused, not normalized). Searches are scoped per allowed
-  directory. When a scope contains every index root, the search runs
-  unscoped plus a filter, avoiding the subtree walk that `within` seeds:
-  12.7 → 2.9 ms p50 at 1M (3.2 ms with the later review fixes).
+- **Policy before output.** MCP defaults to `restricted`: explicit
+  directory allowlists, with nothing visible by default. Users may
+  opt into `home` or `all_indexed`, which permit wider *already indexed*
+  paths but do not change indexing roots. Hidden and sensitive-looking
+  components remain filtered by default. Paths containing `..` or `.`
+  are refused. Policy checks occur before candidate budgets and again
+  before output. See `docs/MCP.md` for scope and latency details.
 - **Bounded output.** Results are capped by count (≤ 200) and serialized
   bytes (24 KiB). Stale results are dropped after a race-safe
   `openat`/`fstatat` walk that never follows symlinks below the allowed
