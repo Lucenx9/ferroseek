@@ -1,8 +1,7 @@
 # FerroSeek architecture
 
 Status: MVP architecture, last updated 2026-10-31. Decisions are recorded
-with the evidence that drove them. Anything marked *hypothesis* has not been
-measured yet.
+with the evidence that drove them.
 
 ## Goals and non-goals
 
@@ -89,10 +88,14 @@ it is idempotent, and races between the scan and events converge.
   insert, update or delete. In *quick* mode, a directory whose mtime is
   unchanged skips `readdir` and only descends into the child directories
   already known. *Full* mode always `readdir`s and stats every file.
-- **Events.** inotify events map `wd → dir entry id` through an in-memory
-  `HashMap<i32, (WatchDescriptor, i64)>` (about 32 B per watched directory).
+- **Events.** inotify events map `wd → dir entry id` through two in-memory
+  `HashMap`s, `i32 → i64` and its inverse, about 40 B per watched directory.
   The path is recomputed from the database when the batch is applied, so it
-  is always current. Inside one debounce window:
+  is always current. inotify is bound directly through `libc`
+  (`crates/engine/src/inotify.rs`), with four syscalls. The `inotify` crate
+  panics on unknown mask bits and needs stored handles to remove a watch;
+  the `notify` crate's recursive mode would also watch excluded trees such
+  as `node_modules`. Inside one debounce window:
   - `IN_MOVED_FROM`/`IN_MOVED_TO` pairs with the same cookie become a tree
     rename. That is O(1), and the watch stays valid because inotify follows
     the inode.
@@ -122,20 +125,41 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
         └── KRunner Match ──▶ zruntime::unblock pool ──▶ SQLite (reader conns, WAL)
 ```
 
-- Backpressure is end to end. When the indexer falls behind or is paused,
-  the bounded channel fills, the reader thread blocks, and the kernel queue
-  overflows. That raises `IN_Q_OVERFLOW`, which triggers a reconcile. Memory
-  stays bounded for any burst size.
-- The indexer runs at `nice 19` with the idle I/O class, set per thread, so
-  query threads keep normal priority. Scans honour a duty-cycle limit
+- **Backpressure is end to end.**
+  - When the indexer falls behind, the bounded channel fills, the reader
+    thread blocks, and the kernel queue overflows. That raises
+    `IN_Q_OVERFLOW`, which triggers a reconcile.
+  - More than 100k pending events in one debounce window are dropped in
+    favour of a reconcile.
+  - While paused, events are discarded and a quick reconcile runs on resume.
+
+  Memory stays bounded for any burst size. Measured: a 10k-file create,
+  rename and delete burst, with 0 overflows and a peak RSS under 30 MiB at
+  1M files.
+- The indexer runs at `nice 19` with the idle I/O class, set per thread,
+  so query threads keep normal priority. Scans honour a duty-cycle limit
   (`max_cpu_percent`).
+- **Scan transactions** last 1 s or 200k row operations. That was measured
+  on 1M files: 57 % fewer bytes written than 100 ms transactions, at no
+  memory cost (`docs/BENCHMARKS.md` §4). Events that arrive during a slice
+  wait at most 1 s.
 - KRunner queries run on `zruntime::unblock` pool threads, which exit after
-  10 s idle. Reader connections live in a small pool and are dropped after
-  60 s idle, so an idle daemon holds only the writer connection's bounded
-  page cache.
-- No tokio. zbus 6 drives itself with its own small runtime (`zruntime`), and
-  everything else is plain threads. *Hypothesis:* idle RSS under 10 MiB and
-  zero CPU wakeups at idle. To be measured in `docs/BENCHMARKS.md`.
+  10 s idle.
+  - Reader connections live in a small pool (at most 4) that KRunner's
+    `Teardown` empties at the end of every session.
+  - `Status` uses a short-lived reader.
+- **Idle release.** After 5 s without work, the engine:
+  - checkpoints and truncates the WAL
+  - frees the writer's page cache (`PRAGMA shrink_memory`)
+  - calls `malloc_trim`
+
+  The daemon caps glibc at 2 malloc arenas.
+- No tokio. zbus 6 drives itself with its own small runtime (`zruntime`),
+  and everything else is plain threads.
+- **Measured (1M files):**
+  - 0.000 % idle CPU and 0 context switches per second over 30 s
+  - 9.2 MiB steady-state idle RSS after a restart (3.1 MiB anonymous)
+  - about 26 MiB peak during the initial index
 
 ## Search semantics and ranking
 
@@ -167,8 +191,19 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 - The match id is a percent-encoded `file://` URL, valid UTF-8 even for
   non-UTF-8 paths. `Run` decodes it, checks that the path is in the index,
   and opens it with `xdg-open <path>` as a single argv entry (no shell).
-  `XDG_ACTIVATION_TOKEN` comes from `SetActivationToken`. The "Open
-  containing folder" action uses `org.freedesktop.FileManager1.ShowItems`.
+  The opener runs inside `systemd-run --user --scope` when a user manager
+  is available, so applications never become part of `ferroseek.service`
+  and its limits, restarts or `KillMode` cannot touch them. Verified live:
+  Gwenview ran in its own `app-…service`. `XDG_ACTIVATION_TOKEN` comes from
+  `SetActivationToken`. The "Open containing folder" action uses
+  `org.freedesktop.FileManager1.ShowItems`.
+- `X-Plasma-API=DBus` rather than `DBus2`: with `DBus2`, KRunner suspends
+  matching until `Config` replies, and FerroSeek has no runtime config to
+  report.
+- **Installation note found in live testing.** dbus-broker (Arch's session
+  bus) does not watch service directories, so the installer calls
+  `org.freedesktop.DBus.ReloadConfig`. Without it, KRunner gets "name is not
+  activatable".
 
 ## Security and privacy
 

@@ -28,7 +28,8 @@ fn index_search_status_config() {
     fs::write(root.join("Music/Album/01 - Intro Track.flac"), b"x").unwrap();
     fs::write(root.join("Music/playlist-track-list.m3u"), b"x").unwrap();
     fs::write(root.join(".hidden-track"), b"x").unwrap();
-    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\nindex_hidden = true\n", root.display())).unwrap();
+    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\nindex_hidden = true\n", root.display()))
+        .unwrap();
 
     let o = run(t.path(), &["index"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

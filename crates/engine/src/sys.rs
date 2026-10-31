@@ -66,7 +66,13 @@ pub fn lower_current_thread_priority() {
         const IOPRIO_CLASS_IDLE: libc::c_long = 3;
         const IOPRIO_CLASS_SHIFT: libc::c_long = 13;
         const IOPRIO_WHO_PROCESS: libc::c_long = 1;
-        if libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid as libc::c_long, IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT) != 0 {
+        if libc::syscall(
+            libc::SYS_ioprio_set,
+            IOPRIO_WHO_PROCESS,
+            tid as libc::c_long,
+            IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT,
+        ) != 0
+        {
             log::debug!("ioprio_set failed: {}", io::Error::last_os_error());
         }
     }

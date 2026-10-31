@@ -106,7 +106,7 @@ fn acquire(paths: &Paths) -> Result<InstanceLock, EngineError> {
 }
 
 fn rules(cfg: &Config, paths: &Paths) -> Rules {
-    Rules::new(cfg, &[paths.data_dir.clone()])
+    Rules::new(cfg, std::slice::from_ref(&paths.data_dir))
 }
 
 fn refresh_counts(ix: &Indexer, status: &Status) {
@@ -146,7 +146,8 @@ impl Engine {
         let lock = acquire(paths)?;
         let status = Arc::new(Status::default());
         let ino = Inotify::new()?;
-        let ix = Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), Some(ino.clone()), status.clone());
+        let ix =
+            Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), Some(ino.clone()), status.clone());
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_BATCHES);
 
         let wake = Arc::new(WakePipe::new()?);
@@ -180,14 +181,12 @@ impl Engine {
         let cfg = cfg.clone();
         let paths = paths.clone();
         let st = status.clone();
-        let indexer = std::thread::Builder::new()
-            .name("fs-indexer".into())
-            .spawn(move || {
-                if cfg.low_priority {
-                    lower_current_thread_priority();
-                }
-                run_indexer(ix, rx, &cfg, &paths, st);
-            })?;
+        let indexer = std::thread::Builder::new().name("fs-indexer".into()).spawn(move || {
+            if cfg.low_priority {
+                lower_current_thread_priority();
+            }
+            run_indexer(ix, rx, &cfg, &paths, st);
+        })?;
         Ok(Engine {
             tx,
             status,
@@ -264,7 +263,8 @@ impl Drop for Engine {
 fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &Paths, status: Arc<Status>) {
     let status = &status;
     let debounce = Duration::from_millis(cfg.debounce_ms);
-    let periodic = (cfg.reconcile_interval_minutes > 0).then(|| Duration::from_secs(cfg.reconcile_interval_minutes * 60));
+    let periodic =
+        (cfg.reconcile_interval_minutes > 0).then(|| Duration::from_secs(cfg.reconcile_interval_minutes * 60));
     let duty = cfg.max_cpu_percent.clamp(1, 100);
     let mut next_periodic = periodic.map(|p| Instant::now() + p);
     let mut paused = false;

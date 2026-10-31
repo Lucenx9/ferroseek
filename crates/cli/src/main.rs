@@ -172,7 +172,13 @@ fn main() -> ExitCode {
             let opts = SearchOptions {
                 limit,
                 within,
-                kind: if dirs { Some(Kind::Dir) } else if files { Some(Kind::File) } else { None },
+                kind: if dirs {
+                    Some(Kind::Dir)
+                } else if files {
+                    Some(Kind::File)
+                } else {
+                    None
+                },
                 include_hidden: !no_hidden,
             };
             let hits = match reader.search(&Query::parse(&query.join(" ")), &opts) {
@@ -192,7 +198,8 @@ fn main() -> ExitCode {
                         h.path.display()
                     )
                 } else {
-                    out.write_all(h.path.as_os_str().as_bytes()).and_then(|_| out.write_all(if null { b"\0" } else { b"\n" }))
+                    out.write_all(h.path.as_os_str().as_bytes())
+                        .and_then(|_| out.write_all(if null { b"\0" } else { b"\n" }))
                 };
                 if r.is_err() {
                     return ExitCode::SUCCESS; // broken pipe (e.g. `| head`)
@@ -225,7 +232,13 @@ fn main() -> ExitCode {
                     match Reader::open(&paths.index_file()).and_then(|r| r.stats()) {
                         Ok(s) => {
                             println!("  index_path: {}", paths.index_file().display());
-                            println!("  files: {}\n  dirs: {}\n  disk_bytes: {} ({})", s.files, s.dirs, s.disk_bytes, human(s.disk_bytes));
+                            println!(
+                                "  files: {}\n  dirs: {}\n  disk_bytes: {} ({})",
+                                s.files,
+                                s.dirs,
+                                s.disk_bytes,
+                                human(s.disk_bytes)
+                            );
                             for r in s.roots {
                                 println!("  root: {}", r.display());
                             }
@@ -253,12 +266,14 @@ fn main() -> ExitCode {
                 _ => (true, true),
             };
             let r = if rebuild { daemon_call("Rebuild", None) } else { daemon_call("Reindex", Some(full)) };
-            match r {
-                Ok(Some(_)) => {
-                    println!("{} requested from the daemon; see `ferroseek status`", if rebuild { "rebuild" } else { "reindex" });
-                    return ExitCode::SUCCESS;
-                }
-                Ok(None) | Err(_) => {}
+            // No daemon (or no session bus): fall through to a foreground run,
+            // which the instance lock keeps from racing a daemon.
+            if let Ok(Some(_)) = r {
+                println!(
+                    "{} requested from the daemon; see `ferroseek status`",
+                    if rebuild { "rebuild" } else { "reindex" }
+                );
+                return ExitCode::SUCCESS;
             }
             let cfg = match Config::load(&paths.config_file) {
                 Ok(c) => c,
@@ -290,9 +305,16 @@ fn main() -> ExitCode {
                     Err(e) => return die(e),
                 }
             };
-            println!("# config file: {}{}", paths.config_file.display(), if paths.config_file.exists() { "" } else { " (absent: defaults)" });
+            println!(
+                "# config file: {}{}",
+                paths.config_file.display(),
+                if paths.config_file.exists() { "" } else { " (absent: defaults)" }
+            );
             println!("# index:       {}", paths.index_file().display());
-            println!("# roots:       {}", cfg.root_paths().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "));
+            println!(
+                "# roots:       {}",
+                cfg.root_paths().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            );
             print!("{}", cfg.to_toml());
             ExitCode::SUCCESS
         }

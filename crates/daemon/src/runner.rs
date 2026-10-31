@@ -156,7 +156,8 @@ impl Runner {
         if query.trim().chars().count() < 2 {
             return Vec::new();
         }
-        let (pool, mime, latest, home) = (self.pool.clone(), self.mime.clone(), self.generation.clone(), self.home.clone());
+        let (pool, mime, latest, home) =
+            (self.pool.clone(), self.mime.clone(), self.generation.clone(), self.home.clone());
         zruntime::unblock(move || {
             // KRunner drops replies for superseded queries; skip the work.
             if latest.load(Ordering::SeqCst) != my_gen {

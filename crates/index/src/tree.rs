@@ -100,9 +100,7 @@ impl<'c> Txn<'c> {
 
     /// Child directories of `parent` as `(id, name)`.
     pub fn child_dirs(&self, parent: Id) -> Result<Vec<(Id, Vec<u8>)>> {
-        let mut st = self
-            .tx
-            .prepare_cached("SELECT id, name FROM entries WHERE parent = ?1 AND kind = 1")?;
+        let mut st = self.tx.prepare_cached("SELECT id, name FROM entries WHERE parent = ?1 AND kind = 1")?;
         let rows = st.query_map([parent], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -131,9 +129,7 @@ impl<'c> Txn<'c> {
             )?
             .execute(params![parent, name, key, meta.kind as i64, meta.size as i64, mtime, meta.ino as i64])?;
         let id = self.tx.last_insert_rowid();
-        self.tx
-            .prepare_cached("INSERT INTO names(rowid, key) VALUES(?1, ?2)")?
-            .execute(params![id, key])?;
+        self.tx.prepare_cached("INSERT INTO names(rowid, key) VALUES(?1, ?2)")?.execute(params![id, key])?;
         self.ops += 1;
         Ok(id)
     }
@@ -212,14 +208,15 @@ impl<'c> Txn<'c> {
     }
 
     fn collect_doomed(&mut self, id: Id, include_self: bool) -> Result<()> {
-        self.tx.prepare_cached(
-            "INSERT OR IGNORE INTO doomed(id)
+        self.tx
+            .prepare_cached(
+                "INSERT OR IGNORE INTO doomed(id)
              WITH RECURSIVE sub(id) AS (
                  SELECT id FROM entries WHERE id = ?1 UNION ALL
                  SELECT e.id FROM entries e JOIN sub ON e.parent = sub.id)
              SELECT id FROM sub WHERE ?2 OR id != ?1",
-        )?
-        .execute(params![id, include_self])?;
+            )?
+            .execute(params![id, include_self])?;
         Ok(())
     }
 
@@ -236,10 +233,7 @@ impl<'c> Txn<'c> {
                 del.execute([id])?;
             }
         }
-        let n = self
-            .tx
-            .prepare_cached("DELETE FROM entries WHERE id IN (SELECT id FROM doomed)")?
-            .execute([])?;
+        let n = self.tx.prepare_cached("DELETE FROM entries WHERE id IN (SELECT id FROM doomed)")?.execute([])?;
         self.tx.prepare_cached("DELETE FROM doomed")?.execute([])?;
         self.ops += n;
         Ok(n)
@@ -260,9 +254,7 @@ impl<'c> Txn<'c> {
             .prepare_cached("UPDATE entries SET parent=?2, name=?3, key=?4 WHERE id=?1")?
             .execute(params![id, new_parent, new_name, key])?;
         self.tx.prepare_cached("DELETE FROM names WHERE rowid = ?1")?.execute([id])?;
-        self.tx
-            .prepare_cached("INSERT INTO names(rowid, key) VALUES(?1, ?2)")?
-            .execute(params![id, key])?;
+        self.tx.prepare_cached("INSERT INTO names(rowid, key) VALUES(?1, ?2)")?.execute(params![id, key])?;
         self.ops += 1;
         Ok(())
     }

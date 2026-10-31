@@ -117,16 +117,47 @@ impl Default for Config {
 /// copied from Baloo's list), covering the same categories.
 pub const DEFAULT_EXCLUDE_NAMES: &[&str] = &[
     // version control
-    ".git", ".hg", ".svn", ".bzr", "_darcs", "CVS",
+    ".git",
+    ".hg",
+    ".svn",
+    ".bzr",
+    "_darcs",
+    "CVS",
     // dependency and build trees
-    "node_modules", "bower_components", "__pycache__", ".venv", "venv", ".tox",
-    ".mypy_cache", ".pytest_cache", ".gradle", "CMakeFiles", ".ccache", ".cargo",
+    "node_modules",
+    "bower_components",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".gradle",
+    "CMakeFiles",
+    ".ccache",
+    ".cargo",
     // temporaries
-    "*~", "*.swp", "*.swo", "*.tmp", "*.part", "*.crdownload", ".#*", "#*#",
+    "*~",
+    "*.swp",
+    "*.swo",
+    "*.tmp",
+    "*.part",
+    "*.crdownload",
+    ".#*",
+    "#*#",
     // compiled objects
-    "*.o", "*.obj", "*.pyc", "*.pyo", "*.class", "*.so", "*.a", "*.la", "*.lo",
+    "*.o",
+    "*.obj",
+    "*.pyc",
+    "*.pyo",
+    "*.class",
+    "*.so",
+    "*.a",
+    "*.la",
+    "*.lo",
     // misc
-    "lost+found", ".Trash-*",
+    "lost+found",
+    ".Trash-*",
 ];
 
 #[derive(Debug)]
@@ -241,8 +272,11 @@ pub struct Rules {
 impl Rules {
     /// `extra_paths` are always excluded too (FerroSeek's own data dir).
     pub fn new(cfg: &Config, extra_paths: &[PathBuf]) -> Rules {
-        let (globs, exact): (Vec<_>, Vec<_>) =
-            cfg.exclude_names.iter().map(|s| s.as_bytes().to_vec()).partition(|s| s.contains(&b'*') || s.contains(&b'?'));
+        let (globs, exact): (Vec<_>, Vec<_>) = cfg
+            .exclude_names
+            .iter()
+            .map(|s| s.as_bytes().to_vec())
+            .partition(|s| s.contains(&b'*') || s.contains(&b'?'));
         let mut paths: Vec<PathBuf> = cfg.exclude_paths.iter().map(|p| normalize(&expand(p))).collect();
         paths.extend(extra_paths.iter().cloned());
         Rules {
@@ -348,8 +382,7 @@ mod tests {
 
     #[test]
     fn rules_hidden_names_paths() {
-        let mut c = Config::default();
-        c.exclude_paths = vec!["/home/u/private".into()];
+        let mut c = Config { exclude_paths: vec!["/home/u/private".into()], ..Default::default() };
         let r = Rules::new(&c, &[PathBuf::from("/home/u/.local/share/ferroseek")]);
         let d = Path::new("/home/u");
         assert!(r.excluded(d, b".bashrc"));

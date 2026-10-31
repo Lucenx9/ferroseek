@@ -72,9 +72,7 @@ fn check_version(conn: &Connection) -> Result<()> {
         return Err(Error::Incompatible(format!("not a FerroSeek index (application_id {app:#x})")));
     }
     if ver != SCHEMA_VERSION {
-        return Err(Error::Incompatible(format!(
-            "schema version {ver}, this build uses {SCHEMA_VERSION}"
-        )));
+        return Err(Error::Incompatible(format!("schema version {ver}, this build uses {SCHEMA_VERSION}")));
     }
     Ok(())
 }
@@ -100,9 +98,7 @@ pub(crate) fn mark_clean(conn: &Connection, clean: bool) -> Result<()> {
 }
 
 fn was_clean(conn: &Connection) -> Result<bool> {
-    let v: Option<i64> = conn
-        .query_row("SELECT value FROM meta WHERE key='clean_shutdown'", [], |r| r.get(0))
-        .ok();
+    let v: Option<i64> = conn.query_row("SELECT value FROM meta WHERE key='clean_shutdown'", [], |r| r.get(0)).ok();
     Ok(v == Some(1))
 }
 
@@ -161,10 +157,7 @@ pub(crate) fn open_writer(path: &Path) -> Result<(Connection, OpenOutcome)> {
 }
 
 pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     conn.busy_timeout(std::time::Duration::from_secs(2))?;
     conn.execute_batch("PRAGMA cache_size=-2048; PRAGMA query_only=1;")?;
     check_version(&conn)?;

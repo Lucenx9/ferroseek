@@ -231,10 +231,8 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         ranked.truncate((opts.limit * 3).max(60));
     }
     let mut paths = PathCache::new(conn);
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0);
+    let now_ns =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit * 3));
     for (id, c) in ranked {
         let Some(parent) = c.parent else { continue };
@@ -321,8 +319,7 @@ impl<'c> PathCache<'c> {
                 }
                 break;
             }
-            let row: Option<(Option<Id>, Vec<u8>)> =
-                st.query_row([cur], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+            let row: Option<(Option<Id>, Vec<u8>)> = st.query_row([cur], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
             let Some((parent, name)) = row else {
                 self.dirs.insert(id, None);
                 return Ok(None);

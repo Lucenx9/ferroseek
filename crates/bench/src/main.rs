@@ -40,17 +40,17 @@ impl Rng {
 }
 
 const WORDS: &[&str] = &[
-    "report", "invoice", "project", "draft", "final", "notes", "meeting", "budget", "photo", "summary",
-    "config", "main", "test", "utils", "index", "readme", "license", "backup", "archive", "image",
-    "video", "music", "document", "letter", "resume", "thesis", "chapter", "design", "mockup", "logo",
-    "icon", "server", "client", "module", "build", "release", "data", "export", "import", "schema",
-    "kernel", "driver", "network", "audio", "screen", "holiday", "family", "contract", "receipt", "tax",
-    "plan", "roadmap", "spec", "review", "lecture", "slides", "paper", "dataset", "results", "analysis",
-    "chart", "table", "garden", "recipe", "travel", "wedding", "school", "work", "personal", "scan",
+    "report", "invoice", "project", "draft", "final", "notes", "meeting", "budget", "photo", "summary", "config",
+    "main", "test", "utils", "index", "readme", "license", "backup", "archive", "image", "video", "music", "document",
+    "letter", "resume", "thesis", "chapter", "design", "mockup", "logo", "icon", "server", "client", "module", "build",
+    "release", "data", "export", "import", "schema", "kernel", "driver", "network", "audio", "screen", "holiday",
+    "family", "contract", "receipt", "tax", "plan", "roadmap", "spec", "review", "lecture", "slides", "paper",
+    "dataset", "results", "analysis", "chart", "table", "garden", "recipe", "travel", "wedding", "school", "work",
+    "personal", "scan",
 ];
 const EXTS: &[&str] = &[
-    "txt", "md", "pdf", "jpg", "png", "rs", "py", "cpp", "h", "json", "toml", "odt", "docx", "xlsx",
-    "mp3", "flac", "mp4", "html", "css", "js", "ts", "zip", "tar.gz", "svg", "log", "csv", "kra",
+    "txt", "md", "pdf", "jpg", "png", "rs", "py", "cpp", "h", "json", "toml", "odt", "docx", "xlsx", "mp3", "flac",
+    "mp4", "html", "css", "js", "ts", "zip", "tar.gz", "svg", "log", "csv", "kra",
 ];
 const UNICODE: &[&str] = &["Übersicht", "résumé", "日本語", "Ελληνικά", "café", "naïve", "Straße", "русский"];
 
@@ -107,7 +107,11 @@ fn generate(root: &Path, n: usize, seed: u64) -> Corpus {
         let name = match r.below(12) {
             0 => format!("{} {}", cap(r.pick(WORDS)), r.pick(UNICODE)),
             1 => format!("{}-{}", r.pick(WORDS), 2000 + r.below(26)),
-            _ => format!("{}{}", cap(r.pick(WORDS)), if r.below(3) == 0 { format!("_{}", r.below(100)) } else { String::new() }),
+            _ => format!(
+                "{}{}",
+                cap(r.pick(WORDS)),
+                if r.below(3) == 0 { format!("_{}", r.below(100)) } else { String::new() }
+            ),
         };
         let p = parent.join(name);
         if fs::create_dir(&p).is_ok() {
@@ -177,7 +181,8 @@ fn proc_cpu_ticks(pid: u32) -> u64 {
     let s = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
     let after = s.rsplit_once(')').map(|x| x.1).unwrap_or("");
     let f: Vec<&str> = after.split_whitespace().collect();
-    f.get(11).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0) + f.get(12).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
+    f.get(11).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
+        + f.get(12).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0)
 }
 
 /// Sum of context switches over all threads (≈ wakeups).
@@ -239,7 +244,13 @@ impl Daemon {
         zbus::block_on(async {
             let m = self
                 .conn
-                .call_method(Some(BUS), "/io/github/ferroseek/FerroSeek", Some("io.github.ferroseek.FerroSeek1"), "Status", &())
+                .call_method(
+                    Some(BUS),
+                    "/io/github/ferroseek/FerroSeek",
+                    Some("io.github.ferroseek.FerroSeek1"),
+                    "Status",
+                    &(),
+                )
                 .await
                 .ok()?;
             m.body().deserialize::<HashMap<String, String>>().ok()
@@ -250,7 +261,9 @@ impl Daemon {
         let t = Instant::now();
         loop {
             if let Some(s) = self.status() {
-                if s.get("state").map(String::as_str) == Some("idle") && s.get("queued_dirs").map(String::as_str) == Some("0") {
+                if s.get("state").map(String::as_str) == Some("idle")
+                    && s.get("queued_dirs").map(String::as_str) == Some("0")
+                {
                     return t.elapsed();
                 }
             }
@@ -258,14 +271,19 @@ impl Daemon {
             // Fine-grained at first, then back off: each Status runs a COUNT
             // over the index and holds a read snapshot, which would delay WAL
             // checkpoints and distort the write measurements.
-            std::thread::sleep(if t.elapsed() < Duration::from_secs(2) { Duration::from_millis(10) } else { Duration::from_millis(250) });
+            std::thread::sleep(if t.elapsed() < Duration::from_secs(2) {
+                Duration::from_millis(10)
+            } else {
+                Duration::from_millis(250)
+            });
         }
     }
 
     /// End-to-end KRunner-equivalent query.
     fn krunner_match(&self, q: &str) -> Vec<String> {
         zbus::block_on(async {
-            let m = self.conn.call_method(Some(BUS), "/runner", Some("org.kde.krunner1"), "Match", &(q,)).await.unwrap();
+            let m =
+                self.conn.call_method(Some(BUS), "/runner", Some("org.kde.krunner1"), "Match", &(q,)).await.unwrap();
             type M = (String, String, String, i32, f64, HashMap<String, zbus::OwnedVariant>);
             m.body().deserialize::<Vec<M>>().unwrap().into_iter().map(|x| x.0).collect()
         })
@@ -382,7 +400,11 @@ fn main() {
         t.elapsed().as_secs_f64()
     );
     let write_cfg = |cpu: u32| {
-        fs::write(work.join("config.toml"), format!("roots = [\"{}\"]\nmax_cpu_percent = {cpu}\n", corpus_dir.display())).unwrap();
+        fs::write(
+            work.join("config.toml"),
+            format!("roots = [\"{}\"]\nmax_cpu_percent = {cpu}\n", corpus_dir.display()),
+        )
+        .unwrap();
     };
 
     // 1. Initial indexing, default throttle and unthrottled.
@@ -406,11 +428,18 @@ fn main() {
         );
         say!("| ↳ CPU time (user+sys) | {cpu_s:.2} s |");
         say!("| ↳ peak RSS (VmHWM) | {} |", mib(st["VmHWM"]));
-        say!("| ↳ disk read / written (/proc/pid/io) | {:.1} MiB / {:.1} MiB |", rb as f64 / 1048576.0, wb as f64 / 1048576.0);
+        say!(
+            "| ↳ disk read / written (/proc/pid/io) | {:.1} MiB / {:.1} MiB |",
+            rb as f64 / 1048576.0,
+            wb as f64 / 1048576.0
+        );
         say!("| ↳ indexed files / dirs / watched dirs | {} / {} / {} |", s["files"], s["dirs"], s["watched_dirs"]);
         if cpu == 50 || only_initial {
             if only_initial {
-                say!("| index size on disk (db + wal) | {:.1} MiB |", s["disk_bytes"].parse::<f64>().unwrap_or(0.0) / 1048576.0);
+                say!(
+                    "| index size on disk (db + wal) | {:.1} MiB |",
+                    s["disk_bytes"].parse::<f64>().unwrap_or(0.0) / 1048576.0
+                );
             }
             d.stop();
         } else {
@@ -440,7 +469,12 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let cpu = (proc_cpu_ticks(pid) - c0) as f64 / ticks_per_sec();
     let wake = (proc_ctxt(pid) - x0) as f64 / secs;
     let st = proc_status(pid);
-    say(format!("| idle RSS (anon + file-backed) | {} ({} anon, {} file) |", mib(st["VmRSS"]), mib(st["RssAnon"]), mib(st["RssFile"])));
+    say(format!(
+        "| idle RSS (anon + file-backed) | {} ({} anon, {} file) |",
+        mib(st["VmRSS"]),
+        mib(st["RssAnon"]),
+        mib(st["RssFile"])
+    ));
     say(format!("| idle CPU over {secs:.0} s | {:.3} % ({cpu:.2} s) |", 100.0 * cpu / secs));
     say(format!("| idle context switches (all threads) | {wake:.2} /s |"));
     say(format!("| idle threads | {} |", st["Threads"]));
@@ -538,15 +572,18 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         let (ua, ub) = (file_url(&a), file_url(&b));
         let t = Instant::now();
         fs::write(&a, b"x").unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-alpha")).contains(&ua)).expect("create");
+        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-alpha")).contains(&ua))
+            .expect("create");
         c_ms.push(t.elapsed().as_secs_f64() * 1e3);
         let t = Instant::now();
         fs::rename(&a, &b).unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).contains(&ub)).expect("rename");
+        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).contains(&ub))
+            .expect("rename");
         r_ms.push(t.elapsed().as_secs_f64() * 1e3);
         let t = Instant::now();
         fs::remove_file(&b).unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).is_empty()).expect("delete");
+        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).is_empty())
+            .expect("delete");
         d_ms.push(t.elapsed().as_secs_f64() * 1e3);
     }
     say(format!("| change → visible in `Match`: create (debounce 200 ms) | {} |", lat(&c_ms)));
@@ -586,12 +623,20 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         count_hits(db, "renamedfile-", burst + 10) == burst && count_hits(db, "burstfile-", 10) == 0
     })
     .expect("burst rename");
-    say(format!("| burst: rename {burst} files ({:.2} s) → consistent | {:.2} s after last rename |", write_time.as_secs_f64(), done.as_secs_f64()));
+    say(format!(
+        "| burst: rename {burst} files ({:.2} s) → consistent | {:.2} s after last rename |",
+        write_time.as_secs_f64(),
+        done.as_secs_f64()
+    ));
     let moved = dir.join("burst-dir-moved");
     let t = Instant::now();
     fs::rename(&bdir, &moved).unwrap();
-    wait_until(Duration::from_secs(60), || count_hits(db, "burst-dir-moved/ renamedfile-", burst + 10) == burst).expect("dir rename");
-    say(format!("| rename directory holding {burst} files → visible under new path | {:.0} ms |", t.elapsed().as_secs_f64() * 1e3));
+    wait_until(Duration::from_secs(60), || count_hits(db, "burst-dir-moved/ renamedfile-", burst + 10) == burst)
+        .expect("dir rename");
+    say(format!(
+        "| rename directory holding {burst} files → visible under new path | {:.0} ms |",
+        t.elapsed().as_secs_f64() * 1e3
+    ));
     let t = Instant::now();
     fs::remove_dir_all(&moved).unwrap();
     let write_time = t.elapsed();
@@ -600,7 +645,11 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         count_hits(db, "renamedfile-", 10) == 0
     })
     .expect("burst delete");
-    say(format!("| delete tree of {burst} files ({:.2} s) → gone from index | {:.2} s after deletion |", write_time.as_secs_f64(), done.as_secs_f64()));
+    say(format!(
+        "| delete tree of {burst} files ({:.2} s) → gone from index | {:.2} s after deletion |",
+        write_time.as_secs_f64(),
+        done.as_secs_f64()
+    ));
     let (rb1, wb1) = proc_io(pid);
     let s = d.status().unwrap();
     say(format!(
@@ -621,7 +670,10 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let t = Instant::now();
     let d = Daemon::start(bin, work);
     d.wait_idle(Duration::from_secs(3600));
-    say(format!("| restart on unchanged tree → idle (quick reconcile + watches) | {:.2} s |", t.elapsed().as_secs_f64()));
+    say(format!(
+        "| restart on unchanged tree → idle (quick reconcile + watches) | {:.2} s |",
+        t.elapsed().as_secs_f64()
+    ));
     std::thread::sleep(Duration::from_secs(12));
     let st = proc_status(d.pid());
     say(format!(
@@ -638,7 +690,9 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let _ = fs::remove_dir_all(work.join("data"));
     let d = Daemon::start(bin, work);
     let t = Instant::now();
-    wait_until(Duration::from_secs(600), || d.status().and_then(|s| s["files"].parse::<u64>().ok()).unwrap_or(0) > expected / 3);
+    wait_until(Duration::from_secs(600), || {
+        d.status().and_then(|s| s["files"].parse::<u64>().ok()).unwrap_or(0) > expected / 3
+    });
     let killed_at = t.elapsed();
     let partial: u64 = d.status().map(|s| s["files"].parse().unwrap_or(0)).unwrap_or(0);
     d.kill9();

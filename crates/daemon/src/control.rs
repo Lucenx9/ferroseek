@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use ferroseek_engine::{Engine, Paths};
 
-
 pub struct Control {
     pub engine: Arc<Engine>,
     pub paths: Paths,

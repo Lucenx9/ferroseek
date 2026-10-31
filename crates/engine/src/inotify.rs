@@ -85,11 +85,7 @@ impl Inotify {
 
     pub fn rm_watch(&self, wd: i32) -> io::Result<()> {
         // SAFETY: plain syscall.
-        if unsafe { libc::inotify_rm_watch(self.raw_fd(), wd) } < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
+        if unsafe { libc::inotify_rm_watch(self.raw_fd(), wd) } < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
     }
 
     /// Reads all currently queued events without blocking (the fd is

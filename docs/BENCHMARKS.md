@@ -1,0 +1,317 @@
+# FerroSeek benchmarks
+
+All numbers here were measured on this machine with the commands shown.
+Nothing has been extrapolated. **No Baloo comparison has been run yet.**
+Baloo is disabled on this machine, and the owner asked that it stay
+disabled. The protocol for a controlled comparison is in
+[§6](#6-baloo-comparison-protocol-not-yet-executed).
+
+## 1. Environment
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 5800X (8 cores / 16 threads) |
+| RAM | 31 GiB |
+| Storage | KINGSTON SNV3S1000G NVMe SSD |
+| Filesystem | Btrfs, `noatime,compress=zstd:1,ssd,discard=async` (`/home`) |
+| OS / kernel | CachyOS, Linux 7.3.0-4-cachyos |
+| Desktop | KDE Plasma 6.8.2, KF 6.31.0, Wayland |
+| Toolchain | rustc 1.94.0, release profile (thin LTO, `codegen-units=4`) |
+| Libraries | SQLite 3.54.1 (bundled via libsqlite3-sys 0.39.1, rusqlite 0.41.1), zbus 6.2.0 |
+| FerroSeek | commit `6ee1eeb` |
+| Date | 2026-10-31 |
+
+## 2. Method
+
+```sh
+cargo build --release --workspace
+target/release/ferroseek-bench --files 10000   --work ~/.cache/ferroseek-bench-10000
+target/release/ferroseek-bench --files 100000  --work ~/.cache/ferroseek-bench-100000
+target/release/ferroseek-bench --files 1000000 --work ~/.cache/ferroseek-bench-1000000
+```
+
+`ferroseek-bench` (`crates/bench/src/main.rs`) works as follows:
+
+1. **Corpus.** It generates a deterministic corpus (xorshift, seed 42) on the
+   real disk, not on tmpfs:
+   - About 20 files per directory, with a skew toward a few large
+     directories, and depth up to 10.
+   - Names are a mix of camera, CamelCase, `word_N`, long (6–25 words) and
+     Unicode names. About 5 % are dotfiles (excluded by default) and 0.1 %
+     are non-UTF-8 names.
+   - There are `node_modules`/`.git` trees that must be skipped.
+   - Sparse file sizes from 0 B to 1 MiB (`set_len`, so no data is written).
+2. **Daemon.** It re-executes itself under `dbus-run-session`, so it uses a
+   **private session bus**. It starts the **release `ferroseekd`** with an
+   isolated config and data dir, with the default configuration except for
+   the root and `max_cpu_percent`. The user's bus, home and index are never
+   touched.
+3. **Metrics.** It measures through `/proc/<pid>/{status,io,stat,task}` and
+   through the daemon's D-Bus interfaces, as KRunner sees them.
+
+Definitions:
+
+- **Initial index, wall.** Time from daemon start until `Status` reports
+  `idle` with no queued directories. That includes adding the inotify
+  watches.
+- **Disk read / written.** `read_bytes` / `write_bytes` from
+  `/proc/pid/io`, the bytes submitted to the block layer. Btrfs zstd
+  compression can make actual device writes lower.
+- **Idle.** Measured 12 s after the daemon goes idle (the query-pool threads
+  expire after 10 s), over a 30 s window:
+  - RSS from `VmRSS`, split into `RssAnon` and `RssFile`. File-backed pages
+    are mostly shared libraries.
+  - CPU from utime+stime.
+  - "Context switches" is the sum over all threads of voluntary plus
+    involuntary switches, a proxy for wakeups.
+- **Query latency.** 390 deterministic queries:
+  - 300 random 3–8 character substrings of real corpus names
+  - 30 two-word queries, 30 two-character queries, 30 no-hit queries
+  - "library" is `Reader::search` in-process; "D-Bus `Match`" is a full
+    `org.kde.krunner1.Match` round trip over the bus. Both are warm (page
+    cache hot).
+- **Relevance.** 200 random corpus files:
+  - Is the exact name ranked #1?
+  - Is the stem in the top 5? Counted as a success if the file is in the top
+    5, or if the top 5 are all exact stem ties: some synthetic stems exist
+    hundreds of times.
+  - Are its first two words (multi-word AND) found at all?
+- **Change → visible.** Time from the filesystem call until `Match` returns
+  (or stops returning) the file. This is dominated by the default 200 ms
+  event debounce (`debounce_ms`).
+- **Recovery.** `SIGKILL` once a third of the files are committed during a
+  fresh initial index, then restart. "Complete" means the entry count equals
+  that of an uninterrupted run.
+
+## 3. Results
+
+### 10000 files (seed 42)
+
+Corpus: 10000 files in 500 directories (+300 files in excluded `node_modules`/`.git` trees), generated in 0.2s.
+
+| metric | value |
+|---|---|
+| initial index, max_cpu_percent=50: wall | 0.11 s (91148 files/s) |
+| ↳ CPU time (user+sys) | 0.09 s |
+| ↳ peak RSS (VmHWM) | 12.4 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 5.4 MiB |
+| ↳ indexed files / dirs / watched dirs | 9505 / 510 / 510 |
+| initial index, max_cpu_percent=100: wall | 0.11 s (91526 files/s) |
+| ↳ CPU time (user+sys) | 0.08 s |
+| ↳ peak RSS (VmHWM) | 11.5 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 5.3 MiB |
+| ↳ indexed files / dirs / watched dirs | 9505 / 510 / 510 |
+| index size on disk: database / WAL | 2.4 MiB (237 B/entry) / 0.0 MiB |
+| idle RSS (anon + file-backed) | 8.3 MiB (2.1 MiB anon, 6.2 MiB file) |
+| idle CPU over 30 s | 0.000 % (0.00 s) |
+| idle context switches (all threads) | 0.00 /s |
+| idle threads | 4 |
+| query latency, library (limit 15, 390 queries) | p50 0.15 / p95 0.52 / p99 0.66 / max 0.81 ms |
+| query latency, D-Bus `Match` end-to-end | p50 0.36 / p95 0.73 / p99 0.89 / max 1.32 ms |
+| RSS after query burst | 11.2 MiB |
+| relevance (sample 200): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | 100.0 % / 100.0 % / 100.0 % |
+| change → visible in `Match`: create (debounce 200 ms) | p50 202.44 / p95 203.14 / p99 277.50 / max 277.50 ms |
+| ↳ rename | p50 202.17 / p95 206.13 / p99 207.88 / max 207.88 ms |
+| ↳ delete | p50 201.83 / p95 203.05 / p99 203.11 / max 203.11 ms |
+| burst: create 10000 files (0.11 s to write) → all searchable | 0.17 s after last write |
+| burst: rename 10000 files (0.19 s) → consistent | 0.37 s after last rename |
+| rename directory holding 10000 files → visible under new path | 265 ms |
+| delete tree of 10000 files (0.17 s) → gone from index | 0.37 s after deletion |
+| bursts: peak RSS sampled / VmHWM before→after | 17.0 MiB / 12.2 MiB → 16.7 MiB |
+| bursts: disk read / written; inotify overflows | 0.0 MiB / 15.9 MiB; 0 |
+| restart on unchanged tree → idle (quick reconcile + watches) | 0.06 s |
+| steady-state idle after restart: RSS (anon / file), VmHWM | 7.2 MiB (1.0 MiB / 6.2 MiB), 9.2 MiB |
+| recovery: SIGKILL after 0.09 s (9505 files committed) → restart → complete | 0.06 s; 9505/9505 files ✔ |
+
+### 100000 files (seed 42)
+
+Corpus: 100000 files in 5000 directories (+3000 files in excluded `node_modules`/`.git` trees), generated in 1.7s.
+
+| metric | value |
+|---|---|
+| initial index, max_cpu_percent=50: wall | 2.96 s (33815 files/s) |
+| ↳ CPU time (user+sys) | 1.70 s |
+| ↳ peak RSS (VmHWM) | 16.9 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 89.8 MiB |
+| ↳ indexed files / dirs / watched dirs | 95200 / 5100 / 5100 |
+| initial index, max_cpu_percent=100: wall | 1.07 s (93834 files/s) |
+| ↳ CPU time (user+sys) | 1.08 s |
+| ↳ peak RSS (VmHWM) | 23.4 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 76.5 MiB |
+| ↳ indexed files / dirs / watched dirs | 95200 / 5100 / 5100 |
+| index size on disk: database / WAL | 25.1 MiB (251 B/entry) / 0.0 MiB |
+| idle RSS (anon + file-backed) | 8.9 MiB (2.6 MiB anon, 6.4 MiB file) |
+| idle CPU over 30 s | 0.000 % (0.00 s) |
+| idle context switches (all threads) | 0.00 /s |
+| idle threads | 4 |
+| query latency, library (limit 15, 390 queries) | p50 0.57 / p95 3.04 / p99 3.25 / max 4.09 ms |
+| query latency, D-Bus `Match` end-to-end | p50 0.75 / p95 3.00 / p99 3.32 / max 4.33 ms |
+| RSS after query burst | 12.9 MiB |
+| relevance (sample 200): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | 100.0 % / 100.0 % / 100.0 % |
+| change → visible in `Match`: create (debounce 200 ms) | p50 202.65 / p95 203.65 / p99 208.44 / max 208.44 ms |
+| ↳ rename | p50 202.90 / p95 203.63 / p99 216.81 / max 216.81 ms |
+| ↳ delete | p50 202.30 / p95 211.32 / p99 379.48 / max 379.48 ms |
+| burst: create 10000 files (0.11 s to write) → all searchable | 0.18 s after last write |
+| burst: rename 10000 files (0.19 s) → consistent | 0.27 s after last rename |
+| rename directory holding 10000 files → visible under new path | 209 ms |
+| delete tree of 10000 files (0.18 s) → gone from index | 0.34 s after deletion |
+| bursts: peak RSS sampled / VmHWM before→after | 21.9 MiB / 23.4 MiB → 23.6 MiB |
+| bursts: disk read / written; inotify overflows | 0.0 MiB / 23.1 MiB; 0 |
+| restart on unchanged tree → idle (quick reconcile + watches) | 0.14 s |
+| steady-state idle after restart: RSS (anon / file), VmHWM | 11.5 MiB (5.4 MiB / 6.2 MiB), 20.0 MiB |
+| recovery: SIGKILL after 1.04 s (95116 files committed) → restart → complete | 0.27 s; 95200/95200 files ✔ |
+
+### 1000000 files (seed 42)
+
+Corpus: 1000000 files in 50000 directories (+30000 files in excluded `node_modules`/`.git` trees), generated in 22.3s.
+
+| metric | value |
+|---|---|
+| initial index, max_cpu_percent=50: wall | 35.11 s (28480 files/s) |
+| ↳ CPU time (user+sys) | 25.95 s |
+| ↳ peak RSS (VmHWM) | 22.4 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 1628.8 MiB |
+| ↳ indexed files / dirs / watched dirs | 953595 / 51000 / 51000 |
+| initial index, max_cpu_percent=100: wall | 18.35 s (54486 files/s) |
+| ↳ CPU time (user+sys) | 22.26 s |
+| ↳ peak RSS (VmHWM) | 22.4 MiB |
+| ↳ disk read / written (/proc/pid/io) | 0.0 MiB / 1697.1 MiB |
+| ↳ indexed files / dirs / watched dirs | 953595 / 51000 / 51000 |
+| index size on disk: database / WAL | 250.7 MiB (250 B/entry) / 0.0 MiB |
+| idle RSS (anon + file-backed) | 11.5 MiB (4.8 MiB anon, 6.7 MiB file) |
+| idle CPU over 30 s | 0.000 % (0.00 s) |
+| idle context switches (all threads) | 0.00 /s |
+| idle threads | 4 |
+| query latency, library (limit 15, 390 queries) | p50 2.32 / p95 6.36 / p99 8.38 / max 10.29 ms |
+| query latency, D-Bus `Match` end-to-end | p50 2.43 / p95 6.38 / p99 8.18 / max 9.40 ms |
+| RSS after query burst | 15.6 MiB |
+| relevance (sample 200): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | 100.0 % / 100.0 % / 100.0 % |
+| change → visible in `Match`: create (debounce 200 ms) | p50 202.95 / p95 207.79 / p99 237.08 / max 237.08 ms |
+| ↳ rename | p50 203.07 / p95 214.35 / p99 215.36 / max 215.36 ms |
+| ↳ delete | p50 202.20 / p95 203.79 / p99 302.72 / max 302.72 ms |
+| burst: create 10000 files (0.11 s to write) → all searchable | 0.19 s after last write |
+| burst: rename 10000 files (0.19 s) → consistent | 1.31 s after last rename |
+| rename directory holding 10000 files → visible under new path | 384 ms |
+| delete tree of 10000 files (0.17 s) → gone from index | 0.36 s after deletion |
+| bursts: peak RSS sampled / VmHWM before→after | 27.9 MiB / 22.4 MiB → 27.2 MiB |
+| bursts: disk read / written; inotify overflows | 0.0 MiB / 59.9 MiB; 1 |
+| restart on unchanged tree → idle (quick reconcile + watches) | 1.06 s |
+| steady-state idle after restart: RSS (anon / file), VmHWM | 9.2 MiB (3.1 MiB / 6.1 MiB), 24.8 MiB |
+| recovery: SIGKILL after 5.43 s (348280 files committed) → restart → complete | 15.24 s; 953595/953595 files ✔ |
+
+### Summary (1M files)
+
+| | FerroSeek |
+|---|---|
+| Initial index, unthrottled / default 50 % duty cycle | 18.3 s / 34.9 s |
+| Peak RSS during initial index | ≈ 26 MiB |
+| Database size | 251 MiB (250 B per entry), WAL truncated after each pass |
+| Idle CPU / wakeups | 0.000 % / 0 per second (30 s window) |
+| Idle RSS, steady state after restart | 9.2 MiB (3.1 MiB anonymous) |
+| KRunner `Match` latency p50 / p99 | 2.4 ms / 8.2 ms |
+| Restart reconcile (unchanged tree, 51k directories) | ≈ 1 s |
+
+## 4. Tuning experiments (1M files, `--only-initial`, `max_cpu_percent=100`)
+
+Initial-index write volume was the one metric that grew faster than linearly
+(3.9 GiB written to build the 1M-file index). Experiments were run with
+temporary knobs, which have since been removed:
+
+| variant | wall | written | peak RSS | decision |
+|---|---|---|---|---|
+| baseline: 100 ms scan transactions | 23.5 s | 3901 MiB | 27.2 MiB | – |
+| 1 s / ≤200k-op scan transactions | 17.8 s | 1661 MiB | 26.9 MiB | **adopted** |
+| page cache 32 MiB (100 ms transactions) | 17.1 s | 2925 MiB | 77.9 MiB | rejected: +50 MiB RSS |
+| 1 s transactions + 32 MiB cache | 13.7 s | 1572 MiB | 77.5 MiB | rejected: memory |
+| 1 s transactions + `wal_autocheckpoint=10000` | 18.3 s | 2044 MiB | 26.1 MiB | rejected: more writes |
+| 2 s transactions | 17.4 s | 1548 MiB | 26.3 MiB | rejected: −7 % writes for 2× event delay during scans |
+
+Cause: small transactions dirty pages scattered across the B-tree indexes
+(`key` and `(parent, name)` are in effectively random order relative to the
+scan). Every commit and checkpoint rewrites them. Larger transactions
+amortize this.
+
+Two other effects were found and fixed with measurements:
+
+- **Benchmark interference.** Polling `Status` (a `COUNT` over the index)
+  every 10 ms kept a read snapshot open almost continuously. That blocked
+  WAL checkpoints, which doubled the writes of the 50 % run (3.47 GiB) and
+  left a 273 MiB WAL behind. With 250 ms polling after the first 2 s, and a
+  `TRUNCATE` checkpoint at the end of a pass, the figures were 1.70 GiB and
+  a 0 B WAL.
+- **Idle heap retention.** Allocations from short-lived query threads and
+  zbus remained as freed-but-resident glibc arena memory: 15.4 MiB idle RSS
+  after a restart at 1M. Capping arenas at 2, plus `malloc_trim` after
+  KRunner `Teardown` and `Status`, plus `PRAGMA shrink_memory` when idle,
+  brought it to 9.2 MiB.
+
+The index backend itself was chosen with a separate prototype
+(`prototype/backend-bench/README.md`): SQLite FTS5 vs Tantivy vs FST vs a
+linear scan, on 1M names.
+
+## 5. Live desktop verification (not a benchmark)
+
+On the Plasma 6.8.2 session (2026-10-31), I installed with
+`scripts/install.sh --config <test config>`, indexed a test directory in
+`/tmp`, and uninstalled with `--purge` afterwards:
+
+- KRunner loaded `ferroseek.desktop` and called `Match`. The first attempt
+  failed with "name is not activatable" until the session bus
+  (dbus-broker) was told to `ReloadConfig`, which the install script now
+  does.
+- KRunner's first `Match` started `ferroseek.service` through D-Bus
+  activation. The result rendered in KRunner under "Images" with the MIME
+  icon and the parent folder as subtext (checked by screenshot).
+- The default action, called over D-Bus exactly as KRunner does (no input
+  injection tool was available to press Enter), opened the image in
+  Gwenview. Gwenview ran in its own `app-org.kde.gwenview@….service`, not in
+  `ferroseek.service`.
+- "Open Containing Folder" opened Dolphin with the file selected.
+- A file created, then renamed, appeared in KRunner `Match` results under
+  its new name, and the old name returned 0 results.
+- Idle memory of the D-Bus-activated daemon (tiny index): 7.8 MiB VmRSS
+  (1.4 MiB anonymous), cgroup `MemoryCurrent` 2.0 MiB.
+
+## 6. Baloo comparison protocol (not yet executed)
+
+It requires the owner's explicit permission to enable Baloo temporarily.
+The aim is equivalent features: names only, the same root, warm cache, and
+the same hardware.
+
+1. Back up `~/.config/baloofilerc`. Configure Baloo with
+   `folders=<corpus root>`, `only basic indexing=true` (no content) and the
+   same hidden-file setting. Note that Baloo's `exclude filters` cannot match
+   FerroSeek's exactly, so list the differences.
+2. Use the same `ferroseek-bench` corpus (same seed). Run `balooctl6 purge`
+   on that dedicated config, then `balooctl6 enable` and time until
+   `balooctl6 status` reports idle. Sample `baloo_file` and
+   `baloo_file_extractor` from `/proc/<pid>/{status,io}` the same way.
+3. Query latency: run the same query list through `baloosearch6 -l 15`
+   (process per query, which disadvantages Baloo) and also through the
+   `org.kde.runners.baloo` D-Bus `Match` (equivalent to FerroSeek's D-Bus
+   numbers).
+4. Incremental: the same create/rename/delete loop, observed through
+   `org.kde.runners.baloo` `Match`.
+5. Restore `baloofilerc`, `balooctl6 disable`, and delete the test index.
+
+Differences that already prevent an apples-to-apples comparison:
+- Baloo matches word prefixes only (bug 333037); FerroSeek matches
+  substrings.
+- Baloo's runner issues ten type-filtered queries per keystroke.
+- Baloo indexes extended attributes and tags.
+
+## 7. Limitations
+
+- **Warm page cache only.** Dropping caches (`/proc/sys/vm/drop_caches`)
+  needs root, which this project does not use. Cold-cache numbers will be
+  slower, mainly for the first queries and the restart reconcile.
+- **Synthetic corpus.** Real home directories have different name
+  distributions and directory shapes. Re-run on your own data with
+  `ferroseek index` plus `ferroseek status`.
+- **Single run per size.** There are no repetitions or confidence
+  intervals. Latency percentiles come from 390 queries; change → visible
+  figures come from 30 iterations, so p99 is effectively the maximum.
+  Occasional outliers up to ~0.7 s were seen for rename visibility at 1M;
+  the cause has not been investigated yet.
+- **Disk-write figures are block-layer bytes**, not device writes after
+  Btrfs compression.

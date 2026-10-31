@@ -96,10 +96,9 @@ impl Error {
     /// reopen with recovery ([`Writer::open`] moves it aside and recreates).
     pub fn is_corrupt(&self) -> bool {
         match self {
-            Error::Sqlite(rusqlite::Error::SqliteFailure(e, _)) => matches!(
-                e.code,
-                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
-            ),
+            Error::Sqlite(rusqlite::Error::SqliteFailure(e, _)) => {
+                matches!(e.code, rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+            }
             Error::Incompatible(_) => true,
             _ => false,
         }

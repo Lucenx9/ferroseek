@@ -113,7 +113,6 @@ impl Indexer {
         self.st.watches.len()
     }
 
-
     /// Makes the stored roots equal to the configured ones (dropping
     /// removed roots with their subtrees) and queues a reconcile pass.
     pub fn sync_roots(&mut self, mode: Mode) -> Result<()> {
