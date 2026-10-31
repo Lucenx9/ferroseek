@@ -132,7 +132,7 @@ impl From<RawFileConfig> for FileConfig {
     fn from(raw: RawFileConfig) -> Self {
         let access_mode = raw
             .access_mode
-            .unwrap_or_else(|| if raw.allow.is_empty() { AccessMode::AllIndexed } else { AccessMode::Restricted });
+            .unwrap_or(if raw.allow.is_empty() { AccessMode::AllIndexed } else { AccessMode::Restricted });
         FileConfig {
             access_mode,
             deny_exceptions: raw.deny_exceptions,
