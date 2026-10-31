@@ -75,9 +75,16 @@ fn main() -> ExitCode {
     }
 
     let config_path = config.clone().unwrap_or_else(default_config);
+    let mut legacy_config_without_mode = false;
     let mut file_cfg = match std::fs::read_to_string(&config_path) {
         Ok(s) => match toml::from_str::<policy::FileConfig>(&s) {
-            Ok(c) => c,
+            Ok(c) => {
+                // An existing pre-access-mode policy must not silently gain
+                // global access, even if it defined only deny/hidden settings.
+                legacy_config_without_mode =
+                    toml::from_str::<toml::Table>(&s).is_ok_and(|t| !t.contains_key("access_mode"));
+                c
+            },
             Err(e) => {
                 eprintln!("ferroseek-mcp: invalid {}: {e}", config_path.display());
                 return ExitCode::from(2);
@@ -92,9 +99,9 @@ fn main() -> ExitCode {
     };
     if let Some(mode) = mode {
         file_cfg.access_mode = mode;
-    } else if !allow.is_empty() {
-        // A legacy --allow registration must never gain global access after
-        // upgrading from the old restricted-by-default version.
+    } else if !allow.is_empty() || legacy_config_without_mode {
+        // Preserve restricted semantics for old --allow registrations and
+        // existing policy files which predate explicit access_mode.
         file_cfg.access_mode = policy::AccessMode::Restricted;
     }
     let policy = match policy::Policy::new(&file_cfg, &allow) {
