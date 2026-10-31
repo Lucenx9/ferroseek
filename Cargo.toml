@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/index", "crates/engine", "crates/daemon", "crates/cli", "crates/bench"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Lucenx9/ferroseek"
+
+[workspace.dependencies]
+ferroseek-index = { path = "crates/index" }
+ferroseek-engine = { path = "crates/engine" }
+rusqlite = { version = "0.41", features = ["bundled"] }
+inotify = { version = "0.11", default-features = false }
+zbus = { version = "6", default-features = false, features = ["default-rt", "proxy", "service"] }
+serde = { version = "1", features = ["derive"] }
+toml = { version = "1", default-features = false, features = ["parse", "serde", "display"] }
+libc = "0.2"
+log = { version = "0.4", features = ["std"] }
+clap = { version = "4.6", features = ["derive"] }
+tempfile = "3"
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = "debuginfo"

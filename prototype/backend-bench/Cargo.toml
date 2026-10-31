@@ -1,0 +1,19 @@
+[package]
+name = "backend-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+
+# Throwaway prototype answering: which index backend fits FerroSeek's
+# filename workload? Not part of the main workspace.
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.41", features = ["bundled"] }
+tantivy = "0.27"
+fst = "0.4"
+memmap2 = "0.9"
+
+[profile.release]
+debug = 1

@@ -1,0 +1,15 @@
+[package]
+name = "ferroseek-index"
+description = "FerroSeek persistent file index (SQLite FTS5) and search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true

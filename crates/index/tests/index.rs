@@ -1,0 +1,337 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Integration tests for the index through its public interface only.
+
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+
+use ferroseek_index::{Change, Kind, Meta, OpenOutcome, Query, Reader, SearchOptions, Writer};
+
+fn file(ino: u64) -> Meta {
+    Meta { kind: Kind::File, size: 10, mtime_ns: 1_000, ino }
+}
+fn dir(ino: u64) -> Meta {
+    Meta { kind: Kind::Dir, size: 0, mtime_ns: 5_000, ino }
+}
+
+fn setup() -> (tempfile::TempDir, PathBuf) {
+    let t = tempfile::tempdir().unwrap();
+    let db = t.path().join("index.sqlite");
+    (t, db)
+}
+
+fn names(hits: &[ferroseek_index::Hit]) -> Vec<String> {
+    hits.iter().map(|h| h.path.file_name().unwrap().to_string_lossy().into_owned()).collect()
+}
+
+fn search(db: &Path, q: &str) -> Vec<ferroseek_index::Hit> {
+    Reader::open(db).unwrap().search(&Query::parse(q), &SearchOptions::default()).unwrap()
+}
+
+#[test]
+fn create_reopen_and_clean_shutdown() {
+    let (_t, db) = setup();
+    let (w, o) = Writer::open(&db).unwrap();
+    assert_eq!(o, OpenOutcome::Created);
+    w.close().unwrap();
+    let (_w, o) = Writer::open(&db).unwrap();
+    assert_eq!(o, OpenOutcome::Existing);
+}
+
+#[test]
+fn db_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_t, db) = setup();
+    let _ = Writer::open(&db).unwrap();
+    assert_eq!(std::fs::metadata(&db).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
+#[test]
+fn garbage_database_is_moved_aside_and_recreated() {
+    let (_t, db) = setup();
+    std::fs::write(&db, b"this is definitely not an sqlite database, just junk bytes....").unwrap();
+    let (mut w, o) = Writer::open(&db).unwrap();
+    match o {
+        OpenOutcome::Recovered { moved_to, .. } => assert!(moved_to.exists()),
+        other => panic!("expected recovery, got {other:?}"),
+    }
+    // Usable afterwards.
+    let mut tx = w.transaction().unwrap();
+    tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.commit().unwrap();
+}
+
+#[test]
+fn foreign_sqlite_database_is_not_used() {
+    let (_t, db) = setup();
+    let c = rusqlite_conn(&db);
+    c.execute_batch("CREATE TABLE something(x); INSERT INTO something VALUES(1);").unwrap();
+    drop(c);
+    let (_w, o) = Writer::open(&db).unwrap();
+    assert!(matches!(o, OpenOutcome::Recovered { .. }));
+}
+
+fn rusqlite_conn(p: &Path) -> rusqlite_shim::Connection {
+    rusqlite_shim::Connection::open(p).unwrap()
+}
+
+// The index crate re-exports nothing from rusqlite; tests that need raw
+// SQLite access use the same crate via the dev-dependency graph.
+mod rusqlite_shim {
+    pub use ::rusqlite::Connection;
+}
+
+#[test]
+fn upsert_insert_update_unchanged() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    assert_eq!(tx.ensure_root(Path::new("/r"), dir(1)).unwrap(), root);
+    let (id, c) = tx.upsert(root, b"a.txt", file(2)).unwrap();
+    assert_eq!(c, Change::Inserted);
+    assert_eq!(tx.upsert(root, b"a.txt", file(2)).unwrap(), (id, Change::Unchanged));
+    let mut m = file(2);
+    m.size = 99;
+    assert_eq!(tx.upsert(root, b"a.txt", m).unwrap(), (id, Change::Updated));
+    assert_eq!(tx.meta(id).unwrap().unwrap().size, 99);
+    tx.commit().unwrap();
+}
+
+#[test]
+fn dir_mtime_only_changes_via_mark_reconciled() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let (d, _) = tx.upsert(root, b"d", dir(2)).unwrap();
+    assert_eq!(tx.meta(d).unwrap().unwrap().mtime_ns, 0, "new dirs are unreconciled");
+    tx.mark_dir_reconciled(d, 777, 2).unwrap();
+    let mut m = dir(2);
+    m.mtime_ns = 999;
+    assert_eq!(tx.upsert(root, b"d", m).unwrap().1, Change::Unchanged);
+    assert_eq!(tx.meta(d).unwrap().unwrap().mtime_ns, 777);
+    // Replaced by a different directory inode: reset to unreconciled.
+    tx.upsert(root, b"d", dir(3)).unwrap();
+    assert_eq!(tx.meta(d).unwrap().unwrap().mtime_ns, 0);
+    tx.commit().unwrap();
+}
+
+#[test]
+fn delete_removes_subtree_and_search_rows() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let (d, _) = tx.upsert(root, b"projects", dir(2)).unwrap();
+    let (d2, _) = tx.upsert(d, b"inner", dir(3)).unwrap();
+    tx.upsert(d2, b"deepreport.txt", file(4)).unwrap();
+    tx.upsert(root, b"keepreport.txt", file(5)).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(names(&search(&db, "report")).len(), 2);
+
+    let mut tx = w.transaction().unwrap();
+    assert_eq!(tx.subtree_dirs(d).unwrap().len(), 2);
+    assert_eq!(tx.delete(d).unwrap(), 3);
+    assert_eq!(tx.delete(d).unwrap(), 0);
+    tx.commit().unwrap();
+    assert_eq!(names(&search(&db, "report")), vec!["keepreport.txt"]);
+}
+
+#[test]
+fn file_replacing_directory_drops_its_children() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let (d, _) = tx.upsert(root, b"thing", dir(2)).unwrap();
+    tx.upsert(d, b"child-unique.txt", file(3)).unwrap();
+    tx.upsert(root, b"thing", file(4)).unwrap();
+    assert!(tx.children(d).unwrap().is_empty());
+    tx.commit().unwrap();
+    assert!(search(&db, "child-unique").is_empty());
+}
+
+#[test]
+fn rename_moves_subtree_in_constant_rows_and_replaces_destination() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let (a, _) = tx.upsert(root, b"alpha", dir(2)).unwrap();
+    let (b, _) = tx.upsert(root, b"beta", dir(3)).unwrap();
+    let (f, _) = tx.upsert(a, b"notes.md", file(4)).unwrap();
+    tx.upsert(b, b"old.md", file(5)).unwrap();
+    tx.commit().unwrap();
+
+    let mut tx = w.transaction().unwrap();
+    let before = tx.ops();
+    tx.rename(a, b, b"gamma").unwrap();
+    assert_eq!(tx.ops() - before, 1, "renaming a directory touches one row");
+    assert_eq!(tx.path(f).unwrap().unwrap(), Path::new("/r/beta/gamma/notes.md"));
+    // Atomic-save style: rename over an existing file replaces it.
+    let (tmp, _) = tx.upsert(b, b".old.md.swp", file(6)).unwrap();
+    tx.rename(tmp, b, b"old.md").unwrap();
+    assert_eq!(tx.children(b).unwrap().len(), 2);
+    assert_eq!(tx.child(b, b"old.md").unwrap().unwrap().id, tmp);
+    tx.commit().unwrap();
+
+    assert!(search(&db, "alpha").is_empty());
+    let h = search(&db, "notes");
+    assert_eq!(h[0].path, Path::new("/r/beta/gamma/notes.md"));
+}
+
+#[test]
+fn non_utf8_names_round_trip_exactly() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let raw: &[u8] = b"caf\xe9-latin1-report.txt";
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.upsert(root, raw, file(2)).unwrap();
+    tx.commit().unwrap();
+    let h = search(&db, "latin1");
+    assert_eq!(h.len(), 1);
+    assert_eq!(h[0].path.file_name().unwrap().as_bytes(), raw);
+    let r = Reader::open(&db).unwrap();
+    let mut p = PathBuf::from("/r");
+    p.push(OsStr::from_bytes(raw));
+    assert!(r.lookup(&p).unwrap().is_some());
+}
+
+#[test]
+fn unicode_case_insensitive() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.upsert(root, "ÜBERSICHT-Straße.PDF".as_bytes(), file(2)).unwrap();
+    tx.upsert(root, "日本語のファイル.txt".as_bytes(), file(3)).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(search(&db, "übersicht").len(), 1);
+    assert_eq!(search(&db, "straße.pdf").len(), 1);
+    assert_eq!(search(&db, "のファイ").len(), 1);
+}
+
+fn ranked_fixture() -> (tempfile::TempDir, PathBuf) {
+    let (t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/home/u"), dir(1)).unwrap();
+    let (docs, _) = tx.upsert(root, b"Documents", dir(2)).unwrap();
+    let (deep, _) = tx.upsert(docs, b"a", dir(3)).unwrap();
+    let (deeper, _) = tx.upsert(deep, b"b", dir(4)).unwrap();
+    let (hid, _) = tx.upsert(root, b".cache", dir(5)).unwrap();
+    for (p, n, i) in [
+        (docs, "report.pdf", 10),
+        (docs, "Report", 11),
+        (docs, "annual-report-2024.pdf", 12),
+        (docs, "myReportDraft.odt", 13),
+        (docs, "unreported.txt", 14),
+        (deeper, "report.pdf.bak", 15),
+        (hid, "report.cache", 16),
+        (docs, "cv.pdf", 17),
+        (docs, "cvs-notes.txt", 18),
+    ] {
+        tx.upsert(p, n.as_bytes(), file(i)).unwrap();
+    }
+    tx.commit().unwrap();
+    (t, db)
+}
+
+#[test]
+fn ranking_prefers_exact_then_stem_then_prefix_then_boundary() {
+    let (_t, db) = ranked_fixture();
+    let n = names(&search(&db, "report"));
+    assert_eq!(n[0], "Report", "{n:?}");
+    assert_eq!(n[1], "report.pdf", "{n:?}");
+    let pos = |x: &str| n.iter().position(|v| v == x).unwrap();
+    assert!(pos("annual-report-2024.pdf") < pos("unreported.txt"), "{n:?}");
+    assert!(pos("myReportDraft.odt") < pos("unreported.txt"), "camelCase boundary: {n:?}");
+    assert!(pos("report.pdf.bak") < pos("unreported.txt"), "{n:?}");
+}
+
+#[test]
+fn short_queries_match_prefixes() {
+    let (_t, db) = ranked_fixture();
+    let n = names(&search(&db, "cv"));
+    assert_eq!(n, vec!["cv.pdf", "cvs-notes.txt"]);
+}
+
+#[test]
+fn multi_token_and_path_tokens() {
+    let (_t, db) = ranked_fixture();
+    assert_eq!(names(&search(&db, "report 2024")), vec!["annual-report-2024.pdf"]);
+    assert_eq!(names(&search(&db, "pdf report")).len(), 3);
+    let h = search(&db, "a/b/ report");
+    assert_eq!(names(&h), vec!["report.pdf.bak"]);
+    let h = search(&db, "documents/cv");
+    assert_eq!(names(&h), vec!["cv.pdf", "cvs-notes.txt"]);
+}
+
+#[test]
+fn options_within_kind_hidden_limit() {
+    let (_t, db) = ranked_fixture();
+    let r = Reader::open(&db).unwrap();
+    let q = Query::parse("report");
+    let opts = SearchOptions { include_hidden: false, ..Default::default() };
+    assert!(!names(&r.search(&q, &opts).unwrap()).contains(&"report.cache".to_string()));
+    let opts = SearchOptions { within: Some("/home/u/Documents/a".into()), ..Default::default() };
+    assert_eq!(names(&r.search(&q, &opts).unwrap()), vec!["report.pdf.bak"]);
+    let opts = SearchOptions { limit: 2, ..Default::default() };
+    assert_eq!(r.search(&q, &opts).unwrap().len(), 2);
+    let opts = SearchOptions { kind: Some(Kind::Dir), ..Default::default() };
+    assert!(r.search(&Query::parse("docu"), &opts).unwrap().len() == 1);
+    assert!(r.search(&Query::parse(""), &SearchOptions::default()).unwrap().is_empty());
+}
+
+#[test]
+fn quote_and_fts_syntax_in_queries_is_literal() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.upsert(root, br#"say "hi" AND NOT bye*.txt"#, file(2)).unwrap();
+    tx.commit().unwrap();
+    for q in [r#""hi""#, "AND", "bye*", "NOT", "(", "\"", "*", "-", "^x", "NEAR(a b)"] {
+        let _ = search(&db, q); // must not error
+    }
+    assert_eq!(search(&db, r#""hi""#).len(), 1);
+    assert_eq!(search(&db, "bye*").len(), 1);
+}
+
+#[test]
+fn reader_sees_writer_commits_and_not_uncommitted() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let r = Reader::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.upsert(root, b"pending-file.txt", file(2)).unwrap();
+    let q = Query::parse("pending");
+    assert!(r.search(&q, &SearchOptions::default()).unwrap().is_empty());
+    tx.commit().unwrap();
+    assert_eq!(r.search(&q, &SearchOptions::default()).unwrap().len(), 1);
+}
+
+#[test]
+fn stats_counts() {
+    let (_t, db) = ranked_fixture();
+    let s = Reader::open(&db).unwrap().stats().unwrap();
+    assert_eq!(s.files, 9);
+    assert_eq!(s.dirs, 5);
+    assert_eq!(s.roots, vec![PathBuf::from("/home/u")]);
+    assert!(s.disk_bytes > 0);
+}
+
+#[test]
+fn root_slash_paths_are_well_formed() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/"), dir(1)).unwrap();
+    let (e, _) = tx.upsert(root, b"etc", dir(2)).unwrap();
+    tx.upsert(e, b"hostname-file", file(3)).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(search(&db, "hostname")[0].path, Path::new("/etc/hostname-file"));
+}
