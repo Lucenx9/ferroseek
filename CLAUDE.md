@@ -200,9 +200,12 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 
 ## MCP access modes
 
-- restricted remains the default and preserves legacy allowlists. all_indexed
-  uses / as an authorization boundary ONLY; all results still originate from
-  Reader search/lookup. home uses the process HOME, never engine root mutation.
+- all_indexed is the default for new unconfigured MCP servers; legacy TOML
+  allowlists without an explicit mode and CLI --allow arguments retain
+  restricted semantics. An existing unconfigured MCP client is a scope-changing
+  upgrade and must be clearly documented. all_indexed uses / as an
+  authorization boundary ONLY; results still come from Reader search/lookup.
+  home uses process HOME, never engine root mutation.
 - Custom deny always wins over deny_exceptions; exceptions only relax built-in
   name rules. Hidden filtering and no-symlink metadata traversal remain active.
 - Installer global registration requires typing all_indexed, then client-edit
