@@ -335,3 +335,19 @@ fn root_slash_paths_are_well_formed() {
     tx.commit().unwrap();
     assert_eq!(search(&db, "hostname")[0].path, Path::new("/etc/hostname-file"));
 }
+
+#[test]
+fn hidden_and_depth_are_relative_to_the_root() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    // The root itself lives below a dot-directory.
+    let root = tx.ensure_root(Path::new("/tmp/.private/root"), dir(1)).unwrap();
+    tx.upsert(root, b"visible-thing.txt", file(2)).unwrap();
+    let (h, _) = tx.upsert(root, b".dot", dir(3)).unwrap();
+    tx.upsert(h, b"hidden-thing.txt", file(4)).unwrap();
+    tx.commit().unwrap();
+    let r = Reader::open(&db).unwrap();
+    let opts = SearchOptions { include_hidden: false, ..Default::default() };
+    assert_eq!(names(&r.search(&Query::parse("thing"), &opts).unwrap()), vec!["visible-thing.txt"]);
+}

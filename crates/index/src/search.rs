@@ -235,7 +235,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     for (id, c) in ranked {
         let Some(parent) = c.parent else { continue };
         let Some(dir) = paths.dir(parent)? else { continue };
-        let mut path = dir.as_ref().to_vec();
+        let mut path = dir.path.to_vec();
         if path.last() != Some(&b'/') {
             path.push(b'/');
         }
@@ -246,7 +246,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                 continue;
             }
         }
-        let hidden_ancestor = dir.split(|b| *b == b'/').any(|seg| seg.first() == Some(&b'.'));
+        let hidden_ancestor = dir.hidden;
         if !opts.include_hidden && (hidden_ancestor || c.name.first() == Some(&b'.')) {
             continue;
         }
@@ -257,8 +257,8 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             }
         }
         let mut score = c.score;
-        let depth = dir.iter().filter(|b| **b == b'/').count() as f32;
-        score -= (depth - 3.0).max(0.0) * 1.0;
+        // Files directly in a root or one level down are not penalized.
+        score -= dir.depth.saturating_sub(1) as f32;
         if hidden_ancestor {
             score -= 10.0;
         }
@@ -277,10 +277,21 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     Ok(hits)
 }
 
-/// Per-query cache of directory paths: candidates share parents heavily.
+/// A resolved directory: absolute path, plus facts measured *below its
+/// indexing root* (a root under `/tmp/.x` must not make everything hidden).
+#[derive(Clone)]
+struct DirInfo {
+    path: std::rc::Rc<[u8]>,
+    /// Some directory between the root (exclusive) and here is a dotdir.
+    hidden: bool,
+    /// Directories between the root and here (root itself = 0).
+    depth: u32,
+}
+
+/// Per-query cache of directory info: candidates share parents heavily.
 struct PathCache<'c> {
     conn: &'c Connection,
-    dirs: HashMap<Id, Option<std::rc::Rc<[u8]>>>,
+    dirs: HashMap<Id, Option<DirInfo>>,
 }
 
 impl<'c> PathCache<'c> {
@@ -288,7 +299,7 @@ impl<'c> PathCache<'c> {
         PathCache { conn, dirs: HashMap::new() }
     }
 
-    fn dir(&mut self, id: Id) -> Result<Option<std::rc::Rc<[u8]>>> {
+    fn dir(&mut self, id: Id) -> Result<Option<DirInfo>> {
         if let Some(p) = self.dirs.get(&id) {
             return Ok(p.clone());
         }
@@ -297,12 +308,12 @@ impl<'c> PathCache<'c> {
         let mut chain: Vec<(Id, Vec<u8>)> = Vec::new();
         let mut cur = id;
         let mut st = self.conn.prepare_cached("SELECT parent, name FROM entries WHERE id = ?1")?;
-        let mut base: Option<std::rc::Rc<[u8]>> = None;
+        let mut base: Option<DirInfo> = None;
         loop {
             if let Some(p) = self.dirs.get(&cur) {
-                base = p.clone();
-                if base.is_none() {
-                    return Ok(None);
+                match p {
+                    Some(info) => base = Some(info.clone()),
+                    None => return Ok(None),
                 }
                 break;
             }
@@ -321,17 +332,26 @@ impl<'c> PathCache<'c> {
                 return Ok(None);
             }
         }
-        let mut acc: Vec<u8> = base.map(|b| b.to_vec()).unwrap_or_default();
+        let mut acc = base;
         while let Some((cid, name)) = chain.pop() {
-            if acc.is_empty() {
-                acc = name; // a root: absolute path
-            } else {
-                if acc.last() != Some(&b'/') {
-                    acc.push(b'/');
+            let info = match acc {
+                // A root: its name is the absolute path.
+                None => DirInfo { path: name.into(), hidden: false, depth: 0 },
+                Some(parent) => {
+                    let mut p = parent.path.to_vec();
+                    if p.last() != Some(&b'/') {
+                        p.push(b'/');
+                    }
+                    p.extend_from_slice(&name);
+                    DirInfo {
+                        path: p.into(),
+                        hidden: parent.hidden || name.first() == Some(&b'.'),
+                        depth: parent.depth + 1,
+                    }
                 }
-                acc.extend_from_slice(&name);
-            }
-            self.dirs.insert(cid, Some(acc.clone().into()));
+            };
+            self.dirs.insert(cid, Some(info.clone()));
+            acc = Some(info);
         }
         Ok(self.dirs.get(&id).cloned().flatten())
     }
