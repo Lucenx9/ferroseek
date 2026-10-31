@@ -28,6 +28,13 @@ compatible.
 
 ## M1 — Hardening (next)
 
+- [ ] Optimize path-only and selective path-filter queries without restoring
+  candidate-truncation false negatives. Review remeasurement (§8 of
+  BENCHMARKS.md): ~524 ms path-only and ~110 ms path+name via D-Bus at 1M.
+- [ ] Correct the legacy relevance benchmark's skipped-sample denominator;
+  its raw 100% row is not valid correctness evidence. New review cases use
+  explicit expected results instead.
+
 - [ ] Run the Baloo comparison protocol (`docs/BENCHMARKS.md` §6). This
   needs the owner's permission to enable Baloo temporarily.
 - [ ] Benchmark on a real home directory, and on a cold page cache with

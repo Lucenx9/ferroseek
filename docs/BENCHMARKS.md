@@ -315,3 +315,74 @@ Differences that already prevent an apples-to-apples comparison:
   the cause has not been investigated yet.
 - **Disk-write figures are block-layer bytes**, not device writes after
   Btrfs compression.
+
+## 8. After code-review fixes: 2026-10-31
+
+**Verdict:** ordinary filename queries remain responsive in this run, but
+path-only scans are a clear latency concern at 1M files: about half a second
+per KRunner request. These are new absolute measurements of `ce6f6ee`,
+**not a controlled before/after speed comparison**. Earlier sections retain
+their original measurements and limitations.
+
+Full reports, binary hashes, reproduction commands and caveats are in
+[`benchmarks/review-2026-10-31/`](benchmarks/review-2026-10-31/README.md).
+Same machine, release profile, warm cache, seed 42, private D-Bus session;
+new Btrfs corpus directories. No Baloo or KDE settings were changed.
+
+| Query case | 100k generated files | 1M generated files |
+|---|---:|---:|
+| Ordinary mix, D-Bus p50 / p95 (390 queries) | 0.77 / 3.08 ms | 2.53 / 24.81 ms |
+| Exact sentinel name, D-Bus | 1.180 ms (1.175–1.400) | 4.591 ms (4.587–4.624) |
+| Path only, D-Bus | 50.997 ms (50.639–51.480) | 524.328 ms (521.475–528.481) |
+| Path + name, D-Bus | 8.120 ms (7.943–8.215) | 109.594 ms (108.742–110.100) |
+| `within` + name, library | 7.618 ms (7.545–8.058) | 113.055 ms (112.787–114.417) |
+| Missing path, D-Bus | 50.748 ms (50.506–51.267) | 527.119 ms (525.942–543.688) |
+| Slash-only `//`, D-Bus | 0.071 ms (0.068–0.079) | 0.071 ms (0.070–0.078) |
+
+Except the ordinary mix, values are **medians of five round medians**,
+with their min–max range in parentheses; three requests per round, 15
+measured requests per case/transport. All 330 measured responses across the
+two sizes were verified against explicit expected results, with zero
+errors or mismatches. This is not a concurrency or cold-cache measurement.
+
+Why path queries cost more: EXPLAIN confirms a full `entries` scan for
+path-only queries. Library CPU time is approximately equal to wall time
+on the slow cases, pointing to CPU work in scanning/filtering/path resolution.
+The bounded result set no longer truncates candidates *before* filtering;
+a selective filter may therefore inspect the whole candidate source.
+The similar library and D-Bus timings show that transport does not explain
+the hundreds of milliseconds. Exact attribution within SQLite decoding,
+allocation and path construction still needs profiling.
+
+The legacy relevance percentages in the raw reports are **not used as
+correctness evidence**: that older metric treats skipped hidden/non-UTF-8
+samples as successes. The new explicit result checks avoid this issue.
+
+Lifecycle measurements (one run per size; live-update percentiles use 30
+operations per kind):
+
+| Metric | 100k generated files | 1M generated files |
+|---|---:|---:|
+| Indexed files / watched directories | 95,200 / 5,100 | 953,595 / 51,000 |
+| Initial indexing, 100% duty setting | 1.15 s | 19.01 s |
+| Database size | 25.1 MiB | 251.7 MiB |
+| Idle RSS after initial scan | 9.0 MiB | 15.7 MiB |
+| Idle RSS after restart | 7.3 MiB | 9.4 MiB |
+| Idle CPU / context switches, 30-second observation | 0.000% / 0 per second | 0.000% / 0 per second |
+| Create → visible in Match, p50 / p95 | 202.49 / 208.20 ms | 203.17 / 213.46 ms |
+| Rename → visible in Match, p50 / p95 | 202.31 / 204.88 ms | 203.55 / 204.51 ms |
+| Delete → absent from Match, p50 / p95 | 202.16 / 206.51 ms | 202.19 / 203.58 ms |
+| Burst: 10k creates, convergence after last write | 0.18 s | 0.19 s |
+| Burst: 10k renames, convergence after last rename | 0.35 s | 0.61 s |
+| Inotify overflows in burst test | 0 | 0 |
+| Restart → idle | 0.17 s | 1.03 s |
+| SIGKILL recovery: indexed / expected files | 95,200 / 95,200 | 953,595 / 953,595 |
+
+The 200 ms configured debounce dominates isolated update visibility. All
+bursts converged and both recovery checks matched expected file counts;
+both daemon logs were empty. CPU/context-switch zeros describe the observed
+window and clock resolution, not a guarantee of zero work indefinitely.
+RSS readings from `/proc` are approximate: the raw 1M run even sampled
+VmRSS above the later VmHWM, so those values cannot establish a precise
+peak-memory bound. No new claim about improvement over the old version is
+made from these single lifecycle runs.

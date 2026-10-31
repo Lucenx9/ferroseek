@@ -76,3 +76,15 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   entries; do not infer a mandatory filename token from a directory path.
 - Existing benchmark numbers predate these fixes; selective/path-only query
   latency and cache-tag checking overhead have not been rebenchmarked.
+
+## Remeasurement checkpoint (2026-10-31)
+
+- Review fixes measured at 100k and 1M generated files; see BENCHMARKS.md §8
+  and `docs/benchmarks/review-2026-10-31/` for complete raw reports/hashes.
+- `crates/bench/src/review.rs` adds checked path/filter cases: 5 rounds × 3
+  requests per transport. 330 measured results checked across both sizes.
+- At 1M, path-only D-Bus median ≈524 ms, path+name ≈110 ms: known optimization
+  target. Ordinary mixed-query D-Bus median 2.53 ms; steady idle RSS after
+  restart 9.4 MiB. These are warm-cache measurements, not before/after gains.
+- Legacy relevance percentages count skipped samples as successes; do not
+  cite them as accuracy evidence. The limitation is explicit in the report.

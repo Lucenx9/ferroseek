@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 use ferroseek_index::{Query, Reader, SearchOptions};
 
+mod review;
+
 // ------------------------------------------------------------ corpus
 
 struct Rng(u64);
@@ -336,7 +338,7 @@ fn count_hits(db: &Path, q: &str, limit: usize) -> usize {
     Reader::open(db)
         .and_then(|r| r.search(&Query::parse(q), &SearchOptions { limit, ..Default::default() }))
         .map(|h| h.len())
-        .unwrap_or(0)
+        .expect("benchmark search failed")
 }
 
 fn wait_until(timeout: Duration, mut f: impl FnMut() -> bool) -> Option<Duration> {
@@ -562,6 +564,8 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         100.0 * top5_stem as f64 / sample as f64,
         100.0 * found_sub as f64 / sample as f64
     ));
+
+    review::run(&d, work, db, say);
 
     // 5. Incremental latency through D-Bus Match (includes 200 ms debounce).
     let dir = corpus.files[0].parent().unwrap().to_path_buf();
