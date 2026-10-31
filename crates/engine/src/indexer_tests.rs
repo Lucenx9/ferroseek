@@ -419,3 +419,82 @@ fn cache_tag_blocks_live_files_and_removal_restores_existing_files() {
     f.settle();
     assert_eq!(f.find("document").len(), 2);
 }
+
+#[test]
+fn transient_stat_errors_preserve_entries_and_retry_listing() {
+    for errno in [libc::EIO, libc::ESTALE, libc::EACCES] {
+        let mut f = fx();
+        touch(&f.p("folder/keep.txt"));
+        f.scan(Mode::Full);
+        f.ix.st.stat_failures.insert(f.p("folder"), errno);
+        f.scan(Mode::Full);
+        assert!(f.indexed("folder/keep.txt"), "errno {errno} removed a subtree");
+        f.ix.st.stat_failures.clear();
+        // A failed new child's stat must also invalidate an otherwise unchanged listing.
+        touch(&f.p("new.txt"));
+        f.ix.st.stat_failures.insert(f.p("new.txt"), errno);
+        f.scan(Mode::Full);
+        f.ix.st.stat_failures.clear();
+        f.scan(Mode::Quick);
+        assert!(f.indexed("new.txt"), "errno {errno} permanently skipped a new file");
+    }
+}
+
+#[test]
+fn incomplete_readdir_preserves_unseen_children_until_successful_retry() {
+    let mut f = fx();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        touch(&f.p(name));
+    }
+    f.scan(Mode::Full);
+    f.ix.st.listing_failure = Some((f.root.clone(), 1));
+    f.scan(Mode::Full);
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        assert!(f.indexed(name));
+    }
+    f.ix.st.listing_failure = None;
+    fs::remove_file(f.p("b.txt")).unwrap();
+    f.scan(Mode::Quick);
+    assert!(!f.indexed("b.txt"));
+    assert!(f.indexed("a.txt") && f.indexed("c.txt"));
+}
+
+#[test]
+fn transient_event_stat_error_retries_without_another_filesystem_event() {
+    let mut f = fx();
+    touch(&f.p("file.txt"));
+    f.scan(Mode::Full);
+    fs::write(f.p("file.txt"), b"longer content").unwrap();
+    f.ix.st.stat_failures.insert(f.p("file.txt"), libc::EIO);
+    f.ix.pump_events().unwrap();
+    assert!(f.indexed("file.txt"));
+    assert!(f.ix.has_retries());
+    f.ix.st.stat_failures.clear();
+    f.ix.idle_tick().unwrap();
+    f.ix.scan_to_completion().unwrap();
+    let (_, meta) = Reader::open(&f.db).unwrap().lookup(&f.p("file.txt")).unwrap().unwrap();
+    assert_eq!(meta.size, 14);
+}
+
+#[test]
+fn overflow_recovers_metadata_even_when_directory_mtime_did_not_change() {
+    let mut f = fx();
+    touch(&f.p("unchanged/file.txt"));
+    f.scan(Mode::Full);
+    let before = fs::metadata(f.p("unchanged")).unwrap().modified().unwrap();
+    fs::write(f.p("unchanged/file.txt"), b"changed without renaming").unwrap();
+    assert_eq!(before, fs::metadata(f.p("unchanged")).unwrap().modified().unwrap());
+    // Discard every real event; only the overflow notification reaches the indexer.
+    let ino = f.ix.st.ino.clone().unwrap();
+    loop {
+        let mut evs = Vec::new();
+        ino.read_available(&mut vec![0; 65536], &mut evs).unwrap();
+        if evs.is_empty() {
+            break;
+        }
+    }
+    f.ix.apply_events(vec![RawEvent { wd: -1, mask: IN_Q_OVERFLOW, cookie: 0, name: vec![] }]).unwrap();
+    f.ix.scan_to_completion().unwrap();
+    let (_, meta) = Reader::open(&f.db).unwrap().lookup(&f.p("unchanged/file.txt")).unwrap().unwrap();
+    assert_eq!(meta.size, 24);
+}

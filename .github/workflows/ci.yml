@@ -25,6 +25,7 @@ jobs:
       - run: cargo build --release --locked --workspace
       - run: python3 tests/install-smoke.py
       - run: python3 tests/benchmark-smoke.py
+      - run: python3 tests/verify-index-smoke.py
       - name: D-Bus smoke test (private session bus)
         run: tests/dbus-smoke.sh target/release/ferroseekd
       - name: Benchmark smoke run (10k files)

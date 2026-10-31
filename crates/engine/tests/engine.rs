@@ -62,10 +62,19 @@ fn live_updates_pause_resume_restart() {
     e.pause();
     eventually("paused", || e.status().state == "paused");
     write(&root.join("while-paused.txt"));
+    fs::write(root.join("existing/alpha-doc.txt"), b"modified while paused").unwrap();
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(hits(&paths, "while-paused"), 0, "paused engine does not index");
     e.resume();
     eventually("indexed after resume", || hits(&paths, "while-paused") == 1);
+
+    eventually("metadata recovered after resume", || {
+        Reader::open(&paths.index_file())
+            .unwrap()
+            .lookup(&root.join("existing/alpha-doc.txt"))
+            .unwrap()
+            .is_some_and(|(_, meta)| meta.size == 21)
+    });
 
     // Single writer per index.
     assert!(matches!(Engine::start(&cfg, &paths), Err(EngineError::Busy)));

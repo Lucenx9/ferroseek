@@ -38,9 +38,9 @@ design:
   p50 / p95 / p99. Five paired runs reduced a selective path-only query
   from 530 ms to 2.03 ms without adding a persistent index. See
   [measurements and limits](docs/BENCHMARKS.md#9-path-optimization-2026-10-31).
-- **Recovery from missed events.** On inotify overflow, watch-limit exhaustion, pause or
-  restart it reconciles: a quick pass that skips directories whose mtime is
-  unchanged.
+- **Recovery from missed events.** After inotify overflow, pending-event overflow or dropped events during
+  pause, it performs a full reconciliation, including file metadata. Startup
+  and periodic reconciliation normally use a quick directory-mtime pass.
 - **Crash-safe.** It uses SQLite WAL. A corrupt or incompatible index is
   moved aside and rebuilt automatically. Recovery after `SIGKILL` was
   measured to be complete.

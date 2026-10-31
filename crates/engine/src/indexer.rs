@@ -36,7 +36,7 @@ pub enum Mode {
 }
 
 /// Suspect entries are retried at most this many batches before falling
-/// back to a quick reconcile of everything.
+/// back to a full reconcile of everything.
 const MAX_RETRIES: u8 = 3;
 
 pub(crate) type Result<T> = std::result::Result<T, ferroseek_index::Error>;
@@ -49,6 +49,10 @@ pub(crate) struct Indexer {
 /// Everything except the writer, so that a [`Txn`] (which borrows the
 /// writer) can be used alongside mutable state.
 struct State {
+    #[cfg(test)]
+    stat_failures: HashMap<PathBuf, i32>,
+    #[cfg(test)]
+    listing_failure: Option<(PathBuf, usize)>,
     rules: Rules,
     roots: Vec<PathBuf>,
     ino: Option<Inotify>,
@@ -71,6 +75,10 @@ impl Indexer {
         Indexer {
             w,
             st: State {
+                #[cfg(test)]
+                stat_failures: HashMap::new(),
+                #[cfg(test)]
+                listing_failure: None,
                 rules,
                 roots,
                 ino,
@@ -259,7 +267,7 @@ impl Indexer {
             log::warn!("inotify queue overflowed; reconciling all roots");
         }
         if overflow || fallback {
-            self.schedule_all(Mode::Quick)?;
+            self.schedule_all(Mode::Full)?;
         }
         Ok(())
     }
@@ -271,7 +279,7 @@ impl Indexer {
             return Ok(());
         }
         self.st.retry.clear();
-        self.schedule_all(Mode::Quick)
+        self.schedule_all(Mode::Full)
     }
 
     /// Drops every indexed entry and watch, then queues a full scan.
@@ -287,6 +295,14 @@ impl Indexer {
 }
 
 impl State {
+    fn metadata(&self, path: &Path) -> io::Result<fs::Metadata> {
+        #[cfg(test)]
+        if let Some(errno) = self.stat_failures.get(path) {
+            return Err(io::Error::from_raw_os_error(*errno));
+        }
+        fs::symlink_metadata(path)
+    }
+
     /// Suspects carried over from the previous batch. New suspects found
     /// while resolving the current batch go to `self.retry` for the next.
     fn retry_previous(&mut self) -> Vec<(Id, Vec<u8>, u8)> {
@@ -378,16 +394,15 @@ impl State {
         // Watch before listing, so nothing created after the listing is
         // missed.
         self.watch(&path, id);
-        let md = match fs::symlink_metadata(&path) {
+        let md = match self.metadata(&path) {
             Ok(m) if m.is_dir() => m,
             // Gone or replaced by a non-directory: removal is the parent's
             // (or an event's) job, keyed by name.
             Ok(_) => return Ok(()),
             Err(e) => {
                 log::debug!("cannot stat {}: {e}", path.display());
-                if e.kind() == io::ErrorKind::PermissionDenied {
-                    self.status.errors.fetch_add(1, Relaxed);
-                }
+                self.status.errors.fetch_add(1, Relaxed);
+                tx.mark_dir_reconciled(id, 0, stored.ino)?;
                 return Ok(());
             }
         };
@@ -411,20 +426,49 @@ impl State {
             Err(e) => {
                 log::debug!("cannot list {}: {e}", path.display());
                 self.status.errors.fetch_add(1, Relaxed);
+                tx.mark_dir_reconciled(id, 0, cur.ino)?;
                 return Ok(());
             }
         };
+        #[cfg(test)]
+        let rd = rd
+            .enumerate()
+            .map(|(i, entry)| {
+                if self.listing_failure.as_ref() == Some(&(path.clone(), i)) {
+                    Err(io::Error::from_raw_os_error(libc::EIO))
+                } else {
+                    entry
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_iter();
         let mut stored_children: HashMap<Vec<u8>, ferroseek_index::Child> = tx.children(id)?.into_iter().collect();
+        let mut complete = true;
         for ent in rd {
-            let Ok(ent) = ent else { continue };
+            let ent = match ent {
+                Ok(ent) => ent,
+                Err(e) => {
+                    log::debug!("incomplete listing of {}: {e}", path.display());
+                    self.status.errors.fetch_add(1, Relaxed);
+                    complete = false;
+                    continue;
+                }
+            };
             let name = ent.file_name().as_bytes().to_vec();
             if self.rules.excluded(&path, &name) {
                 continue;
             }
             let full = path.join(OsStr::from_bytes(&name));
-            let cmd = match fs::symlink_metadata(&full) {
+            let cmd = match self.metadata(&full) {
                 Ok(m) => m,
-                Err(_) => continue, // vanished since readdir, or unreadable
+                Err(e) => {
+                    // Seeing the name does not prove that an inaccessible entry is gone.
+                    stored_children.remove(&name);
+                    log::debug!("cannot stat {}: {e}", full.display());
+                    self.status.errors.fetch_add(1, Relaxed);
+                    complete = false;
+                    continue;
+                }
             };
             let meta = Meta::from_metadata(&cmd);
             let old = stored_children.remove(&name);
@@ -451,11 +495,14 @@ impl State {
                 }
             }
         }
-        // Whatever is stored but no longer listed (or now excluded) is gone.
-        for (_, c) in stored_children {
-            self.drop_subtree(tx, c.id)?;
+        // Absence is authoritative only after a complete listing. Invalidating
+        // the timestamp makes the next quick pass retry without a busy loop.
+        if complete {
+            for (_, c) in stored_children {
+                self.drop_subtree(tx, c.id)?;
+            }
         }
-        tx.mark_dir_reconciled(id, cur.mtime_ns, cur.ino)?;
+        tx.mark_dir_reconciled(id, if complete { cur.mtime_ns } else { 0 }, cur.ino)?;
         Ok(())
     }
 
@@ -479,7 +526,7 @@ impl State {
             return Ok(());
         }
         let full = dpath.join(OsStr::from_bytes(name));
-        match fs::symlink_metadata(&full) {
+        match self.metadata(&full) {
             Ok(md) => {
                 let meta = Meta::from_metadata(&md);
                 if let Some(c) = &existing
@@ -522,6 +569,7 @@ impl State {
             Err(e) => {
                 log::debug!("cannot stat {}: {e}", full.display());
                 self.status.errors.fetch_add(1, Relaxed);
+                self.retry.push((dir, name.to_vec(), tries));
             }
         }
         Ok(())

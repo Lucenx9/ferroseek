@@ -117,3 +117,16 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   Never restore per-Status malloc_trim or blocking async control work.
 - Benchmark --work must be new/empty unless explicitly reusing a matching
   generated corpus. Reuse initial indexing deletes only that work/data.
+
+## Filesystem recovery checkpoint
+
+- CI stable was Rust 1.99; reproduce its Clippy checks with that toolchain,
+  not only the local default (1.94). Removed a newly diagnosed redundant borrow.
+- Incomplete listings and failed child stats must never imply deletion.
+  Preserve existing entries, count errors and invalidate directory listing
+  timestamps so future quick passes retry. Event stat errors enter bounded
+  retry handling. Overflow and dropped-event recovery must use Full mode:
+  changing file contents does not update its parent directory's mtime.
+- `scripts/verify-index.py` is an independent read-only desktop oracle. Use
+  complete effective config; reports contain counts, not private file paths.
+  See docs/DESKTOP_SOAK.md. Never commit real user indexes/configs/logs.
