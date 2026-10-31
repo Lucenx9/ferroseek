@@ -408,10 +408,8 @@ fn unconfigured_default_is_global_but_explicit_restricted_remains_empty() {
     // restricted, even when it contains options other than allowlists.
     let old_config = fx.t.path().join("old-mcp.toml");
     fs::write(&old_config, "deny_defaults = false\n").unwrap();
-    let mut old = Mcp::spawn(
-        &["--index", fx.db.to_str().unwrap(), "--config", old_config.to_str().unwrap()],
-        fx.t.path(),
-    );
+    let mut old =
+        Mcp::spawn(&["--index", fx.db.to_str().unwrap(), "--config", old_config.to_str().unwrap()], fx.t.path());
     let (_, status) = old.call("index_status", json!({}));
     assert_eq!(status["access_mode"], "restricted");
 }
