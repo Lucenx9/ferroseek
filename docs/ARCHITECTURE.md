@@ -101,6 +101,11 @@ it is idempotent, and races between the scan and events converge.
     the inode.
   - An unpaired `MOVED_FROM` is a delete. An unpaired `MOVED_TO` is a create,
     plus a subtree scan if the entry is a directory.
+  - A directory move that changes depth or intersects a path exclusion
+    invalidates its subtree's listing timestamps in the rename transaction.
+    Reconciliation rechecks the new policy, even after an interrupted scan
+    and restart, and removes watches beyond the depth limit. Other directory
+    renames retain the one-row tree update without a subtree scan.
   - Everything else marks `(dir_id, name)` dirty. Dirty entries are resolved
     with the primitive above after renames are applied.
 - **Stale parents.** If a dirty name is missing *and* the parent's stored

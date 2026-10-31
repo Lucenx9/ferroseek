@@ -391,6 +391,12 @@ impl State {
         if stored.kind != Kind::Dir {
             return Ok(());
         }
+        let depth = self.depth(&path);
+        if depth > self.rules.max_depth {
+            self.drop_children(tx, id)?;
+            self.unwatch(id);
+            return Ok(());
+        }
         // Watch before listing, so nothing created after the listing is
         // missed.
         self.watch(&path, id);
@@ -412,7 +418,6 @@ impl State {
             tx.mark_dir_reconciled(id, cur.mtime_ns, cur.ino)?;
             return Ok(());
         }
-        let depth = self.depth(&path);
         if mode == Mode::Quick && stored.mtime_ns != 0 && stored.mtime_ns == cur.mtime_ns && stored.ino == cur.ino {
             if depth < self.rules.max_depth {
                 for (cid, _) in tx.child_dirs(id)? {
@@ -492,6 +497,7 @@ impl State {
                     self.work.push((cid, mode));
                 } else {
                     self.drop_children(tx, cid)?;
+                    self.unwatch(cid);
                 }
             }
         }
@@ -595,6 +601,20 @@ impl State {
                     && dst.id != c.id
                 {
                     self.drop_subtree(tx, dst.id)?;
+                }
+                if c.meta.kind == Kind::Dir
+                    && let Some(old_path) = tx.path(c.id)?
+                {
+                    let new_path = tdpath.join(OsStr::from_bytes(&tname));
+                    if self.depth(&old_path) != self.depth(&new_path)
+                        || self.rules.has_exclusions_below(&old_path)
+                        || self.rules.has_exclusions_below(&new_path)
+                    {
+                        // A move changes path policy without changing listing mtimes.
+                        // Persist invalidation in the same transaction as the rename.
+                        tx.invalidate_subtree_listings(c.id)?;
+                        self.work.push((c.id, Mode::Quick));
+                    }
                 }
                 tx.rename(c.id, tdir, &tname)?;
                 // Refresh metadata (cheap) and pick up anything unusual.
