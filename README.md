@@ -216,6 +216,9 @@ tests/mcp-smoke.py                                      # MCP server over stdio,
 target/release/ferroseek-bench --files 100000 --work /tmp/fsb   # benchmarks
 ```
 
+MCP filename-tool comparisons, freshness measurements, and known scoped-search
+limits are documented in the [validation report](docs/benchmarks/mcp-validation-2026-10-31/README.md).
+
 ## Privacy and security
 
 - No network code, no telemetry.

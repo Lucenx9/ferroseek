@@ -1,0 +1,527 @@
+{
+  "scope_directories": 2194,
+  "plans": {
+    "exact": [
+      "SEARCH e USING INDEX entries_key (key=?)"
+    ],
+    "prefix": [
+      "SEARCH e USING INDEX entries_key (key>? AND key<?)"
+    ],
+    "fts": [
+      "SCAN names VIRTUAL TABLE INDEX 64:M1",
+      "SEARCH e USING INTEGER PRIMARY KEY (rowid=?)"
+    ],
+    "descendants": [
+      "CO-ROUTINE dirs",
+      "SETUP",
+      "SCAN CONSTANT ROW",
+      "RECURSIVE STEP",
+      "SCAN dirs",
+      "SEARCH e USING INDEX entries_parent_name (parent=?)",
+      "SCAN dirs"
+    ]
+  },
+  "rows": [
+    {
+      "query": 0,
+      "global_fts_matches": 521,
+      "count_ms": 0.3924550001102034
+    },
+    {
+      "query": 1,
+      "global_fts_matches": 58420,
+      "count_ms": 1.6218270002354984
+    },
+    {
+      "query": 2,
+      "global_fts_matches": 39,
+      "count_ms": 1.367190000564733
+    },
+    {
+      "query": 3,
+      "global_fts_matches": 22918,
+      "count_ms": 5.193212999984098
+    },
+    {
+      "query": 4,
+      "global_fts_matches": 727,
+      "count_ms": 1.754655000695493
+    },
+    {
+      "query": 5,
+      "global_fts_matches": 2851,
+      "count_ms": 0.13683599991054507
+    },
+    {
+      "query": 6,
+      "global_fts_matches": 30464,
+      "count_ms": 0.8168900003511226
+    },
+    {
+      "query": 7,
+      "global_fts_matches": 6,
+      "count_ms": 0.9924279993356322
+    },
+    {
+      "query": 8,
+      "global_fts_matches": 32,
+      "count_ms": 0.8434290002696798
+    },
+    {
+      "query": 9,
+      "global_fts_matches": 4927,
+      "count_ms": 0.9806159996514907
+    },
+    {
+      "query": 10,
+      "global_fts_matches": 31713,
+      "count_ms": 0.8930719995987602
+    },
+    {
+      "query": 11,
+      "global_fts_matches": 30556,
+      "count_ms": 4.644275000828202
+    },
+    {
+      "query": 12,
+      "global_fts_matches": 7618,
+      "count_ms": 0.27254999986325856
+    },
+    {
+      "query": 13,
+      "global_fts_matches": 787,
+      "count_ms": 0.47351699959108373
+    },
+    {
+      "query": 14,
+      "global_fts_matches": 30309,
+      "count_ms": 2.168619999793009
+    },
+    {
+      "query": 15,
+      "global_fts_matches": 2140,
+      "count_ms": 2.564911999797914
+    },
+    {
+      "query": 16,
+      "global_fts_matches": 108,
+      "count_ms": 1.08547199943132
+    },
+    {
+      "query": 17,
+      "global_fts_matches": 4,
+      "count_ms": 0.5325170004653046
+    },
+    {
+      "query": 18,
+      "global_fts_matches": 1020,
+      "count_ms": 0.432659999205498
+    },
+    {
+      "query": 19,
+      "global_fts_matches": 6872,
+      "count_ms": 3.4489870004108525
+    },
+    {
+      "query": 20,
+      "global_fts_matches": 31680,
+      "count_ms": 0.8894949996829382
+    },
+    {
+      "query": 21,
+      "global_fts_matches": 1,
+      "count_ms": 0.3440649998083245
+    },
+    {
+      "query": 22,
+      "global_fts_matches": 344,
+      "count_ms": 1.2646380000660429
+    },
+    {
+      "query": 23,
+      "global_fts_matches": 4,
+      "count_ms": 0.6380449995049275
+    },
+    {
+      "query": 24,
+      "global_fts_matches": 472,
+      "count_ms": 0.7093980002537137
+    },
+    {
+      "query": 25,
+      "global_fts_matches": 120,
+      "count_ms": 0.5073900001661968
+    },
+    {
+      "query": 26,
+      "global_fts_matches": 1,
+      "count_ms": 0.4178119997959584
+    },
+    {
+      "query": 27,
+      "global_fts_matches": 342,
+      "count_ms": 1.2879410005552927
+    },
+    {
+      "query": 28,
+      "global_fts_matches": 1416,
+      "count_ms": 1.3067969994153827
+    },
+    {
+      "query": 29,
+      "global_fts_matches": 30600,
+      "count_ms": 0.8617040002718568
+    },
+    {
+      "query": 30,
+      "global_fts_matches": 1634,
+      "count_ms": 2.5525990004098276
+    },
+    {
+      "query": 31,
+      "global_fts_matches": 1199,
+      "count_ms": 0.9154340004897676
+    },
+    {
+      "query": 32,
+      "global_fts_matches": 795,
+      "count_ms": 1.891651999358146
+    },
+    {
+      "query": 33,
+      "global_fts_matches": 2480,
+      "count_ms": 2.8447359991332632
+    },
+    {
+      "query": 34,
+      "global_fts_matches": 10,
+      "count_ms": 0.9811669997361605
+    },
+    {
+      "query": 35,
+      "global_fts_matches": 80,
+      "count_ms": 0.6228259999261354
+    },
+    {
+      "query": 36,
+      "global_fts_matches": 56,
+      "count_ms": 0.31520000084128696
+    },
+    {
+      "query": 37,
+      "global_fts_matches": 30692,
+      "count_ms": 4.456763999769464
+    },
+    {
+      "query": 38,
+      "global_fts_matches": 59059,
+      "count_ms": 1.562114000080328
+    },
+    {
+      "query": 39,
+      "global_fts_matches": 507,
+      "count_ms": 3.801506999479898
+    },
+    {
+      "query": 40,
+      "global_fts_matches": 1,
+      "count_ms": 0.6195200003276113
+    },
+    {
+      "query": 41,
+      "global_fts_matches": 2,
+      "count_ms": 0.5052859996794723
+    },
+    {
+      "query": 42,
+      "global_fts_matches": 70,
+      "count_ms": 1.322907000030682
+    },
+    {
+      "query": 43,
+      "global_fts_matches": 192,
+      "count_ms": 0.769680999837874
+    },
+    {
+      "query": 44,
+      "global_fts_matches": 245,
+      "count_ms": 0.8042449999265955
+    },
+    {
+      "query": 45,
+      "global_fts_matches": 237,
+      "count_ms": 1.4038180006537004
+    },
+    {
+      "query": 46,
+      "global_fts_matches": 30875,
+      "count_ms": 0.8384699995076517
+    },
+    {
+      "query": 47,
+      "global_fts_matches": 41,
+      "count_ms": 0.626522999482404
+    },
+    {
+      "query": 48,
+      "global_fts_matches": 821,
+      "count_ms": 0.6477529996118392
+    },
+    {
+      "query": 49,
+      "global_fts_matches": 955,
+      "count_ms": 1.1843679994854028
+    },
+    {
+      "query": 50,
+      "global_fts_matches": 22911,
+      "count_ms": 4.352918999757094
+    },
+    {
+      "query": 51,
+      "global_fts_matches": 251,
+      "count_ms": 0.4691679996540188
+    },
+    {
+      "query": 52,
+      "global_fts_matches": 2137,
+      "count_ms": 1.6702459997759433
+    },
+    {
+      "query": 53,
+      "global_fts_matches": 831,
+      "count_ms": 2.259500000036496
+    },
+    {
+      "query": 54,
+      "global_fts_matches": 2,
+      "count_ms": 0.7361080006376142
+    },
+    {
+      "query": 55,
+      "global_fts_matches": 9387,
+      "count_ms": 1.3222850002421183
+    },
+    {
+      "query": 56,
+      "global_fts_matches": 723,
+      "count_ms": 0.4358059995865915
+    },
+    {
+      "query": 57,
+      "global_fts_matches": 32,
+      "count_ms": 1.2051459998474456
+    },
+    {
+      "query": 58,
+      "global_fts_matches": 26,
+      "count_ms": 0.6235569999262225
+    },
+    {
+      "query": 59,
+      "global_fts_matches": 30606,
+      "count_ms": 3.88325000039913
+    },
+    {
+      "query": 60,
+      "global_fts_matches": 540,
+      "count_ms": 0.2200620001531206
+    },
+    {
+      "query": 61,
+      "global_fts_matches": 30606,
+      "count_ms": 4.163735000474844
+    },
+    {
+      "query": 62,
+      "global_fts_matches": 771,
+      "count_ms": 0.2781610000965884
+    },
+    {
+      "query": 63,
+      "global_fts_matches": 2,
+      "count_ms": 0.8962179999798536
+    },
+    {
+      "query": 64,
+      "global_fts_matches": 91,
+      "count_ms": 1.3857840003765887
+    },
+    {
+      "query": 65,
+      "global_fts_matches": 3,
+      "count_ms": 0.756456000090111
+    },
+    {
+      "query": 66,
+      "global_fts_matches": 4,
+      "count_ms": 0.32032000035542296
+    },
+    {
+      "query": 67,
+      "global_fts_matches": 31,
+      "count_ms": 0.6599759999517119
+    },
+    {
+      "query": 68,
+      "global_fts_matches": 1,
+      "count_ms": 0.5457819997900515
+    },
+    {
+      "query": 69,
+      "global_fts_matches": 1414,
+      "count_ms": 0.5686039994543535
+    },
+    {
+      "query": 70,
+      "global_fts_matches": 157,
+      "count_ms": 1.5344929997809231
+    },
+    {
+      "query": 71,
+      "global_fts_matches": 181,
+      "count_ms": 0.3605560004871222
+    },
+    {
+      "query": 72,
+      "global_fts_matches": 30663,
+      "count_ms": 0.8377690000997973
+    },
+    {
+      "query": 73,
+      "global_fts_matches": 2267,
+      "count_ms": 0.8474169999317382
+    },
+    {
+      "query": 74,
+      "global_fts_matches": 54,
+      "count_ms": 0.46296700020320714
+    },
+    {
+      "query": 75,
+      "global_fts_matches": 43330,
+      "count_ms": 1.1811619997388334
+    },
+    {
+      "query": 76,
+      "global_fts_matches": 22634,
+      "count_ms": 3.8962640001045656
+    },
+    {
+      "query": 77,
+      "global_fts_matches": 6958,
+      "count_ms": 0.7973030005814508
+    },
+    {
+      "query": 78,
+      "global_fts_matches": 453,
+      "count_ms": 1.141377000749344
+    },
+    {
+      "query": 79,
+      "global_fts_matches": 31938,
+      "count_ms": 0.8602000007158495
+    },
+    {
+      "query": 80,
+      "global_fts_matches": 23,
+      "count_ms": 0.7156199999371893
+    },
+    {
+      "query": 81,
+      "global_fts_matches": 30519,
+      "count_ms": 0.8334300000569783
+    },
+    {
+      "query": 82,
+      "global_fts_matches": 2443,
+      "count_ms": 2.6454230001036194
+    },
+    {
+      "query": 83,
+      "global_fts_matches": 891,
+      "count_ms": 0.876139999490988
+    },
+    {
+      "query": 84,
+      "global_fts_matches": 30564,
+      "count_ms": 3.2137970001713256
+    },
+    {
+      "query": 85,
+      "global_fts_matches": 60984,
+      "count_ms": 1.5910489992165822
+    },
+    {
+      "query": 86,
+      "global_fts_matches": 14,
+      "count_ms": 1.1237740000069607
+    },
+    {
+      "query": 87,
+      "global_fts_matches": 1,
+      "count_ms": 0.5639459996018559
+    },
+    {
+      "query": 88,
+      "global_fts_matches": 7218,
+      "count_ms": 0.2584039993962506
+    },
+    {
+      "query": 89,
+      "global_fts_matches": 245,
+      "count_ms": 1.7665180002950365
+    },
+    {
+      "query": 90,
+      "global_fts_matches": 152,
+      "count_ms": 0.3820349993475247
+    },
+    {
+      "query": 91,
+      "global_fts_matches": 15733,
+      "count_ms": 1.508954999735579
+    },
+    {
+      "query": 92,
+      "global_fts_matches": 1664,
+      "count_ms": 0.5955050000920892
+    },
+    {
+      "query": 93,
+      "global_fts_matches": 6308,
+      "count_ms": 1.6707579998183064
+    },
+    {
+      "query": 94,
+      "global_fts_matches": 15700,
+      "count_ms": 1.9244530003561522
+    },
+    {
+      "query": 95,
+      "global_fts_matches": 529,
+      "count_ms": 0.26584700026432984
+    },
+    {
+      "query": 96,
+      "global_fts_matches": 15633,
+      "count_ms": 3.0071000001044013
+    },
+    {
+      "query": 97,
+      "global_fts_matches": 150,
+      "count_ms": 1.1600710004131543
+    },
+    {
+      "query": 98,
+      "global_fts_matches": 30464,
+      "count_ms": 0.8591779997004778
+    },
+    {
+      "query": 99,
+      "global_fts_matches": 6504,
+      "count_ms": 2.436942000713316
+    }
+  ],
+  "note": "Diagnostic counts are not search latency: candidate caps can stop before all FTS matches are read. Query IDs match the seed-7 paired benchmark."
+}

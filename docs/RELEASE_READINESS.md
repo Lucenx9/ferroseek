@@ -132,3 +132,17 @@ and the private-bus smoke test passed again before publication. These scans
 found no sensitive content; they are not a guarantee against every possible
 secret format. Only `main` and its unchanged ancestors are intended for the
 push; local orchestration/checkpoint refs are excluded. No release is created.
+
+## Optional MCP validation milestone (2026-10-31)
+
+The optional stdio MCP server now recovers live results behind more than 8,192
+stale candidates. The [validation report](benchmarks/mcp-validation-2026-10-31/README.md)
+records independent filename-search oracles, five-run tool comparisons,
+private watcher measurements and rejected optimization evidence. All 108
+Rust tests and local stable-1.99 Clippy/MSRV/release/smoke checks passed.
+
+Remaining validation gaps are cold-cache behavior, more realistic source trees
+and machines, long-run MCP workloads and completion of the separate desktop
+soak. Broad scoped-query tails and approximate large-result ranking remain
+known performance/behavior limitations. No release is published by this
+milestone; the existing desktop installation and soak timer remain unchanged.

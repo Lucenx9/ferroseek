@@ -1,0 +1,225 @@
+{
+  "rows": [
+    {
+      "repetition": 0,
+      "tool": "ferroseek",
+      "phase": "initial",
+      "database_bytes": 19468288,
+      "ms": 678.4719510005743,
+      "cpu_ms": 648.9449999999999,
+      "peak_rss_kib": 18984,
+      "input_blocks": 0,
+      "output_blocks": 87648
+    },
+    {
+      "repetition": 0,
+      "tool": "plocate",
+      "phase": "initial",
+      "database_bytes": 667012,
+      "ms": 122.34790499951487,
+      "cpu_ms": 121.64800000000001,
+      "peak_rss_kib": 161232,
+      "input_blocks": 0,
+      "output_blocks": 1304
+    },
+    {
+      "repetition": 0,
+      "tool": "ferroseek",
+      "phase": "rename-refresh",
+      "database_bytes": 19468288,
+      "ms": 236.25384099977964,
+      "cpu_ms": 230.06099999999998,
+      "peak_rss_kib": 26692,
+      "input_blocks": 0,
+      "output_blocks": 920
+    },
+    {
+      "repetition": 0,
+      "tool": "plocate",
+      "phase": "rename-refresh",
+      "database_bytes": 516196,
+      "ms": 120.84896699980163,
+      "cpu_ms": 120.15399999999998,
+      "peak_rss_kib": 161568,
+      "input_blocks": 0,
+      "output_blocks": 1112
+    },
+    {
+      "repetition": 1,
+      "tool": "plocate",
+      "phase": "initial",
+      "database_bytes": 666985,
+      "ms": 123.09460300002684,
+      "cpu_ms": 122.207,
+      "peak_rss_kib": 160948,
+      "input_blocks": 0,
+      "output_blocks": 1304
+    },
+    {
+      "repetition": 1,
+      "tool": "ferroseek",
+      "phase": "initial",
+      "database_bytes": 19030016,
+      "ms": 672.8138839998792,
+      "cpu_ms": 643.712,
+      "peak_rss_kib": 26820,
+      "input_blocks": 0,
+      "output_blocks": 87520
+    },
+    {
+      "repetition": 1,
+      "tool": "plocate",
+      "phase": "rename-refresh",
+      "database_bytes": 514360,
+      "ms": 126.9870220003213,
+      "cpu_ms": 126.026,
+      "peak_rss_kib": 161824,
+      "input_blocks": 0,
+      "output_blocks": 1040
+    },
+    {
+      "repetition": 1,
+      "tool": "ferroseek",
+      "phase": "rename-refresh",
+      "database_bytes": 19030016,
+      "ms": 233.23954500028776,
+      "cpu_ms": 228.16899999999998,
+      "peak_rss_kib": 27076,
+      "input_blocks": 0,
+      "output_blocks": 1048
+    },
+    {
+      "repetition": 2,
+      "tool": "ferroseek",
+      "phase": "initial",
+      "database_bytes": 19030016,
+      "ms": 676.1231999998927,
+      "cpu_ms": 648.376,
+      "peak_rss_kib": 27204,
+      "input_blocks": 0,
+      "output_blocks": 88128
+    },
+    {
+      "repetition": 2,
+      "tool": "plocate",
+      "phase": "initial",
+      "database_bytes": 667009,
+      "ms": 125.05509400034498,
+      "cpu_ms": 124.232,
+      "peak_rss_kib": 161000,
+      "input_blocks": 0,
+      "output_blocks": 1304
+    },
+    {
+      "repetition": 2,
+      "tool": "ferroseek",
+      "phase": "rename-refresh",
+      "database_bytes": 19030016,
+      "ms": 233.18246800045017,
+      "cpu_ms": 227.81199999999998,
+      "peak_rss_kib": 27332,
+      "input_blocks": 0,
+      "output_blocks": 1016
+    },
+    {
+      "repetition": 2,
+      "tool": "plocate",
+      "phase": "rename-refresh",
+      "database_bytes": 516200,
+      "ms": 124.17922300028295,
+      "cpu_ms": 123.45400000000001,
+      "peak_rss_kib": 161348,
+      "input_blocks": 0,
+      "output_blocks": 1112
+    },
+    {
+      "repetition": 3,
+      "tool": "plocate",
+      "phase": "initial",
+      "database_bytes": 666985,
+      "ms": 121.1741160004749,
+      "cpu_ms": 120.484,
+      "peak_rss_kib": 162520,
+      "input_blocks": 0,
+      "output_blocks": 1304
+    },
+    {
+      "repetition": 3,
+      "tool": "ferroseek",
+      "phase": "initial",
+      "database_bytes": 19468288,
+      "ms": 681.7794609996781,
+      "cpu_ms": 650.601,
+      "peak_rss_kib": 27588,
+      "input_blocks": 0,
+      "output_blocks": 88432
+    },
+    {
+      "repetition": 3,
+      "tool": "plocate",
+      "phase": "rename-refresh",
+      "database_bytes": 514360,
+      "ms": 122.37219899998308,
+      "cpu_ms": 121.548,
+      "peak_rss_kib": 162208,
+      "input_blocks": 0,
+      "output_blocks": 1040
+    },
+    {
+      "repetition": 3,
+      "tool": "ferroseek",
+      "phase": "rename-refresh",
+      "database_bytes": 19468288,
+      "ms": 234.30001999986416,
+      "cpu_ms": 228.34899999999996,
+      "peak_rss_kib": 27716,
+      "input_blocks": 0,
+      "output_blocks": 1112
+    },
+    {
+      "repetition": 4,
+      "tool": "ferroseek",
+      "phase": "initial",
+      "database_bytes": 19030016,
+      "ms": 669.2410000005111,
+      "cpu_ms": 638.952,
+      "peak_rss_kib": 27972,
+      "input_blocks": 0,
+      "output_blocks": 88032
+    },
+    {
+      "repetition": 4,
+      "tool": "plocate",
+      "phase": "initial",
+      "database_bytes": 667012,
+      "ms": 120.44253600015509,
+      "cpu_ms": 119.686,
+      "peak_rss_kib": 162456,
+      "input_blocks": 0,
+      "output_blocks": 1304
+    },
+    {
+      "repetition": 4,
+      "tool": "ferroseek",
+      "phase": "rename-refresh",
+      "database_bytes": 19030016,
+      "ms": 229.3320369999492,
+      "cpu_ms": 223.771,
+      "peak_rss_kib": 28100,
+      "input_blocks": 0,
+      "output_blocks": 1176
+    },
+    {
+      "repetition": 4,
+      "tool": "plocate",
+      "phase": "rename-refresh",
+      "database_bytes": 516196,
+      "ms": 124.25587599955179,
+      "cpu_ms": 123.55799999999999,
+      "peak_rss_kib": 161356,
+      "input_blocks": 0,
+      "output_blocks": 1112
+    }
+  ],
+  "note": "Both indexes removed before each initial run. Refresh applies one rename. Foreground FerroSeek full reconcile versus updatedb, not per-event watcher cost."
+}

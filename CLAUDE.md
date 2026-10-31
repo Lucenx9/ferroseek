@@ -165,3 +165,11 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   filesystem access. `omitted_stale` is a lower bound; concurrent retry
   exhaustion sets `incomplete_due_to_changes`. The 8300-deletion protocol
   regression covers scoped/unscoped queries and limits 1/10.
+
+- MCP validation evidence: docs/benchmarks/mcp-validation-2026-10-31.
+  Keep native filename comparisons semantic-equivalent and filesystem-oracle
+  checked. wait4 peak RSS includes a pre-exec Python image; use separate
+  post-exec sampling. Only index-costs.json supplies fresh-build costs.
+  The scoped early-stop experiment was rejected (no demonstrated gain).
+  Never run maintenance harnesses on a desktop data directory; they use
+  disposable corpora and a private D-Bus session.

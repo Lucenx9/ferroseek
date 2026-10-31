@@ -593,3 +593,20 @@ because of a stored `Notify` permit. It was fixed to 0.00/s.
   the slow cases.
 - When not running, the server costs nothing: it is a stdio child of the
   agent and exits on EOF, as the protocol tests verify.
+
+## 11. MCP validation against filename tools (2026-10-31)
+
+[Full method, tables, raw evidence and reproduction commands](benchmarks/mcp-validation-2026-10-31/README.md).
+Five process repetitions compared resident MCP round trips with fd, rg --files
+and a private plocate index on four generated repositories plus a public source
+snapshot. All 700 steady-state responses matched an independent filesystem
+oracle. Results depend on query, scope and invocation pattern; there is no
+universal winner. Index construction, watcher freshness, CPU, I/O and memory
+are reported separately, including measurement limitations.
+
+A regression with 8,300 deleted higher-ranked entries reproduced zero recall
+for two survivors. Recovery now filters vanished paths inside the candidate
+budget: all survivors returned in five paired trials, without a measurable
+ordinary-query latency change. The million-file scoped p95 remains around
+89 ms in this workload. An unconvincing scoped-ranking optimization was
+rejected. This work did not modify the live desktop service or its soak test.

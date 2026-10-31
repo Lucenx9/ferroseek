@@ -1,0 +1,95 @@
+{
+  "rows": [
+    {
+      "repetition": 0,
+      "tool": "fd",
+      "samples": 20,
+      "post_exec_hwm_kib": 83780
+    },
+    {
+      "repetition": 0,
+      "tool": "rg",
+      "samples": 17,
+      "post_exec_hwm_kib": 7028
+    },
+    {
+      "repetition": 0,
+      "tool": "plocate",
+      "samples": 3,
+      "post_exec_hwm_kib": 5600
+    },
+    {
+      "repetition": 1,
+      "tool": "fd",
+      "samples": 16,
+      "post_exec_hwm_kib": 83768
+    },
+    {
+      "repetition": 1,
+      "tool": "rg",
+      "samples": 17,
+      "post_exec_hwm_kib": 7076
+    },
+    {
+      "repetition": 1,
+      "tool": "plocate",
+      "samples": 3,
+      "post_exec_hwm_kib": 5764
+    },
+    {
+      "repetition": 2,
+      "tool": "fd",
+      "samples": 13,
+      "post_exec_hwm_kib": 83780
+    },
+    {
+      "repetition": 2,
+      "tool": "rg",
+      "samples": 17,
+      "post_exec_hwm_kib": 7080
+    },
+    {
+      "repetition": 2,
+      "tool": "plocate",
+      "samples": 2,
+      "post_exec_hwm_kib": 2128
+    },
+    {
+      "repetition": 3,
+      "tool": "fd",
+      "samples": 15,
+      "post_exec_hwm_kib": 83760
+    },
+    {
+      "repetition": 3,
+      "tool": "rg",
+      "samples": 17,
+      "post_exec_hwm_kib": 6920
+    },
+    {
+      "repetition": 3,
+      "tool": "plocate",
+      "samples": 3,
+      "post_exec_hwm_kib": 5692
+    },
+    {
+      "repetition": 4,
+      "tool": "fd",
+      "samples": 15,
+      "post_exec_hwm_kib": 83776
+    },
+    {
+      "repetition": 4,
+      "tool": "rg",
+      "samples": 19,
+      "post_exec_hwm_kib": 6936
+    },
+    {
+      "repetition": 4,
+      "tool": "plocate",
+      "samples": 3,
+      "post_exec_hwm_kib": 5252
+    }
+  ],
+  "note": "Independent memory-only runs of multi-exact query. Sampled post-exec VmHWM; no Python launch image."
+}

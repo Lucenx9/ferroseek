@@ -61,4 +61,3 @@ Review query errors/mismatches: 0 (165 measured responses checked; warmups also 
 | restart on unchanged tree → idle (quick reconcile + watches) | 0.16 s |
 | steady-state idle after restart: RSS (anon / file), VmHWM | 7.4 MiB (1.2 MiB / 6.2 MiB), 17.4 MiB |
 | recovery: SIGKILL after 1.00 s (95200 files committed) → restart → complete | 0.28 s; 95200/95200 files ✔ |
-
