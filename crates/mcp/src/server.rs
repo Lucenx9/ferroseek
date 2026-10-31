@@ -16,6 +16,7 @@ use rmcp::{Json, ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::beneath::stat_beneath;
 use crate::policy::{self, Denied, Policy};
 
 /// Upper bound on the serialized `results` array of one `search_files`
@@ -42,8 +43,16 @@ impl IndexAccess {
         &self.db
     }
 
-    fn unavailable(&self, e: impl std::fmt::Display) -> String {
-        format!("FerroSeek index unavailable at {} ({e}); start ferroseekd or run `ferroseek index`", self.db.display())
+    /// Client-facing error that never contains the database path (it can
+    /// reveal user or directory names outside the allowlist). The detail
+    /// goes to stderr, which MCP clients keep in local logs only.
+    fn unavailable(&self, e: impl std::fmt::Display, missing: bool) -> String {
+        eprintln!("ferroseek-mcp: index {}: {e}", self.db.display());
+        if missing {
+            "FerroSeek index unavailable: not found; start ferroseekd or run `ferroseek index`".into()
+        } else {
+            "FerroSeek index unavailable: it cannot be opened (corrupt, incompatible or being rebuilt)".into()
+        }
     }
 
     /// Drops the cached connection (and its page cache).
@@ -54,13 +63,18 @@ impl IndexAccess {
     /// Runs `f` with a reader. Concurrent callers get their own temporary
     /// connection; a reader that failed is dropped.
     pub fn with<T>(&self, f: impl FnOnce(&Reader) -> ferroseek_index::Result<T>) -> Result<T, String> {
-        let identity = std::fs::metadata(&self.db).map(|m| (m.dev(), m.ino())).map_err(|e| self.unavailable(e))?;
+        let identity = std::fs::metadata(&self.db)
+            .map(|m| (m.dev(), m.ino()))
+            .map_err(|e| self.unavailable(&e, e.kind() == io::ErrorKind::NotFound))?;
         let cached = self.cached.lock().unwrap_or_else(|e| e.into_inner()).take();
         let reader = match cached {
             Some((id, r)) if id == identity => r,
-            _ => Reader::open(&self.db).map_err(|e| self.unavailable(e))?,
+            _ => Reader::open(&self.db).map_err(|e| self.unavailable(e, false))?,
         };
-        let out = f(&reader).map_err(|e| format!("index query failed: {e}"));
+        let out = f(&reader).map_err(|e| {
+            eprintln!("ferroseek-mcp: index query failed: {e}");
+            "index query failed (the index may be busy or being rebuilt); try again".to_string()
+        });
         if out.is_ok() {
             let mut slot = self.cached.lock().unwrap_or_else(|e| e.into_inner());
             if slot.is_none() {
@@ -128,15 +142,15 @@ pub struct StatusOutput {
     pub available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    pub index_path: String,
-    /// Totals for the whole index (not only the authorized directories).
+    /// Totals for the whole index, including unauthorized directories.
+    /// Only reported when `expose_index_totals = true` in mcp.toml.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_files: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexed_directories: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_size_bytes: Option<u64>,
-    /// When the index was last written (UTC, RFC 3339).
+    /// When the index was last written (UTC, RFC 3339); opt-in with totals.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_write: Option<String>,
     /// Directories this MCP server may expose.
@@ -209,9 +223,16 @@ fn entry(path: &Path, meta: &Meta) -> Entry {
     }
 }
 
-/// Current on-disk metadata, without following symlinks.
-fn disk_meta(p: &Path) -> io::Result<Meta> {
-    std::fs::symlink_metadata(p).map(|m| Meta::from_metadata(&m))
+/// Current on-disk metadata of `p` (inside allowed dir `base`) without
+/// following symlinks at any level below `base`.
+fn disk_meta(base: &Path, p: &Path) -> io::Result<Meta> {
+    stat_beneath(base, p.strip_prefix(base).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?)
+}
+
+/// "No longer an entry inside the allowed directory": gone, or a path
+/// component was replaced by a symlink or a non-directory.
+fn diverged(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::NotFound || matches!(e.raw_os_error(), Some(libc::ENOTDIR) | Some(libc::ELOOP))
 }
 
 fn same_content_meta(a: &Meta, b: &Meta) -> bool {
@@ -236,65 +257,90 @@ fn validate_query(q: &str) -> Result<&str, String> {
 
 // ------------------------------------------------------------ core logic (sync)
 
+/// Candidate cap per scope when hidden/denied/stale entries crowd out
+/// visible ones. Beyond it, `more_available` is reported as false.
+pub const MAX_CANDIDATES: usize = 8192;
+
 /// Searches every scope, keeps only policy-visible entries that still
 /// exist, and bounds the response by count and bytes.
+///
+/// Filtering happens *before* anything is counted: `more_available` is true
+/// only if an extra authorized, existing result was found, so hidden or
+/// denied matches cannot be detected through it. If filtered candidates
+/// crowd the first fetch, the fetch grows (up to [`MAX_CANDIDATES`]).
 pub fn search(policy: &Policy, index: &IndexAccess, p: &SearchParams) -> Result<SearchOutput, String> {
     let q = validate_query(&p.query)?;
     let scopes = policy.scopes(p.root.as_deref()).map_err(|e| e.to_string())?;
     let limit =
         p.limit.map(|l| l as usize).unwrap_or(DEFAULT_LIMIT.min(policy.max_results)).clamp(1, policy.max_results);
-    // Overfetch: hidden/deny filtering and stale entries can drop hits.
-    let fetch = limit * 2 + 16;
     let query = Query::parse(q);
-    let mut hits: Vec<Hit> = Vec::new();
-    let mut saturated = false;
-    index.with(|r| {
-        // A scope that contains every index root needs no `within` filter
-        // (which would seed a subtree walk); the policy check below keeps
-        // results inside the scope. Several such scopes share one query.
-        let roots = r.roots()?;
-        let covers_all = |s: &PathBuf| !roots.is_empty() && roots.iter().all(|root| root.starts_with(s));
-        let (unscoped, scoped): (Vec<&PathBuf>, Vec<&PathBuf>) = scopes.iter().partition(|s| covers_all(s));
-        let mut run = |within: Option<PathBuf>| -> ferroseek_index::Result<()> {
-            let opts = SearchOptions { limit: fetch, within, kind: None, include_hidden: true };
-            let found = r.search(&query, &opts)?;
-            saturated |= found.len() >= fetch;
-            hits.extend(found);
+    let mut fetch = limit * 2 + 16;
+    let (visible, stale) = loop {
+        let mut hits: Vec<Hit> = Vec::new();
+        let mut saturated = false;
+        index.with(|r| {
+            // A scope that contains every index root needs no `within` filter
+            // (which would seed a subtree walk); the checks below keep results
+            // inside the scope. Several such scopes share one query.
+            let roots = r.roots()?;
+            let covers_all = |s: &PathBuf| !roots.is_empty() && roots.iter().all(|root| root.starts_with(s));
+            let (unscoped, scoped): (Vec<&PathBuf>, Vec<&PathBuf>) = scopes.iter().partition(|s| covers_all(s));
+            let mut run = |within: Option<PathBuf>| -> ferroseek_index::Result<()> {
+                let opts = SearchOptions { limit: fetch, within, kind: None, include_hidden: true };
+                let found = r.search(&query, &opts)?;
+                saturated |= found.len() >= fetch;
+                hits.extend(found);
+                Ok(())
+            };
+            if !unscoped.is_empty() {
+                run(None)?;
+            }
+            for s in scoped {
+                run(Some(s.clone()))?;
+            }
             Ok(())
-        };
-        if !unscoped.is_empty() {
-            run(None)?;
-        }
-        for s in scoped {
-            run(Some(s.clone()))?;
-        }
-        Ok(())
-    })?;
-    hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
-    hits.dedup_by_key(|h| h.id);
+        })?;
+        hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+        hits.dedup_by_key(|h| h.id);
 
-    let mut out =
-        SearchOutput { results: Vec::new(), more_available: saturated, truncated_by_size: false, omitted_stale: 0 };
-    let mut bytes = 2usize;
-    for h in hits {
-        if policy.visible_under(&h.path).is_none() || !scopes.iter().any(|s| h.path.starts_with(s) && h.path != *s) {
-            continue;
-        }
-        if out.results.len() == limit {
-            out.more_available = true;
-            break;
-        }
-        // Report what is on disk now; drop entries that vanished since the
-        // last index update. Unreadable metadata keeps the indexed values.
-        let meta = match disk_meta(&h.path) {
-            Ok(m) => m,
-            Err(e) if e.kind() == io::ErrorKind::NotFound || e.raw_os_error() == Some(20) => {
-                out.omitted_stale += 1;
+        let mut visible: Vec<(PathBuf, Meta)> = Vec::new();
+        let mut stale = 0u32;
+        for h in hits {
+            let Some(base) = policy.visible_under(&h.path) else { continue };
+            if !scopes.iter().any(|s| h.path.starts_with(s) && h.path != *s) {
                 continue;
             }
-            Err(_) => Meta { kind: h.kind, size: h.size, mtime_ns: h.mtime_ns, ino: 0 },
-        };
-        let e = entry(&h.path, &meta);
+            // Report what is on disk now; drop entries that vanished or whose
+            // ancestors changed since indexing. Unreadable metadata keeps the
+            // indexed values.
+            let meta = match disk_meta(base, &h.path) {
+                Ok(m) => m,
+                Err(e) if diverged(&e) => {
+                    stale += 1;
+                    continue;
+                }
+                Err(_) => Meta { kind: h.kind, size: h.size, mtime_ns: h.mtime_ns, ino: 0 },
+            };
+            visible.push((h.path, meta));
+            if visible.len() > limit {
+                break;
+            }
+        }
+        if visible.len() > limit || !saturated || fetch >= MAX_CANDIDATES {
+            break (visible, stale);
+        }
+        fetch = (fetch * 4).min(MAX_CANDIDATES);
+    };
+
+    let mut out = SearchOutput {
+        results: Vec::new(),
+        more_available: visible.len() > limit,
+        truncated_by_size: false,
+        omitted_stale: stale,
+    };
+    let mut bytes = 2usize;
+    for (path, meta) in visible.into_iter().take(limit) {
+        let e = entry(&path, &meta);
         let n = serde_json::to_string(&e).map(|s| s.len() + 1).unwrap_or(0);
         if bytes + n > RESULT_BYTES_BUDGET {
             out.truncated_by_size = true;
@@ -312,13 +358,18 @@ pub fn file_info(policy: &Policy, index: &IndexAccess, p: &InfoParams) -> Result
     if policy.allowed_dirs().is_empty() {
         return Err(Denied::NoAllowedDirs.to_string());
     }
-    if !policy.allowed_dirs().contains(&path) && policy.visible_under(&path).is_none() {
-        return Err(Denied::NotAllowed.to_string());
-    }
+    let base = if policy.allowed_dirs().contains(&path) {
+        path.clone()
+    } else {
+        match policy.visible_under(&path) {
+            Some(b) => b.to_path_buf(),
+            None => return Err(Denied::NotAllowed.to_string()),
+        }
+    };
     let Some((_, indexed)) = index.with(|r| r.lookup(&path))? else {
         return Err("path is not in the FerroSeek index (it may not exist, be excluded, or not be indexed yet)".into());
     };
-    let (exists, up_to_date, meta) = match disk_meta(&path) {
+    let (exists, up_to_date, meta) = match disk_meta(&base, &path) {
         Ok(m) => (true, same_content_meta(&indexed, &m), if indexed.kind == Kind::Dir { indexed } else { m }),
         Err(_) => (false, false, indexed),
     };
@@ -326,19 +377,10 @@ pub fn file_info(policy: &Policy, index: &IndexAccess, p: &InfoParams) -> Result
 }
 
 pub fn status(policy: &Policy, index: &IndexAccess) -> StatusOutput {
-    let last_write = ["", "-wal"]
-        .iter()
-        .filter_map(|s| {
-            let mut p = index.path().as_os_str().to_owned();
-            p.push(s);
-            std::fs::metadata(PathBuf::from(p)).ok()
-        })
-        .map(|m| m.mtime() * 1_000_000_000 + m.mtime_nsec())
-        .max()
-        .and_then(rfc3339);
     let dirs = policy.allowed_dirs().to_vec();
+    let totals = policy.expose_index_totals;
     let res = index.with(|r| {
-        let stats = r.stats()?;
+        let stats = if totals { Some(r.stats()?) } else { None };
         let mut allowed = Vec::new();
         for d in &dirs {
             allowed.push(AllowedDir { path: d.to_string_lossy().into_owned(), indexed: r.lookup(d)?.is_some() });
@@ -348,21 +390,33 @@ pub fn status(policy: &Policy, index: &IndexAccess) -> StatusOutput {
     let mut out = StatusOutput {
         available: false,
         error: None,
-        index_path: index.path().to_string_lossy().into_owned(),
         indexed_files: None,
         indexed_directories: None,
         index_size_bytes: None,
-        last_write,
+        last_write: None,
         allowed_dirs: Vec::new(),
         max_results: policy.max_results,
     };
     match res {
-        Ok((s, allowed)) => {
+        Ok((stats, allowed)) => {
             out.available = true;
-            out.indexed_files = Some(s.files);
-            out.indexed_directories = Some(s.dirs);
-            out.index_size_bytes = Some(s.disk_bytes);
             out.allowed_dirs = allowed;
+            if let Some(s) = stats {
+                out.indexed_files = Some(s.files);
+                out.indexed_directories = Some(s.dirs);
+                out.index_size_bytes = Some(s.disk_bytes);
+                // Write activity anywhere in the index: opt-in like totals.
+                out.last_write = ["", "-wal"]
+                    .iter()
+                    .filter_map(|suffix| {
+                        let mut p = index.path().as_os_str().to_owned();
+                        p.push(suffix);
+                        std::fs::metadata(PathBuf::from(p)).ok()
+                    })
+                    .map(|m| m.mtime() * 1_000_000_000 + m.mtime_nsec())
+                    .max()
+                    .and_then(rfc3339);
+            }
         }
         Err(e) => {
             out.error = Some(e);

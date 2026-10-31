@@ -98,6 +98,23 @@ impl Drop for Mcp {
     }
 }
 
+/// `index_once`, retrying on `Busy`: tests in this process run in parallel
+/// and fork children; between fork and exec a child briefly shares another
+/// test's flock'd file description, so a lock can outlive its holder by a
+/// moment. (Never an issue for the real daemon, which is one process.)
+fn index(cfg: &Config, paths: &Paths) {
+    let end = Instant::now() + Duration::from_secs(5);
+    loop {
+        match index_once(cfg, paths, true, false) {
+            Ok(_) => return,
+            Err(ferroseek_engine::EngineError::Busy) if Instant::now() < end => {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(e) => panic!("{e}"),
+        }
+    }
+}
+
 struct Fx {
     t: tempfile::TempDir,
     root: PathBuf,
@@ -123,7 +140,7 @@ fn fixture() -> Fx {
     touch(&root.join("private/tax-report.pdf"), b"secret");
     let paths = Paths { config_file: t.path().join("config.toml"), data_dir: t.path().join("data") };
     let cfg = Config { roots: vec![root.to_string_lossy().into_owned()], index_hidden: true, ..Config::default() };
-    index_once(&cfg, &paths, true, false).unwrap();
+    index(&cfg, &paths);
     Fx { db: paths.index_file(), root, t }
 }
 
@@ -248,12 +265,24 @@ fn index_status_lists_only_allowed_dirs() {
     let (err, v) = m.call("index_status", json!({}));
     assert!(!err);
     assert_eq!(v["available"], true);
-    assert_eq!(v["indexed_files"], 7, ".git is excluded by the indexer itself");
     let dirs = v["allowed_dirs"].as_array().unwrap();
     assert_eq!(dirs.len(), 2);
     assert_eq!(dirs.iter().filter(|d| d["indexed"] == true).count(), 1);
     assert!(!v.to_string().contains("private"), "{v}");
+    // Review finding: the database path and whole-index totals describe
+    // things outside the allowlist; they are not reported by default.
+    assert!(!v.to_string().contains(fx.db.to_str().unwrap()), "{v}");
+    for k in ["index_path", "indexed_files", "indexed_directories", "index_size_bytes", "last_write"] {
+        assert!(v.get(k).is_none(), "{k} must be opt-in: {v}");
+    }
+    drop(m);
+    let cfg = fx.t.path().join("totals.toml");
+    fs::write(&cfg, "expose_index_totals = true\n").unwrap();
+    let mut m = fx.mcp(&["--config", cfg.to_str().unwrap()]);
+    let (_, v) = m.call("index_status", json!({}));
+    assert_eq!(v["indexed_files"], 7, ".git is excluded by the indexer itself");
     assert!(v["last_write"].as_str().unwrap().ends_with('Z'));
+    assert!(!v.to_string().contains(fx.db.to_str().unwrap()), "path never exposed: {v}");
 }
 
 #[test]
@@ -337,8 +366,10 @@ fn missing_index_is_reported_and_recovered_without_restart() {
     assert!(!err);
     assert_eq!(v["available"], false);
     assert!(v["error"].as_str().unwrap().contains("unavailable"));
+    assert!(!v.to_string().contains("later"), "no database path in errors: {v}");
     let (err, msg) = m.call("search_files", json!({"query": "report"}));
     assert!(err && msg.as_str().unwrap().contains("unavailable"), "{msg}");
+    assert!(!msg.as_str().unwrap().contains("later"), "{msg}");
     // The index appears (daemon started): no MCP restart needed.
     fs::create_dir_all(later.parent().unwrap()).unwrap();
     fs::copy(&fx.db, &later).unwrap();
@@ -436,7 +467,7 @@ fn a_scope_covering_one_of_two_roots_never_leaks_the_other() {
     touch(&b.join("shared-name-b.txt"), b"");
     let paths = Paths { config_file: t.path().join("c.toml"), data_dir: t.path().join("data") };
     let cfg = Config { roots: vec![a.to_string_lossy().into(), b.to_string_lossy().into()], ..Config::default() };
-    index_once(&cfg, &paths, true, false).unwrap();
+    index(&cfg, &paths);
     let mut m = Mcp::spawn(
         &["--index", paths.index_file().to_str().unwrap(), "--allow", t.path().join("a").to_str().unwrap()],
         t.path(),
@@ -488,4 +519,68 @@ fn structured_outputs_satisfy_their_declared_schemas() {
         let s = schema(tool);
         assert_required_present(&s, &v, &s["$defs"], tool);
     }
+}
+
+// ---- regressions for the GPT 6 Astra review findings (2026-10-31)
+
+#[test]
+fn symlinked_ancestor_never_reveals_outside_metadata() {
+    let fx = fixture();
+    let sub = fx.root.join("work/sub");
+    touch(&sub.join("record.txt"), b"tiny");
+    let paths = Paths { config_file: fx.t.path().join("c.toml"), data_dir: fx.t.path().join("data") };
+    let cfg = Config { roots: vec![fx.root.to_string_lossy().into()], index_hidden: true, ..Config::default() };
+    index(&cfg, &paths);
+    // After indexing, `sub` becomes a symlink to an unauthorized directory
+    // holding a same-named file with a distinctive size.
+    let outside = fx.t.path().join("outside");
+    touch(&outside.join("record.txt"), &[b'x'; 12345]);
+    fs::remove_dir_all(&sub).unwrap();
+    std::os::unix::fs::symlink(&outside, &sub).unwrap();
+    let mut m = fx.mcp(&[]);
+    let (_, v) = m.call("search_files", json!({"query": "record.txt"}));
+    assert!(v["results"].as_array().unwrap().is_empty(), "{v}");
+    assert_eq!(v["omitted_stale"], 1);
+    let (err, v) = m.call("get_file_info", json!({"path": sub.join("record.txt").to_str().unwrap()}));
+    assert!(!err, "{v}");
+    assert_eq!(v["exists"], false);
+    assert_eq!(v["size"], 4, "indexed metadata, never the outside file's 12345: {v}");
+    assert!(!v.to_string().contains("12345"));
+}
+
+fn many_files_fixture(names: &[String]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("home");
+    for n in names {
+        touch(&root.join(n), b"");
+    }
+    let paths = Paths { config_file: t.path().join("c.toml"), data_dir: t.path().join("data") };
+    let cfg = Config { roots: vec![root.to_string_lossy().into()], index_hidden: true, ..Config::default() };
+    index(&cfg, &paths);
+    (t, root, paths.index_file())
+}
+
+#[test]
+fn more_available_is_not_an_oracle_for_filtered_matches() {
+    let names: Vec<String> = (0..60).map(|i| format!("docs/.hidden-{i:02}-needle.txt")).collect();
+    let (t, root, db) = many_files_fixture(&names);
+    let mut m = Mcp::spawn(&["--index", db.to_str().unwrap(), "--allow", root.to_str().unwrap()], t.path());
+    let (_, v) = m.call("search_files", json!({"query": ".hidden- needle", "limit": 1}));
+    assert!(v["results"].as_array().unwrap().is_empty());
+    assert_eq!(v["more_available"], false, "hidden matches must be undetectable: {v}");
+}
+
+#[test]
+fn filtered_candidates_do_not_starve_visible_results() {
+    // 300 denied names rank above the single visible one ("needle" is the
+    // whole stem of the denied files, a weaker substring of the visible).
+    let mut names: Vec<String> = (0..300).map(|i| format!("keys/k{i:03}/needle.pem")).collect();
+    names.push("docs/the-needle-in-a-haystack-notes.txt".into());
+    let (t, root, db) = many_files_fixture(&names);
+    let mut m = Mcp::spawn(&["--index", db.to_str().unwrap(), "--allow", root.to_str().unwrap()], t.path());
+    let (_, v) = m.call("search_files", json!({"query": "needle", "limit": 1}));
+    let p = Mcp::paths(&v);
+    assert_eq!(p.len(), 1, "{v}");
+    assert!(p[0].ends_with("the-needle-in-a-haystack-notes.txt"), "{p:?}");
+    assert_eq!(v["more_available"], false);
 }

@@ -15,8 +15,9 @@ use std::path::{Component, Path, PathBuf};
 use ferroseek_engine::config::{expand, glob_match};
 use serde::Deserialize;
 
-/// Name patterns (per path component, `*`/`?` wildcards) hidden from agents
-/// by default, even inside allowed directories.
+/// Name patterns (per path component, `*`/`?` wildcards, ASCII
+/// case-insensitive) hidden from agents by default, even inside allowed
+/// directories.
 pub const DEFAULT_DENY: &[&str] = &[
     ".ssh",
     ".gnupg",
@@ -47,10 +48,7 @@ pub const DEFAULT_DENY: &[&str] = &[
     "*.keystore",
     "*.jks",
     "*secret*",
-    "*Secret*",
-    "*SECRET*",
     "*credential*",
-    "*Credential*",
 ];
 
 /// Hard upper bound on results per call, whatever the configuration says.
@@ -76,6 +74,10 @@ pub struct FileConfig {
     pub allow_hidden: bool,
     /// Default/maximum results per call (capped at `HARD_MAX_RESULTS`).
     pub max_results: Option<usize>,
+    /// Report whole-index totals, size and last write time in
+    /// `index_status`. Off by default: they describe unauthorized
+    /// directories too.
+    pub expose_index_totals: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -84,6 +86,7 @@ pub struct Policy {
     deny: Vec<Vec<u8>>,
     allow_hidden: bool,
     pub max_results: usize,
+    pub expose_index_totals: bool,
 }
 
 /// Why a path or argument was refused. Messages never echo paths that
@@ -156,11 +159,19 @@ impl Policy {
         }
         let mut deny: Vec<Vec<u8>> = Vec::new();
         if cfg.deny_defaults.unwrap_or(true) {
-            deny.extend(DEFAULT_DENY.iter().map(|d| d.as_bytes().to_vec()));
+            // Deny matching is ASCII case-insensitive (patterns and names are
+            // compared lowercased): `CREDENTIALS/`, `server.PEM` must not slip by.
+            deny.extend(DEFAULT_DENY.iter().map(|d| d.as_bytes().to_ascii_lowercase()));
         }
-        deny.extend(cfg.deny.iter().map(|d| d.as_bytes().to_vec()));
+        deny.extend(cfg.deny.iter().map(|d| d.as_bytes().to_ascii_lowercase()));
         let max_results = cfg.max_results.unwrap_or(50).clamp(1, HARD_MAX_RESULTS);
-        Ok(Policy { allow, deny, allow_hidden: cfg.allow_hidden, max_results })
+        Ok(Policy {
+            allow,
+            deny,
+            allow_hidden: cfg.allow_hidden,
+            max_results,
+            expose_index_totals: cfg.expose_index_totals,
+        })
     }
 
     pub fn allowed_dirs(&self) -> &[PathBuf] {
@@ -189,7 +200,8 @@ impl Policy {
         if !self.allow_hidden && b.first() == Some(&b'.') {
             return false;
         }
-        !self.deny.iter().any(|d| glob_match(d, b))
+        let lower = b.to_ascii_lowercase();
+        !self.deny.iter().any(|d| glob_match(d, &lower))
     }
 
     /// Search scopes for an optional client `root` filter: the root itself
@@ -254,6 +266,11 @@ mod tests {
         assert!(p.visible_under(Path::new("/srv/work/.env")).is_none());
         assert!(p.visible_under(Path::new("/srv/work/prod.env")).is_none());
         assert!(p.visible_under(Path::new("/srv/work/src/environment.rs")).is_some());
+        // Case variants (review finding): deny matching ignores ASCII case.
+        assert!(p.visible_under(Path::new("/srv/work/CREDENTIALS/record.txt")).is_none());
+        assert!(p.visible_under(Path::new("/srv/work/certs/server.PEM")).is_none());
+        assert!(p.visible_under(Path::new("/srv/work/private.KEY")).is_none());
+        assert!(p.visible_under(Path::new("/srv/work/Top-Secret-Plan.md")).is_none());
     }
 
     #[test]
@@ -264,12 +281,14 @@ mod tests {
             deny_defaults: Some(false),
             allow_hidden: true,
             max_results: Some(10_000),
+            expose_index_totals: false,
         };
         let p = Policy::new(&cfg, &["/srv/c".into()]).unwrap();
         assert_eq!(p.allowed_dirs(), &[PathBuf::from("/srv/a"), PathBuf::from("/srv/b"), PathBuf::from("/srv/c")]);
         assert_eq!(p.max_results, HARD_MAX_RESULTS);
         assert!(p.visible_under(Path::new("/srv/a/.git/x.pem")).is_some(), "defaults off, hidden on");
         assert!(p.visible_under(Path::new("/srv/a/db.sqlite")).is_none());
+        assert!(p.visible_under(Path::new("/srv/a/DB.SQLITE")).is_none(), "user patterns are case-insensitive too");
         assert!(Policy::new(&FileConfig::default(), &["/".into()]).is_err());
         assert!(Policy::new(&FileConfig::default(), &["relative".into()]).is_err());
         assert!(Policy::new(&FileConfig::default(), &["/a/../etc".into()]).is_err());

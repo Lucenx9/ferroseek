@@ -142,6 +142,11 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - Every path leaving the process passes `Policy::visible_under` *and* lies
   inside the requested scope. Client paths are validated, not normalized;
   never echo refused paths in errors.
+- Disk metadata only via `beneath::stat_beneath` (no symlink traversal
+  below the allowed dir); never `symlink_metadata` on client-visible paths.
+  Count `more_available` only after filtering. Never return the DB path or
+  whole-index stats unless `expose_index_totals`. Deny matching is ASCII
+  case-insensitive. (All from the GPT 6 Astra review, docs/MCP.md.)
 - Structured outputs must satisfy their `outputSchema`: Claude Code
   rejects responses with missing `required` fields. Fields omitted by serde
   need `#[serde(default)]`; the protocol test checks this.

@@ -20,7 +20,7 @@ search FerroSeek's **existing** file-name index.
 |---|---|---|
 | `search_files` | `query` (required), `root` (optional absolute dir), `limit` (optional) | `results[]` (`path`, `kind`, `size`, `modified`, `non_utf8`), `more_available`, `truncated_by_size`, `omitted_stale` |
 | `get_file_info` | `path` (absolute) | `path`, `kind`, `size`, `modified`, `exists`, `up_to_date` |
-| `index_status` | — | `available`, `error`, index totals, size, `last_write`, `allowed_dirs[]` (`path`, `indexed`), `max_results` |
+| `index_status` | — | `available`, `error`, `allowed_dirs[]` (`path`, `indexed`), `max_results`. With `expose_index_totals`: whole-index totals, size, `last_write` |
 
 All three are annotated `readOnlyHint: true` and `openWorldHint: false`, and
 return structured content with a declared `outputSchema`. The SDK also
@@ -40,12 +40,15 @@ all of the following hold:
    refuses every path.
 2. **No component below that directory is a dotfile or dot-directory**,
    unless `allow_hidden = true`.
-3. **No component below it matches a deny pattern.** The built-in list
+3. **No component below it matches a deny pattern.** Matching is ASCII
+   case-insensitive, so `CREDENTIALS/` and `server.PEM` are caught too. The
+   built-in list
    covers `.ssh`, `.gnupg`, `.password-store`, `.aws`, `.kube`, `.docker`,
    `.netrc`, `.env`/`*.env`, `id_rsa*`/`id_ed25519*`…, `*.pem`, `*.key`,
    `*.p12`, `*.kdbx`, `*secret*`, `*credential*` and similar (see
    `crates/mcp/src/policy.rs`). `deny = [...]` adds patterns, and
-   `deny_defaults = false` drops the built-in list.
+   `deny_defaults = false` drops the built-in list. (Three of these four
+   points come from the independent review; see below.)
 
 Path handling:
 
@@ -61,6 +64,25 @@ never follows symlinks. A symlink in an allowed directory is reported as a
 `symlink` entry. Its target is not searched unless the target is itself
 indexed *and* allowed.
 
+Disk metadata (for freshness and staleness) is read **without following
+symlinks at any level below the allowed directory**. Each path component is
+opened with `openat(O_PATH|O_DIRECTORY|O_NOFOLLOW)` relative to the
+previous one, then `fstatat(AT_SYMLINK_NOFOLLOW)`
+(`crates/mcp/src/beneath.rs`). If a directory was replaced by a symlink
+after indexing, the entry counts as stale; the metadata of whatever the
+symlink points to is never reported.
+
+`more_available` is computed only from authorized, existing results, so
+filtered matches cannot be detected through it. When hidden, denied or
+stale candidates crowd out the first fetch, the server fetches more
+candidates (up to 8192 per scope) instead of returning too little.
+
+`index_status` never reports the database path. Whole-index totals, size and
+last write time describe unauthorized directories too, so they appear only
+with `expose_index_totals = true`. Error messages are generic, and the
+details (including the path) go to stderr only, which clients keep in local
+logs.
+
 Searches run per allowed directory. Unauthorized entries are filtered from
 the candidate set, and every result is checked against the policy before it
 leaves the process. `index_status` reports index totals as numbers but lists
@@ -75,6 +97,7 @@ deny = ["*.sqlite", "private-*"]   # added to the built-in deny list
 deny_defaults = true               # set false to drop the built-in list
 allow_hidden = false               # dotfiles below allowed dirs
 max_results = 50                   # default 50, hard cap 200
+expose_index_totals = false        # whole-index totals/size/last write in index_status
 ```
 
 `--allow` arguments are added to `allow`. `--config FILE` selects another
@@ -85,8 +108,8 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
 ## Behaviour under real conditions
 
 - **The index is missing or the daemon was never run.** `index_status`
-  returns `available: false` with the reason, and the other tools return a
-  tool error (`isError: true`) explaining how to create the index. Once the
+  returns `available: false` with a generic reason, and the other tools
+  return a tool error (`isError: true`) explaining how to create the index. Once the
   index exists, the next call works without restarting the MCP server.
 - **The daemon is writing.** SQLite WAL lets readers proceed while it
   commits, and queries see the last committed state. This is tested with
@@ -94,9 +117,10 @@ the daemon's, `$XDG_DATA_HOME/ferroseek/index.sqlite`, which also honours
 - **The database is replaced** (the daemon's corruption recovery). The
   cached connection is keyed by device and inode and reopened when they
   change.
-- **Stale entries.** Every search result is `lstat`ed. Entries deleted since
-  the last index update are dropped and counted in `omitted_stale`; size and
-  mtime come from the disk. `get_file_info` reports `exists` and
+- **Stale entries.** Every search result is checked on disk without
+  following symlinks (see above). Entries deleted since the last index
+  update, or whose ancestors changed, are dropped and counted in
+  `omitted_stale`; size and mtime come from the disk. `get_file_info` reports `exists` and
   `up_to_date` (whether the index already reflects the file).
 - **Invalid input.** Empty, overlong (more than 512 bytes) or
   control-character queries, malformed paths and unknown tools return clean
@@ -169,7 +193,9 @@ every client.
 - **Unit tests** (`crates/mcp/src/policy.rs`, 6): path canonicality,
   component-wise containment, hidden/deny rules below the allowed
   directory, config parsing, scopes, non-UTF-8 names.
-- **Protocol tests** (`crates/mcp/tests/protocol.rs`, 14). They run the
+- **Unit tests** for the race-safe metadata walk (`crates/mcp/src/beneath.rs`,
+  2).
+- **Protocol tests** (`crates/mcp/tests/protocol.rs`, 17). They run the
   real binary over stdio against indexes built by the real engine:
   - tool listing with schemas and annotations
   - allowlist confinement, traversal refusal without echoing the path
@@ -192,6 +218,23 @@ every client.
   - **Codex CLI 0.166.0** (`codex exec -c mcp_servers.ferroseek…`, read-only
     sandbox): three MCP calls completed, with no shell use.
 
+## Independent review (GPT 6 Astra, high effort, 2026-10-31)
+
+A read-only review of commit `364ac15` reproduced four defects, all fixed
+with regression tests:
+
+| severity | finding | fix and test |
+|---|---|---|
+| high | `lstat` followed a symlinked *ancestor*: after indexing `allowed/sub/record.txt`, replacing `sub` with a symlink exposed the metadata of an unauthorized file | `stat_beneath` openat walk; `symlinked_ancestor_never_reveals_outside_metadata`, `beneath::tests` |
+| medium | `more_available` was computed before filtering (an oracle for hidden or denied names), and filtered candidates could starve visible ones | filter before counting, growing fetch; `more_available_is_not_an_oracle…`, `filtered_candidates_do_not_starve…` |
+| medium | `index_status` and errors exposed the database path and whole-index statistics | generic errors, path never reported, totals opt-in; updated status and missing-index tests |
+| medium | the deny list was case-sensitive (`CREDENTIALS/`, `server.PEM`) | ASCII case-insensitive matching; policy unit tests |
+
+The reviewer also confirmed the following as correct: the `rmcp` 3.8 API
+usage and output schemas, the stdio-only and read-only design, containment
+and traversal handling, the unscoped fast path, and the byte and count
+bounds.
+
 ## Performance
 
 These are warm-cache measurements on the 100k and 1M synthetic benchmark
@@ -201,19 +244,20 @@ indexes. Details, commands and raw reports are in
 | at 1M entries | |
 |---|---|
 | startup to `initialize` reply | 1.1 ms |
-| `search_files`, limit 20: p50 / p95 / p99 | 2.89 / 5.73 / 10.11 ms |
-| `get_file_info` p50 | 0.08 ms |
-| RSS after startup | 5.0 MiB (0.4 MiB anonymous) |
-| idle RSS after a 650-request workload | 12.0 MiB (5.3 MiB anonymous) |
+| `search_files`, limit 20: p50 / p95 / p99 | 3.22 / 6.18 / 11.01 ms |
+| `get_file_info` p50 | 0.09 ms |
+| `index_status` p50 (default, no totals) | 0.06 ms |
+| RSS after startup | 5.1 MiB (0.4 MiB anonymous) |
+| idle RSS after a 650-request workload | 10.6 MiB (4.0 MiB anonymous) |
 | idle CPU / wakeups | 0.000 % / 0 per s |
 
 ## Limitations
 
-- **`root` filters on a subdirectory are slower** (1M: p50 8.5 ms, p99
+- **`root` filters on a subdirectory are slower** (1M: p50 10.8 ms, p99
   39 ms). They use the index's subtree scope. Allowed directories that
   contain every index root take a faster unscoped path.
-- **`index_status` counts the whole index**, about 135 ms at 1M. Its totals
-  include unauthorized directories (numbers only, no paths).
+- **With `expose_index_totals`, `index_status` counts the whole index**
+  (about 135 ms at 1M), and the totals include unauthorized directories.
 - **Results reflect the last committed index state.** A file created a
   moment ago appears after the daemon's debounce (about 200 ms).
 - **Non-UTF-8 paths are returned lossily** and flagged `non_utf8: true`, so

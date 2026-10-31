@@ -200,8 +200,8 @@ codex mcp add ferroseek -- ~/.local/bin/ferroseek-mcp --allow ~/Progetti
 ```
 
 See [docs/MCP.md](docs/MCP.md) for the access policy, configuration,
-verification and measured performance. At 1M files, a search has a 2.9 ms
-p50, and an idle server uses 0 % CPU and about 12 MiB RSS.
+verification and measured performance. At 1M files, a search has a 3.2 ms
+p50, and an idle server uses 0 % CPU and about 11 MiB RSS.
 
 ## Development
 

@@ -3,6 +3,7 @@
 //! FerroSeek index. It starts no indexer, opens the database read-only, and
 //! exits when the client closes stdin. Nothing runs when no agent uses it.
 
+mod beneath;
 mod policy;
 mod server;
 

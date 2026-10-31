@@ -240,9 +240,11 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   (`..`/`.` are refused, not normalized). Searches are scoped per allowed
   directory. When a scope contains every index root, the search runs
   unscoped plus a filter, avoiding the subtree walk that `within` seeds:
-  12.7 → 2.9 ms p50 at 1M.
+  12.7 → 2.9 ms p50 at 1M (3.2 ms with the later review fixes).
 - **Bounded output.** Results are capped by count (≤ 200) and serialized
-  bytes (24 KiB). Stale results are dropped after `lstat`.
+  bytes (24 KiB). Stale results are dropped after a race-safe
+  `openat`/`fstatat` walk that never follows symlinks below the allowed
+  directory (`beneath.rs`, a review fix).
 - Details, verification and measurements are in `docs/MCP.md` and
   BENCHMARKS.md §10.
 

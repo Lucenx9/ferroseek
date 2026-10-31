@@ -538,16 +538,22 @@ Raw reports and hashes are in
 
 | metric | 100k | 1M |
 |---|---|---|
-| startup: spawn → `initialize` reply | 1.3 ms | 1.1 ms |
-| `search_files` limit 20, p50 / p95 / p99 / max | 0.90 / 3.90 / 4.34 / 8.21 ms | 2.89 / 5.73 / 10.11 / 67.86 ms |
-| `search_files` with `root` = subdirectory, p50 / p99 | 3.62 / 13.23 ms | 8.54 / 38.74 ms |
-| `get_file_info` p50 / p99 | 0.08 / 0.14 ms | 0.08 / 0.16 ms |
-| `index_status` p50 | 13.3 ms | 135.3 ms |
+| startup: spawn → `initialize` reply | 1.1 ms | 1.2 ms |
+| `search_files` limit 20, p50 / p95 / p99 / max | 1.08 / 4.12 / 4.67 / 9.47 ms | 3.22 / 6.18 / 11.01 / 65.64 ms |
+| `search_files` with `root` = subdirectory, p50 / p99 | 3.92 / 13.04 ms | 10.75 / 38.56 ms |
+| `get_file_info` p50 / p99 | 0.10 / 0.17 ms | 0.09 / 0.18 ms |
+| `index_status` p50 (default: no whole-index totals) | 0.07 ms | 0.06 ms |
 | `search_files` JSON-RPC line, p50 / max | 6.2 / 10.6 KiB | 6.2 / 8.7 KiB |
-| RSS after `initialize` (anonymous) | 5.1 MiB (0.4) | 5.0 MiB (0.4) |
-| RSS / VmHWM after 650 requests | 16.2 / 16.2 MiB | 17.5 / 17.5 MiB |
-| idle RSS 12 s later (anonymous) | 11.5 MiB (4.9) | 12.0 MiB (5.3) |
+| RSS after `initialize` (anonymous) | 5.2 MiB (0.4) | 5.1 MiB (0.4) |
+| RSS / VmHWM after 650 requests | 13.3 / 13.4 MiB | 15.5 / 15.5 MiB |
+| idle RSS 12 s later (anonymous) | 10.1 MiB (3.5) | 10.6 MiB (4.0) |
 | idle CPU, context switches (30 s) | 0.000 %, 0.00/s | 0.000 %, 0.00/s |
+
+These numbers come from the build that includes the review fixes. The
+race-safe `openat` metadata walk and the growing candidate fetch cost about
+0.3 ms at the 1M median (2.89 → 3.22 ms), and the result count is
+unchanged (5309). `index_status` went from 135 ms to 0.06 ms because the
+whole-index totals are now opt-in.
 
 Two changes during development were measured on the same 1M index with the
 same query set:
