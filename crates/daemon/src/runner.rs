@@ -217,6 +217,7 @@ impl Runner {
         // End of a KRunner session: release reader connections and their
         // page caches until the next session.
         self.pool.clear();
+        ferroseek_engine::sys::trim_heap();
     }
 }
 

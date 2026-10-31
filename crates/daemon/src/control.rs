@@ -33,6 +33,7 @@ impl Control {
         m.insert("index_path".into(), self.paths.index_file().to_string_lossy().into_owned());
         m.insert("version".into(), env!("CARGO_PKG_VERSION").into());
         m.insert("pid".into(), std::process::id().to_string());
+        ferroseek_engine::sys::trim_heap();
         m
     }
 

@@ -255,7 +255,10 @@ impl Daemon {
                 }
             }
             assert!(t.elapsed() < timeout, "daemon did not become idle");
-            std::thread::sleep(Duration::from_millis(10));
+            // Fine-grained at first, then back off: each Status runs a COUNT
+            // over the index and holds a read snapshot, which would delay WAL
+            // checkpoints and distort the write measurements.
+            std::thread::sleep(if t.elapsed() < Duration::from_secs(2) { Duration::from_millis(10) } else { Duration::from_millis(250) });
         }
     }
 
@@ -412,8 +415,14 @@ fn main() {
             d.stop();
         } else {
             // Keep this daemon for the remaining measurements.
-            let size = s["disk_bytes"].parse::<f64>().unwrap_or(0.0);
-            say!("| index size on disk (db + wal) | {:.1} MiB ({:.0} B/entry) |", size / 1048576.0, size / (corpus.files.len() + corpus.dirs) as f64);
+            let db_size = fs::metadata(&db).map(|m| m.len()).unwrap_or(0) as f64;
+            let wal = fs::metadata(work.join("data/index.sqlite-wal")).map(|m| m.len()).unwrap_or(0) as f64;
+            say!(
+                "| index size on disk: database / WAL | {:.1} MiB ({:.0} B/entry) / {:.1} MiB |",
+                db_size / 1048576.0,
+                db_size / (corpus.files.len() + corpus.dirs) as f64,
+                wal / 1048576.0
+            );
             run_rest(d, &bin, &work, &corpus, &db, n, &mut |l| say!("{l}"));
         }
     }

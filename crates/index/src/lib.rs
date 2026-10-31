@@ -167,9 +167,11 @@ impl Writer {
         self.conn.close().map_err(|(_, e)| Error::Sqlite(e))
     }
 
-    /// Passive WAL checkpoint, so the WAL does not grow during long scans.
+    /// Checkpoints the WAL into the database and truncates it to zero
+    /// bytes. Waits (busy timeout) for active readers; call when a pass
+    /// ends, not in the middle of work.
     pub fn checkpoint(&self) -> Result<()> {
-        self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
+        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())
     }
 

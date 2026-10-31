@@ -73,6 +73,13 @@ fn main() -> ExitCode {
         }
     }
     let sigs = block_signals();
+    // Few threads ever allocate; without a cap glibc gives each short-lived
+    // query thread its own arena, whose freed pages then linger as RSS.
+    #[cfg(target_env = "gnu")]
+    // SAFETY: mallopt before any other thread exists.
+    unsafe {
+        libc::mallopt(libc::M_ARENA_MAX, 2);
+    }
     ferroseek_engine::logging::init();
 
     let paths = Paths::from_env();

@@ -390,6 +390,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
             } else if !released && now.duration_since(last_work) >= RELEASE_AFTER {
                 // Idle: drop the writer's page cache and give freed heap
                 // back, so the resting footprint is the code + a few KiB.
+                let _ = ix.writer().checkpoint();
                 let _ = ix.writer().release_memory();
                 trim_heap();
                 released = true;
