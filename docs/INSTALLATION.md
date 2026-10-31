@@ -79,7 +79,9 @@ For cross-project discovery, the recommended setup is:
 
 You must type `all_indexed` to confirm the authorization and then `yes` for
 client configuration edits. Redirected input/EOF never enables it implicitly.
-The default mode remains `restricted`; `--mcp-access home` uses indexed HOME
+New agent registrations default to `all_indexed` with typed confirmation;
+`--allow DIR` without an explicit mode preserves the previous restricted
+behavior. `--mcp-access home` uses indexed HOME
 paths without listing directories. `--allow` is for restricted setup only.
 Interactive setup explains the global recommendation but an empty mode answer
 selects restricted. The engine configuration and running daemon are untouched.
