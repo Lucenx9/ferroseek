@@ -342,10 +342,23 @@ pub fn glob_match(p: &[u8], s: &[u8]) -> bool {
 /// Cache Directory Tagging spec signature.
 const CACHEDIR_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
 
-/// True if `dir` contains a valid `CACHEDIR.TAG` (reads at most 43 bytes).
+/// True if `dir` contains a regular, non-symlink `CACHEDIR.TAG` with a valid
+/// signature (reads at most 43 bytes).
 pub fn has_cachedir_tag(dir: &Path) -> bool {
     use std::io::Read;
-    let Ok(mut f) = fs::File::open(dir.join("CACHEDIR.TAG")) else { return false };
+    use std::os::unix::fs::OpenOptionsExt;
+    // Nonblocking open also protects against a regular file being replaced
+    // by a FIFO before open. Check the opened descriptor before reading.
+    let Ok(mut f) = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW | libc::O_NOCTTY)
+        .open(dir.join("CACHEDIR.TAG"))
+    else {
+        return false;
+    };
+    if !f.metadata().is_ok_and(|m| m.is_file()) {
+        return false;
+    }
     let mut buf = [0u8; CACHEDIR_SIGNATURE.len()];
     f.read_exact(&mut buf).is_ok() && buf == CACHEDIR_SIGNATURE
 }
@@ -406,6 +419,29 @@ mod tests {
         assert!(Config::parse("unknown_key = 1").is_err());
         let d = Config::default();
         assert_eq!(Config::parse(&d.to_toml()).unwrap(), d);
+    }
+
+    #[test]
+    fn cachedir_tag_must_be_a_regular_file_without_following_symlinks() {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, symlink};
+
+        let t = tempfile::tempdir().unwrap();
+        let target = t.path().join("signature");
+        fs::write(&target, CACHEDIR_SIGNATURE).unwrap();
+        let tag = t.path().join("CACHEDIR.TAG");
+        symlink(&target, &tag).unwrap();
+        assert!(!has_cachedir_tag(t.path()), "symlinks must not exclude the directory");
+        fs::remove_file(&tag).unwrap();
+        fs::create_dir(&tag).unwrap();
+        assert!(!has_cachedir_tag(t.path()));
+        fs::remove_dir(&tag).unwrap();
+        let c_path = std::ffi::CString::new(tag.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c_path is a valid NUL-terminated path in this test's temp directory.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let mut pipe = fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_NONBLOCK).open(&tag).unwrap();
+        pipe.write_all(CACHEDIR_SIGNATURE).unwrap();
+        assert!(!has_cachedir_tag(t.path()), "a FIFO containing a signature is not a cache tag");
     }
 
     #[test]

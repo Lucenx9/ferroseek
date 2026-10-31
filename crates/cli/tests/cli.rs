@@ -84,3 +84,46 @@ fn helpful_errors() {
     let o = run(t.path(), &["pause"]);
     assert_eq!(o.status.code(), Some(2));
 }
+
+#[test]
+fn special_cache_tags_do_not_block_indexing() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    for connected_writer in [false, true] {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("files");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("report.txt"), b"hello").unwrap();
+        let tag = root.join("CACHEDIR.TAG");
+        let c_path = std::ffi::CString::new(tag.as_os_str().as_bytes()).unwrap();
+        // SAFETY: c_path is a valid NUL-terminated path in this test's temp directory.
+        assert_eq!(unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) }, 0);
+        let _writer = connected_writer
+            .then(|| fs::OpenOptions::new().read(true).write(true).custom_flags(libc::O_NONBLOCK).open(&tag).unwrap());
+        fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\n", root.display())).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_ferroseek"))
+            .arg("index")
+            .env("FERROSEEK_CONFIG", t.path().join("config.toml"))
+            .env("FERROSEEK_DATA_DIR", t.path().join("data"))
+            .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}/no-bus", t.path().display()))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("indexing blocked on CACHEDIR.TAG FIFO; connected_writer={connected_writer}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(stdout(&run(t.path(), &["search", "report"])).contains("report.txt"));
+    }
+}
