@@ -258,10 +258,10 @@ other launchers are future adapters.
 - **Policy inside the budget.** The MCP passes its access policy as
   `accept`, memoized per parent directory, so denied entries can neither
   starve results nor be inferred. This came from an independent review.
-- **Policy before output.** MCP defaults to `restricted`: explicit
-  directory allowlists, with nothing visible by default. Users may
-  opt into `home` or `all_indexed`, which permit wider *already indexed*
-  paths but do not change indexing roots. Hidden and sensitive-looking
+- **Policy before output.** New unconfigured MCP instances default to
+  `all_indexed`, covering only *already indexed* paths. Legacy explicit
+  allowlists retain `restricted` behavior; users can explicitly select
+  `restricted` or `home`. The selected mode never changes indexing roots. Hidden and sensitive-looking
   components remain filtered by default. Paths containing `..` or `.`
   are refused. Policy checks occur before candidate budgets and again
   before output. See `docs/MCP.md` for scope and latency details.
