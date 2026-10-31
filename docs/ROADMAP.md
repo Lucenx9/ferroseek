@@ -28,17 +28,23 @@ compatible.
 
 ## M1 — Hardening (next)
 
-- [ ] Optimize path-only and selective path-filter queries without restoring
-  candidate-truncation false negatives. Review remeasurement (§8 of
-  BENCHMARKS.md): ~524 ms path-only and ~110 ms path+name via D-Bus at 1M.
-- [ ] Correct the legacy relevance benchmark's skipped-sample denominator;
-  its raw 100% row is not valid correctness evidence. New review cases use
-  explicit expected results instead.
+- [x] Optimize selective path queries with bounded directory scopes using
+  existing indexes: five paired 1M runs, path-only 530 → 2.03 ms and
+  path+name 110 → 2.07 ms (BENCHMARKS.md §9).
+- [x] Correct skipped-sample relevance denominator; add independent path
+  oracles, concurrency/ranking regressions and repeated benchmarks.
+- [x] Audit reader lifecycle, allocator use, async control methods and
+  idempotent install/uninstall; retest actual Plasma integration.
+- [ ] Reduce mixed-query p95 (24.8 ms at 1M); improve broad/short path
+  fallbacks without changing ranking or increasing persistent index size.
+- [ ] Support additional HOME-path characters in installation templates.
+- [x] Measure a real filesystem corpus (/usr/include, exact path-set oracle)
+  and root-free advisory database eviction.
 
 - [ ] Run the Baloo comparison protocol (`docs/BENCHMARKS.md` §6). This
   needs the owner's permission to enable Baloo temporarily.
-- [ ] Benchmark on a real home directory, and on a cold page cache with
-  root-free approximations (e.g. `vmtouch -e` on the index).
+- [ ] Extend real-workload coverage to varied home directories and
+  whole-machine cold-cache conditions.
 - [ ] Investigate the occasional ~0.4–0.7 s rename-visibility outliers seen
   at 1M files.
 - [ ] Reduce the heap fragmentation left by the initial scan in the same

@@ -1,0 +1,16 @@
+{
+  "status": {
+    "VmHWM": "21808 kB",
+    "VmRSS": "10300 kB",
+    "RssAnon": "3856 kB",
+    "RssFile": "6444 kB",
+    "Threads": "4"
+  },
+  "smaps_rollup": {
+    "Rss": "10300 kB",
+    "Pss": "7734 kB",
+    "Private_Clean": "3824 kB",
+    "Private_Dirty": "3888 kB",
+    "Anonymous": "3856 kB"
+  }
+}

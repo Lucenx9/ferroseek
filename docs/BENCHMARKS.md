@@ -386,3 +386,135 @@ RSS readings from `/proc` are approximate: the raw 1M run even sampled
 VmRSS above the later VmHWM, so those values cannot establish a precise
 peak-memory bound. No new claim about improvement over the old version is
 made from these single lifecycle runs.
+
+## 9. Path optimization: 2026-10-31
+
+The expensive **selective** path scans are substantially improved, using
+existing directory-name FTS and parent indexes. No persistent index or schema
+was added. Baseline `6f7172d` and accepted candidate `a4c33c8` were measured
+on the same machine with preserved release binaries. Complete reports,
+hashes, scripts and caveats are in
+[path-optimization evidence](benchmarks/path-optimization-2026-10-31/README.md).
+Earlier sections describe earlier runs, not the current result.
+
+### Repeated warm queries
+
+Five alternating baseline/candidate daemon lifetimes per dataset, same
+corpus/index, five rounds × three requests per selective case per process.
+Figures below are medians of the five process estimates, in milliseconds.
+Only D-Bus timings are comparable across binaries; the harness's library
+rows always use its own candidate library.
+
+| Generated files | Path-only before → after | Path + name before → after | Missing path before → after |
+|---|---:|---:|---:|
+| 10,000 | 4.886 → 0.487 | 0.634 → 0.529 | 4.861 → 0.360 |
+| 100,000 | 52.315 → 0.861 | 8.163 → 0.899 | 51.820 → 0.519 |
+| 1,000,000 | 529.820 → 2.032 | 109.939 → 2.069 | 531.151 → 0.589 |
+
+At 1M, path-only process estimates ranged 528.298–534.423 ms before and
+1.913–2.100 ms after; path+name 109.224–111.362 vs 1.934–2.204 ms. These
+support roughly 261× and 53× improvements for these fixtures, not all path
+queries. The small 10k path+name ranges overlap. Exact filename latency
+was essentially unchanged: 4.524 → 4.564 ms. All 4,950 measured explicit
+selective-case responses matched their expected paths/counts or emptiness.
+
+| 1M query workload | Before p50 / p95 / p99 | After p50 / p95 / p99 |
+|---|---:|---:|
+| Common words (350 requests/process, five processes) | 3.61 / 4.22 / 4.58 ms | 3.49 / 3.95 / 4.39 ms |
+| Broad `corpus/` (15/process, five processes) | 3.33 / 3.35 / 3.36 ms | 3.46 / 3.65 / 3.66 ms |
+| Broad `corpus/ report` (15/process, five processes) | 12.41 / 13.14 / 13.39 ms | 9.19 / 9.79 / 10.40 ms |
+| Original mixed 390-query workload (one lifecycle/process per side) | 2.57 / 25.07 / 27.54 ms | 2.48 / 24.80 / 27.48 ms |
+
+Repeated rows are medians of per-process percentiles, not pooled
+percentiles. Fifteen-sample p99 is effectively a maximum. The common-word
+subset must not be substituted for the original mixed workload: the mixed
+p95 target below 10 ms **is not met**. Broad path-only probing adds roughly
+0.13 ms here. Short directory components, broad anchors and unselective
+filters can still use scanning fallbacks.
+
+### Indexing, resources and updates
+
+Full lifecycle suites ran once per side at each of 10k, 100k and 1M; all six
+raw reports are retained. The 1M comparison below is descriptive, not a
+statistically established indexing/resource speedup.
+
+| 1M metric | Before | After |
+|---|---:|---:|
+| Initial scan, 100% duty: wall / CPU | 20.17 / 23.75 s | 18.68 / 22.64 s |
+| Initial scan, 100% duty: VmHWM | 21.0 MiB | 23.5 MiB |
+| Initial scan, 100% duty: read / written | 0 / 1980.5 MiB | 21.9 / 1602.9 MiB |
+| Database after initial scan | 250.5 MiB | 251.2 MiB |
+| Idle RSS after initial scan / restart | 11.6 / 9.7 MiB | 15.6 / 10.1 MiB |
+| Restart → idle | 1.03 s | 1.20 s |
+| Burst VmHWM | 26.3 MiB | 25.8 MiB |
+| Burst disk read / written | 0 / 50.1 MiB | 1.7 / 38.7 MiB |
+| Mid-index SIGKILL recovery → complete | 14.59 s | 13.81 s |
+
+Both indexed 953,595 files and watched 51,000 directories; hidden/excluded
+files explain the difference from the generated count. Recovery started
+from partial commits (341,651 / 360,363 files) and reached the independent
+expected final count in both builds. At 10k the kill arrived after indexing
+completed, so that size does not demonstrate mid-index recovery.
+
+The candidate's create/rename/delete visibility medians were 203.21 /
+203.34 / 202.48 ms, consistent with the configured 200 ms debounce. A 10k
+create burst converged in 0.19 s after the last write, renames in 0.51 s,
+a directory rename in 225 ms, and tree deletion in 0.37 s. No inotify
+overflow occurred; these runs do not exercise overflow recovery by force.
+The 30-second idle windows recorded zero CPU ticks and context switches,
+with four threads. After a Match/Teardown cycle and worker expiry, separate
+smaps readings were 10,300 / 10,428 KiB RSS, four threads each.
+
+The candidate has no extra on-disk data structure. Small SQLite file-size
+differences and variable write volumes do not establish added index cost.
+Peak memory remains higher than idle memory; the initial idle RSS increase
+in this single pair is reported rather than hidden. Per-directory listing
+memory and one inotify watch per directory still scale with workload.
+
+A single default-throttle lifecycle pass wrote 1714.2 MiB before and
+3132.4 MiB after (38.10 / 42.17 s). To investigate that apparent regression,
+five alternating fresh indexes per build were created on the **same exact**
+1M corpus at 50% duty. The write spike did not recur:
+
+| Repeated default-throttle indexing | Before median (range) | After median (range) |
+|---|---:|---:|
+| Wall time | 36.70 (36.44–37.69) s | 36.25 (36.19–38.01) s |
+| CPU time | 26.90 (26.57–27.13) s | 26.46 (26.36–27.27) s |
+| Disk written | 1772.2 (1679.4–1820.9) MiB | 1707.7 (1602.2–1867.2) MiB |
+| Peak RSS | 21.8 (21.2–24.5) MiB | 23.5 (23.3–23.8) MiB |
+| Database + WAL | 251.1 (250.7–252.8) MiB | 251.2 (251.1–252.3) MiB |
+
+These overlapping ranges show no demonstrated systematic indexing/write
+regression. They do not establish the cause of the earlier spike or a
+statistically significant indexing improvement. Raw repeated reports are
+in the evidence directory's `initial50/`. Full lifecycle tests were not
+repeated five times: repeated queries cover all three sizes, indexing
+repetitions focus on the 1M cost concern.
+
+### Real filesystem and cache effects
+
+Five independent indexes per version of `/usr/include` (40,883 entries)
+were verified against an independent raw-path `os.walk` oracle. Every CLI
+query retrieved all matches; zero set mismatches or process errors occurred.
+Median warm CLI times: `linux/` 20.23 → 2.65 ms (839 matches), `bits/`
+19.82 → 2.40 ms (496), and a missing directory 19.36 → 1.54 ms. Broad
+`include/stdio` stayed 19.53 → 19.17 ms (two matches), demonstrating the
+remaining fallback cost. Both databases occupied exactly 8,245,248 bytes.
+
+Five alternating missing-path CLI queries after advisory database-page
+eviction measured median wall time 1416.88 → 31.10 ms. These include process
+startup, unlike D-Bus measurements. `ru_inblock` was positive for every
+sample (baseline roughly 424,800 input operations, candidate 2,736), so
+filesystem I/O occurred. `posix_fadvise(DONTNEED)` is advisory: filesystem
+metadata and device caches were not reset, and this is **not a whole-machine
+cold-cache benchmark**. No privileged cache drops were used.
+
+### Correctness and release scope
+
+Independent path-list tests cover nesting, moves/deletions, Unicode and
+non-UTF8 names, symlinks, hidden/excluded entries, prefixes/substrings,
+missing paths, large match sets and concurrent rename snapshots. Reader
+lifecycle tests cover Teardown races and database replacement. Actual
+Plasma activation, results, file/folder opening, live changes, indexing and
+restart were retested; see [release readiness](RELEASE_READINESS.md).
+Baloo remained disabled. No fair Baloo comparison has been performed.

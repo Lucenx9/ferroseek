@@ -29,7 +29,7 @@ evidence are in `docs/ARCHITECTURE.md`, measurements in
 ```sh
 cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo build --release && tests/dbus-smoke.sh target/release/ferroseekd
+cargo build --release --workspace && tests/dbus-smoke.sh target/release/ferroseekd
 target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-100000
 ```
 
@@ -44,7 +44,8 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - **Never modify KDE or Baloo configuration, and never run `balooctl`
   commands that change state.** Live desktop tests install with
   `scripts/install.sh --config <tmp config>` and are undone with
-  `scripts/uninstall.sh --purge`.
+  `scripts/uninstall.sh` without purging user data. Route all live-test data
+  into a private temporary directory and remove only test-created artifacts.
 - **Index changes are state-based.** Event handlers record `(dir_id, name)`
   as dirty, and `resolve()` `lstat`s the current path. Never apply event
   deltas blindly. Never delete on `ENOENT` unless the parent still has its
@@ -98,3 +99,21 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   path lists and exercise concurrent directory renames.
 - Rust minimum is 1.89 (locked dependencies require it). Raising it enables
   Clippy's let-chain suggestions, applied without behavioral changes.
+
+## Accepted optimization and release checkpoint (2026-10-31)
+
+- Production commits: e8e8b85 (bounded directory scope), a4c33c8 (daemon
+  lifecycle/installer hardening and native FTS ordering). Paired measurements
+  against preserved 6f7172d binaries are in BENCHMARKS.md §9.
+- At 1M: selective path-only 529.820 → 2.032 ms, path+name 109.939 → 2.069 ms
+  across five independent daemon processes per side. No new schema/index.
+  Broad/short-component fallbacks remain. Mixed-query p95 is still 24.80 ms.
+- Benchmark library rows use the harness library even with an old daemon;
+  compare D-Bus rows only. Legacy relevance skipped-sample denominator fixed.
+- Actual Plasma activation/results/Run/open-parent/live updates/restart and
+  repeated installation/uninstallation verified using isolated test data.
+  Baloo stayed disabled; no installed test service remains.
+- Reader-pool epoch and database identity checks protect Teardown/recovery.
+  Never restore per-Status malloc_trim or blocking async control work.
+- Benchmark --work must be new/empty unless explicitly reusing a matching
+  generated corpus. Reuse initial indexing deletes only that work/data.

@@ -162,10 +162,10 @@ fn proc_status(pid: u32) -> HashMap<String, u64> {
     let mut m = HashMap::new();
     if let Ok(s) = fs::read_to_string(format!("/proc/{pid}/status")) {
         for l in s.lines() {
-            if let Some((k, v)) = l.split_once(':') {
-                if let Some(n) = v.split_whitespace().next().and_then(|x| x.parse().ok()) {
-                    m.insert(k.to_string(), n);
-                }
+            if let Some((k, v)) = l.split_once(':')
+                && let Some(n) = v.split_whitespace().next().and_then(|x| x.parse().ok())
+            {
+                m.insert(k.to_string(), n);
             }
         }
     }
@@ -262,12 +262,11 @@ impl Daemon {
     fn wait_idle(&self, timeout: Duration) -> Duration {
         let t = Instant::now();
         loop {
-            if let Some(s) = self.status() {
-                if s.get("state").map(String::as_str) == Some("idle")
-                    && s.get("queued_dirs").map(String::as_str) == Some("0")
-                {
-                    return t.elapsed();
-                }
+            if let Some(s) = self.status()
+                && s.get("state").map(String::as_str) == Some("idle")
+                && s.get("queued_dirs").map(String::as_str) == Some("0")
+            {
+                return t.elapsed();
             }
             assert!(t.elapsed() < timeout, "daemon did not become idle");
             // Fine-grained at first, then back off: each Status runs a COUNT
@@ -362,7 +361,28 @@ fn main() {
     let bin = PathBuf::from(get("--bin-dir").unwrap_or_else(|| "target/release".into()));
     let seed: u64 = get("--seed").and_then(|v| v.parse().ok()).unwrap_or(42);
     let only_initial = args.iter().any(|a| a == "--only-initial");
+    let initial_cpu: u32 = get("--cpu").map(|v| v.parse().expect("--cpu 1..100")).unwrap_or(100);
+    assert!((1..=100).contains(&initial_cpu), "--cpu must be 1..100");
     let reuse = args.iter().any(|a| a == "--reuse-corpus");
+    let queries_only = args.iter().any(|a| a == "--queries-only");
+    assert!(n > 0, "--files must be positive");
+    assert!(!queries_only || reuse, "--queries-only requires --reuse-corpus");
+    assert!(!reuse || only_initial || queries_only, "--reuse-corpus requires --only-initial or --queries-only");
+    if !reuse && work.exists() {
+        assert!(
+            fs::read_dir(&work).expect("work directory").next().is_none(),
+            "--work must be a new or empty directory; existing files are never removed"
+        );
+    }
+    if reuse {
+        let report = fs::read_to_string(work.join("report.md")).expect("existing benchmark report required for reuse");
+        assert!(
+            work.join("corpus").is_dir()
+                && work.join("config.toml").is_file()
+                && report.starts_with(&format!("### {n} files (seed {seed})")),
+            "reuse requires a matching generated benchmark corpus/report/config"
+        );
+    }
     let bin = fs::canonicalize(&bin).expect("bin dir");
 
     if std::env::var_os("FERROSEEK_BENCH_ISOLATED").is_none() {
@@ -376,15 +396,46 @@ fn main() {
         std::process::exit(st.code().unwrap_or(1));
     }
 
-    if !reuse {
-        let _ = fs::remove_dir_all(&work);
-    }
     fs::create_dir_all(&work).unwrap();
     let work = fs::canonicalize(&work).unwrap();
     let corpus_dir = work.join("corpus");
     let db = work.join("data/index.sqlite");
     let mut out = String::new();
     macro_rules! say { ($($t:tt)*) => {{ let l = format!($($t)*); eprintln!("{l}"); out.push_str(&l); out.push('\n'); }} }
+
+    if queries_only {
+        let d = Daemon::start(&bin, &work);
+        d.wait_idle(Duration::from_secs(3600));
+        let queries: Vec<String> = WORDS.iter().map(|q| q.to_string()).collect();
+        for q in &queries {
+            d.krunner_match(q);
+        }
+        let mut times = Vec::new();
+        for _ in 0..5 {
+            for q in &queries {
+                let t = Instant::now();
+                let hits = d.krunner_match(q);
+                assert!(!hits.is_empty(), "expected corpus word {q}");
+                times.push(t.elapsed().as_secs_f64() * 1e3);
+            }
+        }
+        say!("Ordinary word queries D-Bus: {}", lat(&times));
+        for q in ["corpus/", "corpus/ report", "home/"] {
+            let mut samples = Vec::new();
+            d.krunner_match(q);
+            for _ in 0..15 {
+                let t = Instant::now();
+                let hits = d.krunner_match(q);
+                samples.push(t.elapsed().as_secs_f64() * 1e3);
+                assert!(!hits.is_empty(), "broad query {q}");
+            }
+            say!("Broad query {q:?} D-Bus: {}", lat(&samples));
+        }
+        review::run(&d, &work, &db, &mut |l| say!("{l}"));
+        d.stop();
+        println!("{out}");
+        return;
+    }
 
     let t = Instant::now();
     let corpus = if reuse && corpus_dir.exists() {
@@ -394,13 +445,17 @@ fn main() {
         generate(&corpus_dir, n, seed)
     };
     say!("### {} files (seed {seed})\n", n);
-    say!(
-        "Corpus: {} files in {} directories (+{} files in excluded `node_modules`/`.git` trees), generated in {:.1}s.\n",
-        corpus.files.len(),
-        corpus.dirs,
-        corpus.excluded,
-        t.elapsed().as_secs_f64()
-    );
+    if reuse {
+        say!("Reusing an existing corpus; --files is a caller-provided label. Actual indexed counts follow.\n");
+    } else {
+        say!(
+            "Corpus: {} files in {} directories (+{} files in excluded `node_modules`/`.git` trees), generated in {:.1}s.\n",
+            corpus.files.len(),
+            corpus.dirs,
+            corpus.excluded,
+            t.elapsed().as_secs_f64()
+        );
+    }
     let write_cfg = |cpu: u32| {
         fs::write(
             work.join("config.toml"),
@@ -411,7 +466,7 @@ fn main() {
 
     // 1. Initial indexing, default throttle and unthrottled.
     say!("| metric | value |\n|---|---|");
-    let passes: &[u32] = if only_initial { &[100] } else { &[50, 100] };
+    let passes: &[u32] = if only_initial { &[initial_cpu] } else { &[50, 100] };
     for &cpu in passes {
         let _ = fs::remove_dir_all(work.join("data"));
         write_cfg(cpu);
@@ -524,15 +579,14 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let mut top5_stem = 0;
     let mut found_sub = 0;
     let sample = 200.min(corpus.files.len());
+    let mut eligible = 0;
     for _ in 0..sample {
         let f = &corpus.files[r.below(corpus.files.len())];
         let name = f.file_name().unwrap();
         if name.as_bytes().first() == Some(&b'.') || name.to_str().is_none() {
-            found_sub += 1;
-            top1 += 1;
-            top5_stem += 1;
             continue; // hidden (excluded) or non-UTF-8: not queryable as text
         }
+        eligible += 1;
         let name = name.to_str().unwrap();
         let hits = reader.search(&Query::parse(name), &SearchOptions { limit: 20, ..Default::default() }).unwrap();
         // Exact duplicates of a name in other dirs tie; accept any rank-1 hit with the same name.
@@ -559,10 +613,10 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         }
     }
     say(format!(
-        "| relevance (sample {sample}): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | {:.1} % / {:.1} % / {:.1} % |",
-        100.0 * top1 as f64 / sample as f64,
-        100.0 * top5_stem as f64 / sample as f64,
-        100.0 * found_sub as f64 / sample as f64
+        "| relevance (eligible {eligible} of sample {sample}): exact name ranked #1 / stem in top-5 (ties counted) / multi-word recall | {:.1} % / {:.1} % / {:.1} % |",
+        100.0 * top1 as f64 / eligible.max(1) as f64,
+        100.0 * top5_stem as f64 / eligible.max(1) as f64,
+        100.0 * found_sub as f64 / eligible.max(1) as f64
     ));
 
     review::run(&d, work, db, say);

@@ -32,11 +32,13 @@ design:
   inner match, then adjusts for depth and recency.
 - **Path-based identity.** Entries are keyed by (parent, name), not by inode
   or device. Renaming a directory updates one row, whatever its size.
-- **Bounded memory, nothing done while idle.** On 1M files (measured) it
-  uses 0 % idle CPU, makes 0 wakeups per second, has a steady-state idle RSS
-  of about 9 MiB and a peak of about 26 MiB during the initial index.
-  KRunner queries take 2.4 ms p50 / 8.2 ms p99.
-- **No lost events.** On inotify overflow, watch-limit exhaustion, pause or
+- **Low idle resource use.** In the latest 1M-file run, idle RSS after
+  restart was 10.1 MiB; a 30-second idle window recorded no CPU time or
+  context switches. Mixed KRunner queries measured 2.48 / 24.80 / 27.48 ms
+  p50 / p95 / p99. Five paired runs reduced a selective path-only query
+  from 530 ms to 2.03 ms without adding a persistent index. See
+  [measurements and limits](docs/BENCHMARKS.md#9-path-optimization-2026-10-31).
+- **Recovery from missed events.** On inotify overflow, watch-limit exhaustion, pause or
   restart it reconciles: a quick pass that skips directories whose mtime is
   unchanged.
 - **Crash-safe.** It uses SQLite WAL. A corrupt or incompatible index is
@@ -155,9 +157,9 @@ the journal: `journalctl --user -u ferroseek`.
 ## Limitations
 
 - Search retains a bounded candidate set after filtering; ranking is
-  approximate on very broad queries. Path-only queries (such as `src/`)
-  and selective path filters may scan many rows. Include a filename token
-  when possible to use the filename index.
+  approximate on very broad queries. Selective paths use existing directory
+  indexes; broad anchors and components shorter than three characters may
+  still scan many rows. Mixed-query p95 remains above the 10 ms target.
 
 - Name and path search only, no file contents yet. Plain-text content
   search is the next milestone.
@@ -171,8 +173,14 @@ the journal: `journalctl --user -u ferroseek`.
   picked up live, or by `ferroseek index --full`.
 - Network, FUSE and removable filesystems below a root are not descended
   into by default.
-- The benchmarks use a warm page cache and a synthetic corpus; see
-  `docs/BENCHMARKS.md` §7.
+- Memory scales with directory/watch count and the width of directories
+  reconciled; the measured RSS is not a universal memory bound.
+- The installer rejects HOME paths containing characters other than ASCII
+  letters, digits, underscore, dot, slash and hyphen.
+- Benchmarks include repeated synthetic datasets and a real `/usr/include`
+  oracle. Warm-cache and advisory-eviction measurements are distinguished;
+  full cold-machine behavior and non-glibc targets remain unverified. See
+  [release readiness](docs/RELEASE_READINESS.md).
 
 ## Development
 
@@ -180,7 +188,8 @@ See `CLAUDE.md` for the repository map and conventions, and
 `docs/ARCHITECTURE.md` for the design and data flow.
 
 ```sh
-cargo test --workspace                                  # 60+ tests, temp dirs only
+cargo build --release --workspace                       # includes benchmark binary
+cargo test --workspace                                  # isolated unit/integration tests
 tests/dbus-smoke.sh target/release/ferroseekd           # daemon on a private D-Bus session
 target/release/ferroseek-bench --files 100000 --work /tmp/fsb   # benchmarks
 ```

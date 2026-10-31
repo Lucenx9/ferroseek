@@ -101,6 +101,7 @@ pub(super) fn run(d: &Daemon, work: &Path, db: &Path, say: &mut dyn FnMut(String
             pct(&rounds, 1.0),
             pct(&all, 1.0)
         ));
+        say(format!("| {label} D-Bus sample percentiles | {} | — | — | — |", lat(&all)));
     }
     fs::remove_dir_all(&dir).unwrap();
     wait_until(Duration::from_secs(30), || d.krunner_match("report-review-sentinel").is_empty())
