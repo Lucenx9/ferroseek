@@ -1,5 +1,17 @@
 [package]
 name = "ferroseek-bench"
+description = "Deterministic corpus generator and benchmark runner for FerroSeek"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "ferroseek-bench"
+path = "src/main.rs"
+
+[dependencies]
+ferroseek-index.workspace = true
+zbus.workspace = true
+libc.workspace = true

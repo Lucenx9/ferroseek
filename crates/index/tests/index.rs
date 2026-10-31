@@ -351,3 +351,19 @@ fn hidden_and_depth_are_relative_to_the_root() {
     let opts = SearchOptions { include_hidden: false, ..Default::default() };
     assert_eq!(names(&r.search(&Query::parse("thing"), &opts).unwrap()), vec!["visible-thing.txt"]);
 }
+
+#[test]
+fn large_limits_see_every_match() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    for i in 0..5000u64 {
+        tx.upsert(root, format!("many-{i:05}.txt").as_bytes(), file(10 + i)).unwrap();
+    }
+    tx.commit().unwrap();
+    let r = Reader::open(&db).unwrap();
+    let q = Query::parse("many-");
+    assert_eq!(r.search(&q, &SearchOptions { limit: 10_000, ..Default::default() }).unwrap().len(), 5000);
+    assert_eq!(r.search(&q, &SearchOptions { limit: 15, ..Default::default() }).unwrap().len(), 15);
+}

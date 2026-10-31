@@ -72,6 +72,15 @@ pub fn lower_current_thread_priority() {
     }
 }
 
+/// Returns freed heap memory to the kernel (glibc keeps it otherwise).
+pub fn trim_heap() {
+    #[cfg(target_env = "gnu")]
+    // SAFETY: malloc_trim has no preconditions.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
 /// A self-pipe used to wake a thread blocked in `poll`.
 pub struct WakePipe {
     pub read: OwnedFd,

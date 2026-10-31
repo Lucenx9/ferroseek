@@ -105,7 +105,7 @@ fn main() -> ExitCode {
     // thread after block_on returns.
     let _conn = if use_dbus {
         let pool = Arc::new(pool::Pool::new(paths.index_file()));
-        let control = control::Control { engine: engine.clone(), pool: pool.clone(), paths: paths.clone() };
+        let control = control::Control { engine: engine.clone(), paths: paths.clone() };
         let runner = runner::Runner::new(pool);
         let built = zbus::block_on(async {
             zbus::connection::Builder::session()

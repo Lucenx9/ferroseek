@@ -15,7 +15,7 @@ use crate::config::{Config, Paths, Rules};
 use crate::indexer::{Indexer, Mode};
 use crate::inotify::{Inotify, RawEvent};
 use crate::status::{Snapshot, State, Status};
-use crate::sys::{InstanceLock, WakePipe, lower_current_thread_priority, poll2};
+use crate::sys::{InstanceLock, WakePipe, lower_current_thread_priority, poll2, trim_heap};
 
 #[derive(Debug)]
 pub enum EngineError {
@@ -64,6 +64,8 @@ enum Msg {
 const MAX_PENDING_EVENTS: usize = 100_000;
 /// Channel capacity in *read batches* (each up to 64 KiB of events).
 const CHANNEL_BATCHES: usize = 64;
+/// Quiet time after which caches are released (idle memory floor).
+const RELEASE_AFTER: Duration = Duration::from_secs(5);
 
 /// A running indexing engine: an inotify reader thread and an indexer
 /// thread that owns the index writer.
@@ -267,6 +269,8 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
     let mut last_event = Instant::now();
     let mut scan_not_before = Instant::now();
     let mut scanning = true;
+    let mut last_work = Instant::now();
+    let mut released = false;
 
     status.set_state(State::Scanning);
     if let Err(e) = ix.sync_roots(Mode::Quick) {
@@ -288,6 +292,9 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
             }
             if let Some(p) = next_periodic {
                 timeout = timeout.min(p.saturating_duration_since(now));
+            }
+            if !released {
+                timeout = timeout.min((last_work + RELEASE_AFTER).saturating_duration_since(now));
             }
         }
         let msg = match rx.recv_timeout(timeout) {
@@ -371,6 +378,16 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                     let _ = ix.writer().checkpoint();
                     refresh_counts(&ix, status);
                 }
+            }
+            if ix.has_work() || first_event.is_some() {
+                last_work = now;
+                released = false;
+            } else if !released && now.duration_since(last_work) >= RELEASE_AFTER {
+                // Idle: drop the writer's page cache and give freed heap
+                // back, so the resting footprint is the code + a few KiB.
+                let _ = ix.writer().release_memory();
+                trim_heap();
+                released = true;
             }
             if !ix.has_work() && first_event.is_none() && scanning {
                 scanning = false;

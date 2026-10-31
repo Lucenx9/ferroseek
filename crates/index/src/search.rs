@@ -11,9 +11,11 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::tree::fold;
 use crate::{Id, Kind, Result};
 
-/// Upper bound on FTS candidates per query. Bounds latency on unselective
-/// queries; exact and prefix matches (the best-ranked classes) are fetched
-/// separately and are never cut by it.
+/// Lower bound on FTS candidates per query; the effective cap is
+/// `max(FTS_CANDIDATES, 4 * limit)`. Bounds latency on unselective queries
+/// for small limits (KRunner asks for 15) while large limits (CLI scripting)
+/// still see every match. Exact and prefix matches (the best-ranked
+/// classes) are fetched separately.
 const FTS_CANDIDATES: usize = 2000;
 const PREFIX_CANDIDATES: usize = 300;
 
@@ -182,6 +184,8 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
 
     let long: Vec<&String> = q.name_tokens.iter().filter(|t| t.chars().count() >= 3).collect();
     let first = &q.name_tokens[0];
+    let fts_cap = FTS_CANDIDATES.max(opts.limit.saturating_mul(4));
+    let prefix_cap = PREFIX_CANDIDATES.max(opts.limit);
     // Exact name and prefix of the first token: cheap index range scans that
     // guarantee the best-ranked matches are always candidates.
     let joined = q.name_tokens.join(" ");
@@ -192,7 +196,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     let upper = format!("{first}\u{10FFFF}");
     add_rows(
         &mut conn.prepare_cached(&format!(
-            "SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2 LIMIT {PREFIX_CANDIDATES}"
+            "SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2 LIMIT {prefix_cap}"
         ))?,
         &[first, &upper],
     )?;
@@ -200,7 +204,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         add_rows(
             &mut conn.prepare_cached(&format!(
                 "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
-                 WHERE names MATCH ?1 LIMIT {FTS_CANDIDATES}"
+                 WHERE names MATCH ?1 LIMIT {fts_cap}"
             ))?,
             &[&fts_phrase(&long)],
         )?;

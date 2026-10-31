@@ -176,6 +176,13 @@ impl Writer {
     pub fn stats(&self) -> Result<Stats> {
         stats(&self.conn, &self.path)
     }
+
+    /// Frees the connection's page cache and other releasable memory; call
+    /// when going idle. The cache refills on demand.
+    pub fn release_memory(&self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA shrink_memory;")?;
+        Ok(())
+    }
 }
 
 /// A read-only handle; cheap to open, safe to use concurrently with the

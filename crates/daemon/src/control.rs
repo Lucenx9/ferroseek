@@ -6,11 +6,9 @@ use std::sync::Arc;
 
 use ferroseek_engine::{Engine, Paths};
 
-use crate::pool::Pool;
 
 pub struct Control {
     pub engine: Arc<Engine>,
-    pub pool: Arc<Pool>,
     pub paths: Paths,
 }
 
@@ -20,8 +18,10 @@ impl Control {
     async fn status(&self) -> HashMap<String, String> {
         let mut m: HashMap<String, String> =
             self.engine.status().pairs().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
-        let pool = self.pool.clone();
-        if let Ok(s) = zruntime::unblock(move || pool.with(|r| r.stats())).await {
+        // A short-lived reader: status calls must not leave a cached
+        // connection behind (the pool is emptied only by KRunner Teardown).
+        let db = self.paths.index_file();
+        if let Ok(s) = zruntime::unblock(move || ferroseek_index::Reader::open(&db).and_then(|r| r.stats())).await {
             m.insert("files".into(), s.files.to_string());
             m.insert("dirs".into(), (s.dirs).to_string());
             m.insert("disk_bytes".into(), s.disk_bytes.to_string());
