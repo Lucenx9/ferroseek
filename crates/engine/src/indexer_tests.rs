@@ -405,3 +405,17 @@ fn removed_root_is_dropped() {
     ix.scan_to_completion().unwrap();
     assert_eq!(f.count(), 1);
 }
+
+#[test]
+fn cache_tag_blocks_live_files_and_removal_restores_existing_files() {
+    let mut f = fx();
+    touch(&f.p("cache/old-document.txt"));
+    fs::write(f.p("cache/CACHEDIR.TAG"), b"Signature: 8a477f597d28d172789f06886806bc55").unwrap();
+    f.scan(Mode::Quick);
+    touch(&f.p("cache/new-document.txt"));
+    f.settle();
+    assert!(f.find("document").is_empty());
+    fs::remove_file(f.p("cache/CACHEDIR.TAG")).unwrap();
+    f.settle();
+    assert_eq!(f.find("document").len(), 2);
+}

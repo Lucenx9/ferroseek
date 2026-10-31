@@ -170,9 +170,15 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
     when it is the only token. Otherwise it is a substring filter on
     candidates.
   - A token containing `/` is a substring filter on the full path.
-- Candidates are the union of exact-name matches, prefix matches and up to
-  2000 FTS substring candidates. The cap bounds latency. Exact and prefix
-  matches, the highest-ranked classes, are always included.
+- Candidates combine exact-name, prefix and FTS substring matches. Budgets
+  apply after name, kind, hidden and path filters: 100 exact matches,
+  `max(300, limit)` prefixes and `max(2000, 4 * limit)` FTS matches.
+  Ranking is approximate when these budgets are reached.
+- Path-only queries stream entries through the path filter without inventing
+  a filename constraint. Slash-only queries return no matches. Path caches
+  are cleared at 8192 entries (a single ancestor chain may exceed this).
+  Selective filters and path-only queries can scan the whole candidate
+  source; memory is bounded, but latency is not constant.
 - **Score**, stage 1 (name only): exact name > exact stem > prefix >
   word-boundary match (`_ - . space`, camelCase) > inner substring, plus a
   coverage bonus and a penalty for dotfiles.
@@ -216,3 +222,15 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 - Mount policy: the daemon does not descend into virtual, network, FUSE or
   removable filesystems (`/proc/self/mountinfo` fstype) unless they are
   configured explicitly as roots.
+
+## Review hardening (2026-10-31)
+
+The inotify reader now returns after one buffer, letting the bounded channel
+apply backpressure between reads. Cache-tag exclusions also apply to event
+resolution; removing or invalidating a tag schedules a full directory scan.
+
+An opaque key of resolved rules and roots is stored in SQLite. A changed
+key atomically invalidates all reconciled directory mtimes before storing
+the new key. Interrupted scans leave unvisited directories invalid, so a
+restart completes the policy transition. The first launch after this change
+also revisits directory listings. No schema version change is needed.

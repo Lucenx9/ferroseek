@@ -62,6 +62,7 @@ echo "$out"
 
 echo "== Short and empty queries"
 empty() { [[ "$1" == *"[]"* && "$1" != *"file://"* ]]; }
+empty "$(call --object-path /runner --method org.kde.krunner1.Match "//")" || fail "slash-only query"
 empty "$(call --object-path /runner --method org.kde.krunner1.Match "q")" || fail "1-char query"
 empty "$(call --object-path /runner --method org.kde.krunner1.Match "zzzzqqq")" || fail "no-hit query"
 

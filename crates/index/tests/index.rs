@@ -367,3 +367,42 @@ fn large_limits_see_every_match() {
     assert_eq!(r.search(&q, &SearchOptions { limit: 10_000, ..Default::default() }).unwrap().len(), 5000);
     assert_eq!(r.search(&q, &SearchOptions { limit: 15, ..Default::default() }).unwrap().len(), 15);
 }
+
+#[test]
+fn slash_only_queries_do_not_panic() {
+    let (_t, db) = setup();
+    let (_w, _) = Writer::open(&db).unwrap();
+    for q in ["/", "//", "/// ///"] {
+        assert!(search(&db, q).is_empty());
+    }
+}
+
+#[test]
+fn filters_select_candidates_before_applying_the_budget() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    for i in 0..2100 {
+        tx.upsert(root, format!("a-report-{i}").as_bytes(), file(i + 2)).unwrap();
+    }
+    let target = tx.upsert(root, b"target", dir(3000)).unwrap().0;
+    tx.upsert(target, b"z-report.txt", file(3001)).unwrap();
+    tx.commit().unwrap();
+    let r = Reader::open(&db).unwrap();
+    let opts = SearchOptions { within: Some(PathBuf::from("/r/target")), ..Default::default() };
+    assert_eq!(names(&r.search(&Query::parse("report"), &opts).unwrap()), ["z-report.txt"]);
+}
+
+#[test]
+fn path_only_queries_find_descendants_without_requiring_parent_name_in_filename() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let src = tx.upsert(root, b"src", dir(2)).unwrap().0;
+    tx.upsert(src, b"main.rs", file(3)).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(names(&search(&db, "src/")), ["main.rs"]);
+    assert_eq!(names(&search(&db, "r/src/")), ["main.rs"]);
+}

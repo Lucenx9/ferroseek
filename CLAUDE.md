@@ -64,3 +64,15 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   is pinned to KRunner 6.31 in `docs/RESEARCH.md` §10. Re-verify it when
   bumping Plasma.
 - Commits end with the `Co-Authored-By` trailer in use in `git log`.
+
+## Review checkpoint (2026-10-31)
+
+- Completed initial whole-tree Standards/Spec review; six findings fixed.
+  See `docs/CODE_REVIEW.md` for findings, regressions and tradeoffs.
+- Policy changes invalidate directory listings transactionally through
+  `Writer::apply_policy`; preserve crash-safe invalidation on future changes.
+- Inotify reads must return after one buffer so channel backpressure works.
+- Search budgets count candidates *after* filters. Path-only queries stream
+  entries; do not infer a mandatory filename token from a directory path.
+- Existing benchmark numbers predate these fixes; selective/path-only query
+  latency and cache-tag checking overhead have not been rebenchmarked.

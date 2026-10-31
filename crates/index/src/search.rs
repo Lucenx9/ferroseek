@@ -14,8 +14,8 @@ use crate::{Id, Kind, Result};
 /// Lower bound on FTS candidates per query; the effective cap is
 /// `max(FTS_CANDIDATES, 4 * limit)`. Bounds latency on unselective queries
 /// for small limits (KRunner asks for 15) while large limits (CLI scripting)
-/// still see every match. Exact and prefix matches (the best-ranked
-/// classes) are fetched separately.
+/// retain more matches. Filters run before these budgets; selective filters
+/// may read many rows. Exact and prefix candidates are fetched separately.
 const FTS_CANDIDATES: usize = 2000;
 const PREFIX_CANDIDATES: usize = 300;
 
@@ -43,18 +43,11 @@ impl Query {
                 out.name_tokens.push(t);
             }
         }
-        // "src/main" alone: also require the last component in the name, so
-        // the trigram index can be used.
-        if out.name_tokens.is_empty() {
-            if let Some(last) = out.path_tokens.last().and_then(|p| p.rsplit('/').find(|s| !s.is_empty())) {
-                out.name_tokens.push(last.to_string());
-            }
-        }
         out
     }
 
     pub fn is_empty(&self) -> bool {
-        self.name_tokens.is_empty() && self.path_tokens.is_empty()
+        self.name_tokens.is_empty() && self.path_tokens.iter().all(|t| t.chars().all(|c| c == '/'))
     }
 }
 
@@ -164,49 +157,73 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         return Ok(Vec::new());
     }
     let mut cands: HashMap<Id, Cand> = HashMap::new();
-    let mut add_rows = |st: &mut rusqlite::CachedStatement<'_>, params: &[&dyn rusqlite::ToSql]| -> Result<()> {
-        let mut rows = st.query(params)?;
-        while let Some(r) = rows.next()? {
-            let id: Id = r.get(0)?;
-            cands.entry(id).or_insert(Cand {
-                parent: r.get(1)?,
-                name: r.get(2)?,
-                key: r.get(3)?,
-                kind: Kind::from_i64(r.get(4)?),
-                size: r.get::<_, i64>(5)? as u64,
-                mtime: r.get(6)?,
-                score: 0.0,
-            });
-        }
-        Ok(())
-    };
+    let mut candidate_paths = PathCache::new(conn);
+    let mut add_rows =
+        |st: &mut rusqlite::CachedStatement<'_>, params: &[&dyn rusqlite::ToSql], cap: usize| -> Result<()> {
+            let mut accepted = 0;
+            let mut rows = st.query(params)?;
+            while let Some(r) = rows.next()? {
+                let id: Id = r.get(0)?;
+                let c = Cand {
+                    parent: r.get(1)?,
+                    name: r.get(2)?,
+                    key: r.get(3)?,
+                    kind: Kind::from_i64(r.get(4)?),
+                    size: r.get::<_, i64>(5)? as u64,
+                    mtime: r.get(6)?,
+                    score: 0.0,
+                };
+                if !q.name_tokens.iter().all(|t| c.key.contains(t.as_str())) || opts.kind.is_some_and(|k| k != c.kind) {
+                    continue;
+                }
+                let Some(parent) = c.parent else { continue };
+                if !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden {
+                    let Some(dir) = candidate_paths.dir(parent)? else { continue };
+                    let path = PathBuf::from(OsStr::from_bytes(&dir.path)).join(OsStr::from_bytes(&c.name));
+                    if !path_matches(&path, dir.hidden || c.name.first() == Some(&b'.'), q, opts) {
+                        continue;
+                    }
+                }
+                cands.entry(id).or_insert(c);
+                accepted += 1;
+                if accepted >= cap {
+                    break;
+                }
+            }
+            Ok(())
+        };
     const COLS: &str = "e.id, e.parent, e.name, e.key, e.kind, e.size, e.mtime";
 
     let long: Vec<&String> = q.name_tokens.iter().filter(|t| t.chars().count() >= 3).collect();
-    let first = &q.name_tokens[0];
     let fts_cap = FTS_CANDIDATES.max(opts.limit.saturating_mul(4));
     let prefix_cap = PREFIX_CANDIDATES.max(opts.limit);
-    // Exact name and prefix of the first token: cheap index range scans that
-    // guarantee the best-ranked matches are always candidates.
-    let joined = q.name_tokens.join(" ");
-    add_rows(
-        &mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE e.key = ?1 LIMIT 100"))?,
-        &[&joined],
-    )?;
-    let upper = format!("{first}\u{10FFFF}");
-    add_rows(
-        &mut conn.prepare_cached(&format!(
-            "SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2 LIMIT {prefix_cap}"
-        ))?,
-        &[first, &upper],
-    )?;
+    if let Some(first) = q.name_tokens.first() {
+        // Fetch exact and prefix candidates separately using index ranges.
+        let joined = q.name_tokens.join(" ");
+        add_rows(
+            &mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE e.key = ?1"))?,
+            &[&joined],
+            100,
+        )?;
+        let upper = format!("{first}\u{10FFFF}");
+        add_rows(
+            &mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2"))?,
+            &[first, &upper],
+            prefix_cap,
+        )?;
+    } else {
+        // No filename constraint can safely narrow a full-path substring.
+        // Stream rows and retain only the bounded set passing path filters.
+        add_rows(&mut conn.prepare_cached(&format!("SELECT {COLS} FROM entries e"))?, &[], fts_cap)?;
+    }
     if !long.is_empty() {
         add_rows(
             &mut conn.prepare_cached(&format!(
                 "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
-                 WHERE names MATCH ?1 LIMIT {fts_cap}"
+                 WHERE names MATCH ?1"
             ))?,
             &[&fts_phrase(&long)],
+            fts_cap,
         )?;
     }
 
@@ -228,12 +245,12 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     // candidate; otherwise only the head of the name ranking matters.
     let path_filtered = !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden;
     if !path_filtered {
-        ranked.truncate((opts.limit * 3).max(60));
+        ranked.truncate((opts.limit.saturating_mul(3)).max(60));
     }
     let mut paths = PathCache::new(conn);
     let now_ns =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
-    let mut hits = Vec::with_capacity(ranked.len().min(opts.limit * 3));
+    let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
     for (id, c) in ranked {
         let Some(parent) = c.parent else { continue };
         let Some(dir) = paths.dir(parent)? else { continue };
@@ -243,20 +260,9 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         }
         path.extend_from_slice(&c.name);
         let path = PathBuf::from(OsStr::from_bytes(&path));
-        if let Some(w) = &opts.within {
-            if !path.starts_with(w) || path == *w {
-                continue;
-            }
-        }
         let hidden_ancestor = dir.hidden;
-        if !opts.include_hidden && (hidden_ancestor || c.name.first() == Some(&b'.')) {
+        if !path_matches(&path, hidden_ancestor || c.name.first() == Some(&b'.'), q, opts) {
             continue;
-        }
-        if !q.path_tokens.is_empty() {
-            let lower = fold(path.as_os_str().as_bytes());
-            if !q.path_tokens.iter().all(|t| lower.contains(t.as_str())) {
-                continue;
-            }
         }
         let mut score = c.score;
         // Files directly in a root or one level down are not penalized.
@@ -277,6 +283,22 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
     hits.truncate(opts.limit);
     Ok(hits)
+}
+
+fn path_matches(path: &std::path::Path, hidden: bool, q: &Query, opts: &SearchOptions) -> bool {
+    if opts.within.as_ref().is_some_and(|w| !path.starts_with(w) || path == w) {
+        return false;
+    }
+    if hidden && !opts.include_hidden {
+        return false;
+    }
+    if !q.path_tokens.is_empty() {
+        let lower = fold(path.as_os_str().as_bytes());
+        if !q.path_tokens.iter().all(|t| lower.contains(t.as_str())) {
+            return false;
+        }
+    }
+    true
 }
 
 /// A resolved directory: absolute path, plus facts measured *below its
@@ -304,6 +326,11 @@ impl<'c> PathCache<'c> {
     fn dir(&mut self, id: Id) -> Result<Option<DirInfo>> {
         if let Some(p) = self.dirs.get(&id) {
             return Ok(p.clone());
+        }
+        // Candidate filtering may visit many rejected paths. Keep the
+        // cache bounded independently of the number of rows scanned.
+        if self.dirs.len() >= 8192 {
+            self.dirs.clear();
         }
         // Walk up until a cached ancestor or a root, then fill the cache on
         // the way back down.

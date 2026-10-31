@@ -159,6 +159,25 @@ impl Writer {
         Txn::begin(&mut self.conn)
     }
 
+    /// Invalidates directory listings atomically when the indexing policy changes.
+    /// Unvisited listings remain invalid across an interrupted reconciliation.
+    pub fn apply_policy(&mut self, policy: &str) -> Result<()> {
+        use rusqlite::OptionalExtension;
+        let tx = self.conn.transaction()?;
+        let previous: Option<String> =
+            tx.query_row("SELECT value FROM meta WHERE key='indexing_policy'", [], |r| r.get(0)).optional()?;
+        if previous.as_deref() != Some(policy) {
+            tx.execute("UPDATE entries SET mtime=0 WHERE kind=1", [])?;
+            tx.execute(
+                "INSERT INTO meta(key, value) VALUES('indexing_policy', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [policy],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Records a clean shutdown and truncates the WAL. Call before exit.
     pub fn close(self) -> Result<()> {
         schema::mark_clean(&self.conn, true)?;

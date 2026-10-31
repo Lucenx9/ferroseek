@@ -88,25 +88,24 @@ impl Inotify {
         if unsafe { libc::inotify_rm_watch(self.raw_fd(), wd) } < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
     }
 
-    /// Reads all currently queued events without blocking (the fd is
-    /// non-blocking). Appends to `out`; returns how many were read.
+    /// Reads at most one buffer of queued events without blocking.
+    /// Appends to `out`; callers poll again to drain remaining batches.
     pub fn read_available(&self, buf: &mut [u8], out: &mut Vec<RawEvent>) -> io::Result<usize> {
-        let mut n_total = 0;
         loop {
             // SAFETY: reading into a valid, writable buffer.
             let n = unsafe { libc::read(self.raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
             if n < 0 {
                 let e = io::Error::last_os_error();
                 return match e.kind() {
-                    io::ErrorKind::WouldBlock => Ok(n_total),
+                    io::ErrorKind::WouldBlock => Ok(0),
                     io::ErrorKind::Interrupted => continue,
                     _ => Err(e),
                 };
             }
             if n == 0 {
-                return Ok(n_total);
+                return Ok(0);
             }
-            n_total += parse(&buf[..n as usize], out);
+            return Ok(parse(&buf[..n as usize], out));
         }
     }
 }
@@ -166,6 +165,28 @@ mod tests {
         evs.clear();
         ino.read_available(&mut buf, &mut evs).unwrap();
         assert!(evs.iter().any(|e| e.mask & IN_IGNORED != 0));
+    }
+
+    #[test]
+    fn reads_are_bounded_and_remaining_events_are_preserved() {
+        let t = tempfile::tempdir().unwrap();
+        let ino = Inotify::new().unwrap();
+        ino.add_watch(t.path(), DIR_MASK).unwrap();
+        for i in 0..100 {
+            std::fs::write(t.path().join(format!("file-{i}")), b"x").unwrap();
+        }
+        let mut buf = [0u8; 512];
+        let mut total = 0;
+        loop {
+            let mut events = Vec::new();
+            let n = ino.read_available(&mut buf, &mut events).unwrap();
+            if n == 0 {
+                break;
+            }
+            assert!(n <= 512 / HDR, "one call must not drain an unbounded queue");
+            total += n;
+        }
+        assert_eq!(total, 200, "all create and close-write events survive batching");
     }
 
     #[test]

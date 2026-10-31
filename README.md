@@ -154,6 +154,11 @@ the journal: `journalctl --user -u ferroseek`.
 
 ## Limitations
 
+- Search retains a bounded candidate set after filtering; ranking is
+  approximate on very broad queries. Path-only queries (such as `src/`)
+  and selective path filters may scan many rows. Include a filename token
+  when possible to use the filename index.
+
 - Name and path search only, no file contents yet. Plain-text content
   search is the next milestone.
 - There is no Dolphin, KIO (`baloosearch:/`) or `Baloo::Query`

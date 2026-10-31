@@ -116,6 +116,9 @@ impl Indexer {
     /// Makes the stored roots equal to the configured ones (dropping
     /// removed roots with their subtrees) and queues a reconcile pass.
     pub fn sync_roots(&mut self, mode: Mode) -> Result<()> {
+        // Opaque equality key, not a persisted format to parse. Changes to
+        // its representation safely cause an extra listing pass.
+        self.w.apply_policy(&format!("v1:{:?}:{:?}", self.st.rules, self.st.roots))?;
         let mut tx = self.w.transaction()?;
         for (id, path) in tx.roots()? {
             if !self.st.roots.contains(&path) {
@@ -441,6 +444,8 @@ impl State {
                     self.drop_children(tx, cid)?;
                 } else if depth < self.rules.max_depth {
                     self.work.push((cid, mode));
+                } else {
+                    self.drop_children(tx, cid)?;
                 }
             }
         }
@@ -455,6 +460,15 @@ impl State {
     /// The state-based primitive: make `(dir, name)` match the filesystem.
     fn resolve(&mut self, tx: &mut Txn<'_>, dir: Id, name: &[u8], tries: u8) -> Result<()> {
         let Some(dpath) = tx.path(dir)? else { return Ok(()) };
+        if self.rules.respect_cachedir_tag {
+            if has_cachedir_tag(&dpath) {
+                self.drop_children(tx, dir)?;
+                return Ok(());
+            }
+            if name == b"CACHEDIR.TAG" {
+                self.work.push((dir, Mode::Full));
+            }
+        }
         let existing = tx.child(dir, name)?;
         if self.rules.excluded(&dpath, name) {
             if let Some(c) = existing {

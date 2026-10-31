@@ -156,3 +156,18 @@ fn index_once_without_daemon() {
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(fs::metadata(&paths.data_dir).unwrap().permissions().mode() & 0o777, 0o700);
 }
+
+#[test]
+fn changed_exclusions_apply_on_restart_without_filesystem_changes() {
+    let (_t, root, paths, mut cfg) = setup();
+    write(&root.join("private/secret-note.txt"));
+    index_once(&cfg, &paths, false, false).unwrap();
+    assert_eq!(hits(&paths, "secret-note"), 1);
+    cfg.exclude_names.push("private".into());
+    index_once(&cfg, &paths, false, false).unwrap();
+    assert_eq!(hits(&paths, "secret-note"), 0);
+    cfg.exclude_names.pop();
+    let e = Engine::start(&cfg, &paths).unwrap();
+    eventually("newly included directory indexed", || hits(&paths, "secret-note") == 1);
+    e.shutdown();
+}
