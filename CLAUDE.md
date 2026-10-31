@@ -184,8 +184,10 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   Agent edits require a displayed plan, explicit roots and a separate yes.
 - Ownership is hash-based. Never adopt conflicting legacy/modified files by
   name alone. Journal recovery refuses externally changed destinations.
-- D-Bus argv has two escaping layers; systemd Exec uses env to handle special
-  executable paths and ':' to disable dollar expansion. Keep real private-bus
+- D-Bus argv has two escaping layers. Both activation paths use fixed shell
+  code with the executable as a positional argument, never interpolated code
+  (env alone mistakes '=' in a command path for an assignment). systemd uses
+  ':' to disable dollar expansion. Keep real private-bus
   activation and systemd-analyze checks in tests/install-smoke.py.
 - tests/package-smoke.py checks every component archive without Cargo/network.
   No release is published; signed artifacts/libc baseline remain future work.

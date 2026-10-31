@@ -3,7 +3,9 @@
 FerroSeek currently supports Linux. Install as your normal user, without sudo.
 Python 3.11+ is required by the installer; source builds also need Rust 1.89+,
 a C compiler/linker and Cargo. SQLite is bundled. `/usr/bin/env` is used for
-safe activation of executables in paths containing special characters.
+setting activation environment variables. A fixed `/bin/sh` exec command
+receives the executable path as a separate argument, never as shell code. This
+also supports `=` in paths, which `env` alone treats as an assignment.
 No downloads or remote scripts are executed by the installer.
 
 ## Select components
@@ -90,6 +92,11 @@ private (0700) under `$XDG_STATE_HOME/ferroseek/installer`, falling back to
 `$HOME/.local/state/ferroseek/installer`. Spaces, Unicode, quotes, backslashes,
 dollar/percent signs and other printable path characters are supported.
 Control characters and symlink destinations/ancestors are refused before writes.
+D-Bus/systemd service search paths cannot reliably represent colons: choose
+XDG_DATA_HOME and XDG_CONFIG_HOME without `:`. A colon in the binary/HOME path
+is supported when those registration roots are explicitly set elsewhere.
+Unsupported registration paths are rejected before writes, not silently installed
+with broken activation.
 Do not change HOME/XDG roots between installing and uninstalling.
 
 An ownership manifest records installed file hashes. Upgrades replace only

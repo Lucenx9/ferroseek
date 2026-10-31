@@ -47,6 +47,8 @@ def paths():
         return value if value.is_absolute() else home / fallback
     data = xdg('XDG_DATA_HOME', '.local/share')
     config = xdg('XDG_CONFIG_HOME', '.config')
+    if ':' in str(data) or ':' in str(config):
+        raise InstallError('D-Bus/systemd registration paths cannot contain colons; choose XDG_DATA_HOME and XDG_CONFIG_HOME without colons')
     state = xdg('XDG_STATE_HOME', '.local/state') / 'ferroseek/installer'
     codex = Path(os.environ.get('CODEX_HOME') or home / '.codex') / 'config.toml'
     claude = Path(os.environ['CLAUDE_CONFIG_DIR']) / '.claude.json' if os.environ.get('CLAUDE_CONFIG_DIR') else home / '.claude.json'
@@ -78,15 +80,17 @@ def systemd_quote(value):
 
 
 def render(targets, home, data, config, manager, version):
-    # systemd restricts characters in the executable itself. env execs the
-    # quoted path as an argument; ':' disables dollar expansion, not specifiers.
-    executable = systemd_quote(str(targets['daemon']))
-    unit = (ROOT / 'data/ferroseek.service').read_text().replace('ExecStart=@BINDIR@/ferroseekd', 'ExecStart=:/usr/bin/env -- ' + executable)
+    # Fixed shell code, with the path in argv rather than interpolated into it.
+    # systemd restricts executable characters; env would treat '=' in a command
+    # path as an assignment. sh execs the positional argument without either issue.
+    launch = ['/bin/sh', '-c', 'exec "$0"', str(targets['daemon'])]
+    unit_exec = 'ExecStart=:' + ' '.join(systemd_quote(arg) for arg in launch)
+    unit = (ROOT / 'data/ferroseek.service').read_text().replace('ExecStart=@BINDIR@/ferroseekd', unit_exec)
     environment = '\n'.join('Environment=' + systemd_quote(f'{k}={v}') for k, v in
                             [('HOME', home), ('XDG_DATA_HOME', data), ('XDG_CONFIG_HOME', config)])
     unit = unit.replace('[Service]', '[Service]\n' + environment)
     # D-Bus desktop files unescape backslashes, then parse a shell-style argv.
-    argv = ['/usr/bin/env', f'HOME={home}', f'XDG_DATA_HOME={data}', f'XDG_CONFIG_HOME={config}', str(targets['daemon'])]
+    argv = ['/usr/bin/env', f'HOME={home}', f'XDG_DATA_HOME={data}', f'XDG_CONFIG_HOME={config}', *launch]
     bus_exec = shlex.join(argv).replace('\\', '\\\\')
     bus = '[D-BUS Service]\nName=io.github.ferroseek.FerroSeek\nExec=' + bus_exec + '\n'
     if manager:

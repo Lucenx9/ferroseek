@@ -53,7 +53,7 @@ this is an intentional ownership-safety limit, documented in INSTALLATION.md.
   write failure, mode rollback, abrupt-process recovery and external conflicts.
 - Actual private D-Bus activation and `systemd-analyze --user verify` passed
   with spaces, Unicode, quotes, backslash, dollar, percent and shell punctuation
-  in HOME. Actual user-systemd start/stop was not exercised: the running desktop
+  and equals/colon/hash characters in HOME. Actual user-systemd start/stop was not exercised: the running desktop
   service and soak test were intentionally preserved.
 - The installed Claude Code and Codex CLIs successfully read generated entries
   in temporary user configurations (`FERROSEEK_TEST_AGENT_PARSERS=1`). This
@@ -72,3 +72,14 @@ Installer tests never install into the real HOME. The desktop daemon retained
 its original PID/start time and the 72-hour soak timer remained active. No
 release or archive upload was performed. Remaining binary-publication work is
 listed in [INSTALLATION.md](INSTALLATION.md#local-distribution-archives-no-release-published).
+
+A final boundary check reproduced `env` interpreting a command pathname with
+`=` as an environment assignment. Both activation paths now use the fixed
+`exec "$0"` shell fragment with the executable supplied as a positional
+argument; user paths are never interpolated into shell code. The real
+private-bus fixture and archive-install fixtures now include `=` in HOME.
+
+The expanded fixture also exposed colon-delimited service discovery: a colon
+in XDG registration roots prevents D-Bus from finding service files. Such
+registration roots are now refused before writing. A colon in the executable
+path is tested successfully with separate, colon-free XDG data/config roots.

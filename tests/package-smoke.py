@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert (payload / 'bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         for name, expected in metadata['sha256'].items():
             assert hashlib.sha256((payload / name).read_bytes()).hexdigest() == expected
-        home = root / ('home ' + component + ' é $%'); home.mkdir()
+        home = root / ('home=' + component + ' é $%'); home.mkdir()
         isolated = dict(env, HOME=str(home), XDG_CONFIG_HOME=str(home / '.config'),
                         XDG_DATA_HOME=str(home / '.local/share'), XDG_STATE_HOME=str(home / '.local/state'),
                         CODEX_HOME=str(home / '.codex'), CLAUDE_CONFIG_DIR=str(home / '.claude'))

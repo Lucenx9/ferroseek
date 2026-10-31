@@ -139,16 +139,23 @@ exit 0
     assert p.read_text() == 'local override'
 
     # All printable filename characters are handled, not interpolated into a shell.
-    special = environment('home with spazio é & % $ " \' \\ ` ;')
+    special = environment('home=with:hash# spazio é & % $ " \' \\ ` ;')
+    # Service search paths use colon delimiters; keep those XDG roots separate
+    # while still exercising a colon in the executable path itself.
+    special.update(XDG_DATA_HOME=str(root / 'special-data'), XDG_CONFIG_HOME=str(root / 'special-config'),
+                   FERROSEEK_CONFIG=str(root / 'special-config/ferroseek/config.toml'),
+                   FERROSEEK_DATA_DIR=str(root / 'special-data/ferroseek'))
     run('--full', custom=special)
-    unit = Path(special['HOME']) / '.config/systemd/user/ferroseek.service'
-    r = subprocess.run(['systemd-analyze', '--user', 'verify', str(unit)], env=special, capture_output=True, text=True)
+    unit = Path(special['XDG_CONFIG_HOME']) / 'systemd/user/ferroseek.service'
+    # systemd-analyze treats ':' in its UNIT argument as an alias separator.
+    # Verify identical unit bytes from an unambiguous temporary argument path.
+    verify_dir = root / 'unit-verify'; verify_dir.mkdir()
+    verify_unit = verify_dir / 'ferroseek.service'; verify_unit.write_bytes(unit.read_bytes())
+    r = subprocess.run(['systemd-analyze', '--user', 'verify', str(verify_unit)], env=special, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     # Exercise the actual D-Bus argv parser with those same special characters.
     # No systemd manager is contacted: stub detection says unavailable.
-    private = dict(special, TEST_MANAGER='no', TEST_BUS='no',
-                   XDG_DATA_HOME=str(Path(special['HOME']) / '.local/share'),
-                   XDG_CONFIG_HOME=str(Path(special['HOME']) / '.config'))
+    private = dict(special, TEST_MANAGER='no', TEST_BUS='no')
     run('--core', '--config', str(cfg), custom=private)
     bus = subprocess.Popen(['/usr/bin/dbus-daemon', '--session', '--nofork', '--print-address=1'],
                            env=private, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -180,6 +187,10 @@ exit 0
     bad = environment('control\npath')
     run('--core', custom=bad, expected=1)
     assert not list(Path(bad['HOME']).iterdir())
+    colon = environment('colon:registration')
+    refusal = run('--core', custom=colon, expected=1)
+    assert 'registration paths cannot contain colons' in refusal.stderr
+    assert not list(Path(colon['HOME']).iterdir())
 
     # Headless/no manager: core works, enabling fails, incompatible KDE is refused.
     headless = dict(environment('headless'), XDG_CURRENT_DESKTOP='GNOME', TEST_MANAGER='no', TEST_BUS='no')
