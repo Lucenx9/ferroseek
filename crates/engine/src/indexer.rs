@@ -126,7 +126,8 @@ impl Indexer {
     pub fn sync_roots(&mut self, mode: Mode) -> Result<()> {
         // Opaque equality key, not a persisted format to parse. Changes to
         // its representation safely cause an extra listing pass.
-        self.w.apply_policy(&format!("v1:{:?}:{:?}", self.st.rules, self.st.roots))?;
+        // v2 also invalidates cached listings pruned by older cache-tag handling.
+        self.w.apply_policy(&format!("v2:{:?}:{:?}", self.st.rules, self.st.roots))?;
         let mut tx = self.w.transaction()?;
         for (id, path) in tx.roots()? {
             if !self.st.roots.contains(&path) {
@@ -415,7 +416,8 @@ impl State {
         let cur = Meta::from_metadata(&md);
         if self.rules.respect_cachedir_tag && has_cachedir_tag(&path) {
             self.drop_children(tx, id)?;
-            tx.mark_dir_reconciled(id, cur.mtime_ns, cur.ino)?;
+            // Tag contents can change without changing the directory mtime.
+            tx.mark_dir_reconciled(id, 0, cur.ino)?;
             return Ok(());
         }
         if mode == Mode::Quick && stored.mtime_ns != 0 && stored.mtime_ns == cur.mtime_ns && stored.ino == cur.ino {
@@ -518,6 +520,9 @@ impl State {
         if self.rules.respect_cachedir_tag {
             if has_cachedir_tag(&dpath) {
                 self.drop_children(tx, dir)?;
+                if let Some(meta) = tx.meta(dir)? {
+                    tx.mark_dir_reconciled(dir, 0, meta.ino)?;
+                }
                 return Ok(());
             }
             if name == b"CACHEDIR.TAG" {

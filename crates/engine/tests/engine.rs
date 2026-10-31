@@ -180,3 +180,48 @@ fn changed_exclusions_apply_on_restart_without_filesystem_changes() {
     eventually("newly included directory indexed", || hits(&paths, "secret-note") == 1);
     e.shutdown();
 }
+
+#[test]
+fn invalidated_cache_tag_is_rechecked_on_quick_restart() {
+    for relative in ["", "cache"] {
+        let (_t, root, paths, cfg) = setup();
+        let cached = root.join(relative);
+        write(&cached.join("report.txt"));
+        let tag = cached.join("CACHEDIR.TAG");
+        fs::write(&tag, b"Signature: 8a477f597d28d172789f06886806bc55").unwrap();
+
+        index_once(&cfg, &paths, false, false).unwrap();
+        assert_eq!(hits(&paths, "report"), 0, "valid cache tags exclude their contents");
+        index_once(&cfg, &paths, false, false).unwrap();
+        assert_eq!(hits(&paths, "report"), 0, "unchanged tags remain excluded after restart");
+
+        let directory_mtime = fs::metadata(&cached).unwrap().modified().unwrap();
+        fs::write(&tag, b"not a cache directory tag").unwrap();
+        assert_eq!(fs::metadata(&cached).unwrap().modified().unwrap(), directory_mtime);
+
+        index_once(&cfg, &paths, false, false).unwrap();
+        assert_eq!(hits(&paths, "report"), 1, "invalidated tags must reveal contents on quick restart: {relative:?}");
+    }
+}
+
+#[test]
+fn cache_tag_activated_by_events_is_rechecked_on_quick_restart() {
+    let (_t, root, paths, cfg) = setup();
+    let cached = root.join("cache");
+    write(&cached.join("report.txt"));
+    let tag = cached.join("CACHEDIR.TAG");
+    fs::write(&tag, b"not a cache directory tag").unwrap();
+    let engine = Engine::start(&cfg, &paths).unwrap();
+    assert!(engine.wait_idle(Duration::from_secs(10)));
+    assert_eq!(hits(&paths, "report"), 1);
+
+    let directory_mtime = fs::metadata(&cached).unwrap().modified().unwrap();
+    fs::write(&tag, b"Signature: 8a477f597d28d172789f06886806bc55").unwrap();
+    eventually("cache tag activation removes contents", || hits(&paths, "report") == 0);
+    engine.shutdown();
+
+    fs::write(&tag, b"not a cache directory tag").unwrap();
+    assert_eq!(fs::metadata(&cached).unwrap().modified().unwrap(), directory_mtime);
+    index_once(&cfg, &paths, false, false).unwrap();
+    assert_eq!(hits(&paths, "report"), 1, "event-driven pruning must not cache an empty listing across restarts");
+}

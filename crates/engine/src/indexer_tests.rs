@@ -126,6 +126,28 @@ fn symlinks_are_not_followed_and_loops_are_harmless() {
 }
 
 #[test]
+fn legacy_cached_listings_are_invalidated_on_upgrade() {
+    let mut f = fx();
+    touch(&f.p("cache/report.txt"));
+    let tag = f.p("cache/CACHEDIR.TAG");
+    fs::write(&tag, b"Signature: 8a477f597d28d172789f06886806bc55").unwrap();
+    f.scan(Mode::Quick);
+
+    // Older engines marked tagged directories reconciled despite skipping their listing.
+    let legacy_policy = format!("v1:{:?}:{:?}", f.ix.st.rules, f.ix.st.roots);
+    f.ix.w.apply_policy(&legacy_policy).unwrap();
+    let meta = ferroseek_index::Meta::from_metadata(&fs::metadata(f.p("cache")).unwrap());
+    let mut tx = f.ix.w.transaction().unwrap();
+    let id = tx.lookup(&f.root.join("cache")).unwrap().unwrap().0;
+    tx.mark_dir_reconciled(id, meta.mtime_ns, meta.ino).unwrap();
+    tx.commit().unwrap();
+
+    fs::write(&tag, b"not a cache directory tag").unwrap();
+    f.scan(Mode::Quick);
+    assert!(f.indexed("cache/report.txt"), "upgrades must recover listings cached by older engines");
+}
+
+#[test]
 fn create_modify_delete_via_events() {
     let mut f = fx();
     f.scan(Mode::Quick);
@@ -386,8 +408,9 @@ fn offline_changes_quick_vs_full_reconcile() {
         ix.into_writer().close().unwrap();
     }
     // Daemon "down": names change in a/, content changes in b/.
+    let before = fs::metadata(root.join("a")).unwrap().modified().unwrap();
     touch(&root.join("a/offline-new.txt"));
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::File::open(root.join("a")).unwrap().set_modified(before + std::time::Duration::from_secs(1)).unwrap();
     fs::write(root.join("b/other.txt"), b"changed while offline").unwrap();
 
     let mut ix = make_ix(&db, &root, &cfg, false);
