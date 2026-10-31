@@ -1,262 +1,123 @@
 # FerroSeek
 
-A lightweight, real-time **file name search engine for Linux**, written in
-Rust, with a **native KRunner integration** for KDE Plasma 6.
+**Lightweight, real-time filename and path search for Linux.** FerroSeek is a Rust-powered, desktop-independent search engine that maintains a local index and exposes it through a CLI, an optional KDE Plasma KRunner integration, and an optional MCP server for AI agents.
 
-FerroSeek keeps an index of the files and folders under the directories you
-choose and updates it live through inotify. You can search it from KRunner
-(Alt+Space) or from the `ferroseek` command line. It is an independent
-daemon: it does not replace, modify or depend on KDE Baloo.
+> **Status: 0.1 MVP (development).** Filename/path search, live indexing, CLI, KRunner and MCP work. There is **no published binary release yet**. File-content search, GNOME/Rofi integrations and full Baloo API compatibility are not implemented.
 
-> **Status: MVP (0.1).** File and folder *name* search, live updates,
-> KRunner and the CLI work, and are tested and benchmarked
-> (`docs/BENCHMARKS.md`). Content search, Dolphin integration and Baloo API
-> compatibility are **not** implemented yet (see `docs/ROADMAP.md`).
+## Features
 
-## Why
+- **Find files and directories by name or path**, with case-insensitive substring matching and ranked results.
+- **Keep an index up to date** using inotify, incremental reconciliation and crash recovery.
+- **Low background overhead** through bounded queues, throttled scans and cache release while idle.
+- **One shared SQLite FTS5 index** used by the CLI, KRunner and read-only MCP server.
+- **Desktop-independent core**: one-shot indexing and search work on headless Linux without KDE, root privileges or telemetry.
 
-Baloo, KDE's indexer, is a capable full-text and metadata indexer. Its
-filename search has some structural costs, documented with source citations
-in `docs/RESEARCH.md`:
-- It matches word prefixes only (bug 333037).
-- Its document IDs derive from the device and inode, which breaks on Btrfs
-  ID changes (bug 525145).
-- An inotify overflow is ignored (bug 437754).
-- Posting lists are rewritten on every commit (bug 442453).
+FerroSeek stores filenames, paths and basic filesystem metadata (type, size, modification time). **It does not search file contents**; `rg` remains useful for content/regex searches.
 
-FerroSeek targets the narrower filename/path use case with a different
-design:
+## Quick start
 
-- **Substring matching**, case-insensitive and Unicode-aware, using a SQLite
-  FTS5 trigram index. It ranks exact name > stem > prefix > word boundary >
-  inner match, then adjusts for depth and recency.
-- **Path-based identity.** Entries are keyed by (parent, name), not by inode
-  or device. Renaming a directory updates one row, whatever its size.
-- **Low idle resource use.** In the latest 1M-file run, idle RSS after
-  restart was 10.1 MiB; a 30-second idle window recorded no CPU time or
-  context switches. Mixed KRunner queries measured 2.48 / 24.80 / 27.48 ms
-  p50 / p95 / p99. Five paired runs reduced a selective path-only query
-  from 530 ms to 2.03 ms without adding a persistent index. See
-  [measurements and limits](docs/BENCHMARKS.md#9-path-optimization-2026-10-31).
-- **Recovery from missed events.** After inotify overflow, pending-event overflow or dropped events during
-  pause, it performs a full reconciliation, including file metadata. Startup
-  and periodic reconciliation normally use a quick directory-mtime pass.
-- **Crash-safe.** It uses SQLite WAL. A corrupt or incompatible index is
-  moved aside and rebuilt automatically. Recovery after `SIGKILL` was
-  measured to be complete.
-
-No benchmark against Baloo has been run yet. See
-[docs/BENCHMARKS.md §6](docs/BENCHMARKS.md) for the protocol and the reasons
-the two are not directly comparable. **This project does not claim to be
-faster than Baloo.**
-
-## Build
-
-You need Rust 1.89 or newer. SQLite is compiled in (bundled), so there are
-no system library requirements beyond libc.
+Clone the source repository and use the user-scoped installer:
 
 ```sh
-cargo build --release --locked -p ferroseek-daemon -p ferroseek-cli
+git clone https://github.com/Lucenx9/ferroseek.git
+cd ferroseek
+./scripts/install.sh               # guided installation and recommendations
 ```
 
-This builds the core daemon and CLI. `cargo build --release --workspace` also
-builds the optional MCP executable and benchmark tool.
+The source installer needs **Python 3.11+** and **Rust 1.89+** with Cargo and a C linker. It runs without sudo and does not download remote scripts. Prebuilt local archive packaging exists, but release binaries have not been published.
 
-## Install (per user, no root)
-
-Python 3.11+ is required for installation. From a source checkout:
+For scripted or selective installation:
 
 ```sh
-./scripts/install.sh                # detect environment and recommend components
-./scripts/install.sh --core         # daemon + CLI, including headless Linux
-./scripts/install.sh --krunner      # core + KDE Plasma integration
-./scripts/install.sh --mcp          # core + optional MCP executable
-./scripts/install.sh --full         # all components compatible with this desktop
-./scripts/install.sh --dry-run      # preview; no writes or builds
+./scripts/install.sh --core        # daemon + CLI, including headless Linux
+./scripts/install.sh --krunner     # core + KDE Plasma integration
+./scripts/install.sh --mcp         # core + optional MCP executable
+./scripts/install.sh --full        # all implemented, compatible components
+./scripts/install.sh --dry-run     # inspect planned changes without writing
 ```
 
-Flags combine: `--krunner --mcp`. KRunner is recommended only on KDE;
-GNOME/Hyprland users get core, CLI and optional MCP, without a graphical
-integration claim. Binaries install under `$HOME/.local/bin`; absolute XDG
-data/config locations are honored. No sudo or AUR package is needed.
-
-Installation preserves configuration/indexes, refuses unrelated-file conflicts,
-and journals file changes for rollback. It never automatically restarts an
-active daemon, KRunner, or changes KDE/Baloo settings. Choose roots with
-`ferroseek config` before starting if you do not want the engine's default
-home-directory indexing. `--enable` explicitly opts into starting the user
-service; KRunner can otherwise activate it on demand.
-
-MCP registration is separate and asks for confirmation:
+Flags may be combined. Installation preserves existing indexes and configurations, does not enable indexing automatically, and does not restart an existing service. Review your indexing roots before starting; the engine defaults to your home with exclusions. To start indexing explicitly on systems with a user systemd manager and session bus:
 
 ```sh
+./scripts/install.sh --core --enable
+ferroseek status
+```
+
+For headless use, `ferroseek index` and `ferroseek search` work without a running daemon. See the [installation guide](docs/INSTALLATION.md) for XDG paths, upgrades, archive verification, rollback and uninstall.
+
+## Ways to search
+
+| Interface | Functionality | Status |
+|---|---|---|
+| **CLI** (`ferroseek`) | Search, index, status and maintenance commands | Core, available |
+| **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
+| **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
+| **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Planned, **not available yet** |
+
+### Command line
+
+```sh
+ferroseek index                       # reconcile an index without a daemon
+ferroseek search report               # find names containing "report"
+ferroseek search --in ~/Documents cv  # restrict search to a directory
+ferroseek search src/ main.rs          # path fragment and filename
+ferroseek search -n 50 --long report  # metadata and ranking
+ferroseek status                      # daemon and index statistics
+ferroseek config --default            # show default configuration
+```
+
+The engine config is at `$XDG_CONFIG_HOME/ferroseek/config.toml` (normally `~/.config/ferroseek/config.toml`); index data is at `$XDG_DATA_HOME/ferroseek`. Roots, exclusions, scan limits and reconciliation intervals are configurable. See [installation](docs/INSTALLATION.md).
+
+### KDE Plasma
+
+Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. Results can open a file or show its containing directory. This adapter does not replace KRunner or modify KDE/Baloo configuration. If the existing KDE file-search runner also returns matches, you can disable that runner manually in **System Settings → Search → Plasma Search**.
+
+### AI agents (optional MCP)
+
+The separate `ferroseek-mcp` program uses local stdio, reads the existing index and exits when its client disconnects. It exposes three read-only tools: `search_files`, `get_file_info`, and `index_status`. No second indexer is started.
+
+Installing MCP does **not** grant file access or register an agent without consent:
+
+```sh
+# Authorize one project for Claude Code
 ./scripts/install.sh --mcp --register-claude --allow "$HOME/Projects/example"
-./scripts/install.sh --mcp --register-codex --allow "$HOME/Projects/example"
+
+# Explicitly authorize discovery across all already indexed roots for Codex
+./scripts/install.sh --mcp --register-codex --mcp-access all_indexed
 ```
 
-For cross-project discovery, add `--mcp-access all_indexed` instead of `--allow`;
-typed confirmation is required. `restricted` remains the default. No indexing
-roots are expanded and no directory is authorized automatically. Agent
-configuration and MCP policy are otherwise left alone. To uninstall, use `./scripts/uninstall.sh`; active
-services require explicit `--stop`. Config, indexes and agent entries are
-retained. Partial removal supports `--mcp` and `--krunner`.
+Access modes are `restricted` (**default, no access without allowlists**), `home` and `all_indexed`. Global registration requires typed confirmation. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
 
-See the [installation guide](docs/INSTALLATION.md) for migration of legacy
-installations, special paths, rollback, registration, archive verification and
-remaining packaging work. No binary release is published yet.
+Read the [MCP guide](docs/MCP.md) for configuration and security.
 
-## Usage
+## Measured performance and limitations
 
-```sh
-ferroseek status                     # daemon state, counts, index size
-ferroseek search invoice 2024        # all words must match (substring, any case)
-ferroseek search -n 50 --long report # kind, size, mtime, score
-ferroseek search --in ~/Documents cv # restrict to a directory
-ferroseek search src/ main.rs        # words containing '/' match the full path
-ferroseek search -0 .pdf | xargs -0 ls -l
-ferroseek pause | resume             # stop/restart indexing (queries keep working)
-ferroseek index [--full]             # reconcile now (foreground if no daemon)
-ferroseek rebuild                    # drop and rebuild the index
-ferroseek config [--default]         # effective configuration and file locations
-```
+On one Ryzen 7 5800X, NVMe and Btrfs machine, an index containing approximately **953,595 files** measured **10.1 MiB idle daemon RSS after restart**. A selective million-file path-query fixture improved from approximately **530 ms to 2.03 ms** in paired measurements. These numbers apply to the described workload; they are **not** universal memory, latency or throughput guarantees. See the [benchmark methodology and raw evidence](docs/BENCHMARKS.md).
 
-Searching reads the index directly, so it also works while the daemon is
-stopped. Queries of one or two characters match name prefixes; longer
-queries match substrings.
+The current engine does not implement file-content indexing, advanced tags, KIO/Baloo APIs, or a Dolphin search provider. Broad queries can have approximate rankings and longer latency tails. inotify typically requires a watch per directory, and some mounts are excluded by default.
 
-### KRunner
+**No controlled equivalent-feature comparison with Baloo has been run.** FerroSeek does not claim to be faster than, or a complete replacement for, Baloo. See [comparison context](docs/COMPARISONS.md) and [historical Baloo source research](docs/RESEARCH.md).
 
-Type at least two characters. Results appear grouped by category: Folders,
-Documents, Images, Audio, Videos, Archives, Files.
+## Documentation
 
-- **Enter** opens the file with its default application. FerroSeek runs
-  `xdg-open` in its own transient systemd scope, with no shell involved.
-- **Open Containing Folder** shows the file selected in your file manager.
-- Drag and drop works, because results carry `file://` URLs.
-
-**Avoiding duplicate results with Baloo.** If Baloo's own "File Search"
-runner is enabled, both runners return files. They de-duplicate matches with
-the same URL, but you may prefer to disable one of them. FerroSeek never
-changes this for you. To do it yourself:
-
-- **System Settings → Search → Plasma Search**: untick **File Search**.
-  KRunner's other plugins (apps, calculator, windows…) are unaffected.
-- Or from a terminal: `kwriteconfig6 --file krunnerrc --group Plugins --key baloosearchEnabled false`.
-
-Disabling the runner does not disable Baloo's indexer. That is a separate
-choice, made in **System Settings → Search → File Search**.
-
-## Configuration
-
-`~/.config/ferroseek/config.toml` (all keys optional; `ferroseek config
---default` prints the defaults):
-
-```toml
-roots = ["~"]                 # directories to index
-index_hidden = false          # dotfiles and dot-directories
-exclude_names = [".git", "node_modules", "*.o", "*~", …]   # name globs (* ?)
-exclude_paths = ["~/VMs"]     # absolute subtrees to skip
-respect_cachedir_tag = true   # skip dirs with a CACHEDIR.TAG (e.g. Cargo target/)
-stay_on_filesystem = true     # don't descend into other mounts below a root
-max_depth = 64
-max_cpu_percent = 50          # scan duty cycle (indexing thread is also nice 19 + idle I/O)
-low_priority = true
-debounce_ms = 200             # event coalescing window
-reconcile_interval_minutes = 360
-```
-
-Unknown keys are rejected so that typos don't go unnoticed. Restart the
-daemon after editing (`systemctl --user restart ferroseek`).
-
-The index lives in `~/.local/share/ferroseek/index.sqlite`; the directory
-is mode 0700 and the file 0600. `FERROSEEK_CONFIG`, `FERROSEEK_DATA_DIR` and
-`FERROSEEK_LOG` (error/warn/info/debug) override the defaults. Logs go to
-the journal: `journalctl --user -u ferroseek`.
-
-## Limitations
-
-- Search retains a bounded candidate set after filtering; ranking is
-  approximate on very broad queries. Selective paths use existing directory
-  indexes; broad anchors and components shorter than three characters may
-  still scan many rows. Mixed-query p95 remains above the 10 ms target.
-
-- Name and path search only, no file contents yet. Plain-text content
-  search is the next milestone.
-- There is no Dolphin, KIO (`baloosearch:/`) or `Baloo::Query`
-  compatibility, and no tags, ratings or metadata.
-- `inotify` needs one watch per directory. If `fs.inotify.max_user_watches`
-  runs out, `ferroseek status` reports `watch_limit_hit: true` and the
-  unwatched directories are refreshed only by periodic reconciliation.
-- A quick reconcile after downtime detects new, deleted and renamed entries.
-  Size and mtime changes of existing files inside unchanged directories are
-  picked up live, or by `ferroseek index --full`.
-- Network, FUSE and removable filesystems below a root are not descended
-  into by default.
-- Memory scales with directory/watch count and the width of directories
-  reconciled; the measured RSS is not a universal memory bound.
-- The installer rejects HOME paths containing characters other than ASCII
-  letters, digits, underscore, dot, slash and hyphen.
-- Benchmarks include repeated synthetic datasets and a real `/usr/include`
-  oracle. Warm-cache and advisory-eviction measurements are distinguished;
-  full cold-machine behavior and non-glibc targets remain unverified. See
-  [release readiness](docs/RELEASE_READINESS.md).
-
-## Agents (optional MCP server)
-
-`ferroseek-mcp` is a separate, opt-in binary. It lets MCP clients such as
-Claude Code and Codex search the existing index through three read-only
-tools: `search_files`, `get_file_info` and `index_status`.
-
-- It uses stdio only, starts no indexer and opens the database read-only.
-- Agents see nothing unless you allow specific directories. Dotfiles and
-  secret-looking names stay hidden.
-- It runs only while an agent uses it.
-
-```sh
-cargo build --release -p ferroseek-mcp && install -Dm755 target/release/ferroseek-mcp ~/.local/bin/
-claude mcp add --scope user ferroseek -- ~/.local/bin/ferroseek-mcp --allow ~/Progetti
-codex mcp add ferroseek -- ~/.local/bin/ferroseek-mcp --allow ~/Progetti
-```
-
-See [docs/MCP.md](docs/MCP.md) for the access policy, configuration,
-verification and measured performance. At 1M files, a search has a 3.2 ms
-p50, and an idle server uses 0 % CPU and about 11 MiB RSS.
+| Document | Purpose |
+|---|---|
+| [Installation](docs/INSTALLATION.md) | Components, setup, upgrade, rollback and archive details |
+| [MCP](docs/MCP.md) | Agent tools, access modes and configuration |
+| [Architecture](docs/ARCHITECTURE.md) | Core, index, watcher and optional adapters |
+| [Benchmarks](docs/BENCHMARKS.md) | Reproducible performance results and caveats |
+| [Comparisons](docs/COMPARISONS.md) | Where FerroSeek, Baloo, fd, rg and plocate fit |
+| [Roadmap](docs/ROADMAP.md) | Implemented and planned capabilities |
+| [Baloo research](docs/RESEARCH.md) | Original source analysis and references |
+| [MCP discovery](docs/MCP_DISCOVERY.md) | Real-client tool-selection evaluation |
 
 ## Development
 
-See `CLAUDE.md` for the repository map and conventions, and
-`docs/ARCHITECTURE.md` for the design and data flow.
-
 ```sh
-cargo build --release --workspace                       # includes benchmark binary
-cargo test --workspace                                  # isolated unit/integration tests
-tests/dbus-smoke.sh target/release/ferroseekd           # daemon on a private D-Bus session
-tests/mcp-smoke.py                                      # MCP server over stdio, temp index
-target/release/ferroseek-bench --files 100000 --work /tmp/fsb   # benchmarks
+cargo build --release --locked --workspace
+cargo test --workspace --locked
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-MCP filename-tool comparisons, freshness measurements, and known scoped-search
-limits are documented in the [validation report](docs/benchmarks/mcp-validation-2026-10-31/README.md).
-
-## Privacy and security
-
-- No network code, no telemetry.
-- The daemon runs unprivileged and never follows symlinks.
-- `Run` only opens paths that are present in the index.
-
-## License and attribution
-
-FerroSeek is licensed under **GPL-3.0-or-later** (see `LICENSE`). All
-dependencies use permissive licenses (MIT/Apache-2.0/BSD/Zlib), compatible
-with it.
-
-No KDE source code is included. The KRunner integration implements the
-`org.kde.krunner1` D-Bus interface as documented in KRunner's
-`kf6_org.kde.krunner1.xml` (LGPL-2.0-or-later, © David Edmundson, Kai Uwe
-Broulik, Alexander Lohnau), and the default exclusion list was written
-independently. Baloo (LGPL-2.1-or-later) was studied as a reference; all
-findings are cited in `docs/RESEARCH.md`.
-
-MCP tool selection and optional agent guidance are documented in
-[the discovery evaluation](docs/MCP_DISCOVERY.md). No global agent instructions
-are installed automatically.
+See [CLAUDE.md](CLAUDE.md) for repository conventions. FerroSeek is licensed under **GPL-3.0-or-later** ([LICENSE](LICENSE)). It includes no KDE source code; external KDE interfaces and Baloo research are credited in [the research notes](docs/RESEARCH.md). The current implementation has no telemetry or network indexing.
