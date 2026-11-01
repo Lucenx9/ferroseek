@@ -12,6 +12,10 @@ but have not been tested. The installer does not manage it yet.
 
 ## Build and run
 
+Building needs the libxkbcommon development files (`pkg-config xkbcommon`;
+`libxkbcommon-dev` on Debian/Ubuntu, `libxkbcommon` on Arch), which a
+dependency of the layer-shell backend probes at build time.
+
 ```sh
 cargo build --release -p ferroseek-launcher
 install -Dm755 target/release/ferroseek-launcher ~/.local/bin/ferroseek-launcher
@@ -93,7 +97,9 @@ ferroseek-launcher
   the query generation and outdated ones are dropped. A new query clears the
   previous file rows, and late results keep the selected row.
 - The whole stack is Rust (iced, iced_layershell, zbus, freedesktop-icons);
-  it links only the system Wayland client libraries. The `.desktop` parser
+  it builds no C code. It uses only system protocol libraries:
+  libwayland-client and libxkbcommon (the latter must be present at build
+  time for `smithay-client-toolkit`'s pkg-config probe). The `.desktop` parser
   is local because the common crate builds C code (gettext).
 - `iced_exdevtools` 0.19.1 does not build with `winit-core` beta.4, so
   `winit-core` is pinned to `=0.31.0-beta.2` in the crate manifest.

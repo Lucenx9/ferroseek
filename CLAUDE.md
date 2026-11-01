@@ -233,7 +233,9 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 
 - `ferroseek-launcher` stays pure Rust: no GTK/Qt or crates that build C
   (check `cargo tree -p ferroseek-launcher -e normal | grep -- -sys`). That
-  is why `.desktop` parsing is local. `winit-core` is pinned to beta.2 for
+  is why `.desktop` parsing is local. Building needs libxkbcommon headers
+  (sctk's pkg-config probe; CI installs `libxkbcommon-dev` in both jobs).
+  `winit-core` is pinned to beta.2 for
   `iced_exdevtools` 0.19.1; revisit when bumping iced_layershell.
 - It never opens the index: files come from the daemon's `Match`/`Run`
   (D-Bus activation), so `Run` keeps refusing non-indexed paths.

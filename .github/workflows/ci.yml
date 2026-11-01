@@ -17,8 +17,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install test dependencies (D-Bus for the smoke test)
-        run: sudo apt-get update && sudo apt-get install -y dbus libglib2.0-bin lua5.4
+      - name: Install test dependencies (D-Bus for the smoke test; xkbcommon for the launcher build)
+        run: sudo apt-get update && sudo apt-get install -y dbus libglib2.0-bin lua5.4 libxkbcommon-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
@@ -46,4 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.89.0
+      - name: Install build dependencies (xkbcommon for the launcher)
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
       - run: cargo check --workspace --all-targets --locked
