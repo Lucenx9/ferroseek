@@ -243,6 +243,25 @@ impl Cursor {
         }
     }
 
+    /// Selects the first row of the adjacent group, without wrapping.
+    pub fn move_section(&mut self, forward: bool, items: &[Item]) {
+        let Some(current) = items.get(self.selected) else {
+            self.reset();
+            return;
+        };
+        let next = if forward {
+            (self.selected + 1..items.len()).find(|&i| items[i].section != current.section)
+        } else {
+            (0..self.selected)
+                .rev()
+                .skip_while(|&i| items[i].section == current.section)
+                .find(|&i| i == 0 || items[i - 1].section != items[i].section)
+        };
+        if let Some(i) = next {
+            self.select(i, items.len());
+        }
+    }
+
     fn scroll_into_view(&mut self, len: usize) {
         if self.selected < self.first {
             self.first = self.selected;
@@ -262,6 +281,8 @@ impl Cursor {
 pub enum Command {
     Up,
     Down,
+    PreviousSection,
+    NextSection,
     PageUp,
     PageDown,
     First,
@@ -282,6 +303,8 @@ pub enum Command {
 pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
     let ctrl = mods.control();
     match key {
+        Key::Named(Named::ArrowUp) if ctrl => Some(Command::PreviousSection),
+        Key::Named(Named::ArrowDown) if ctrl => Some(Command::NextSection),
         Key::Named(Named::ArrowUp) => Some(Command::Up),
         Key::Named(Named::ArrowDown) => Some(Command::Down),
         Key::Named(Named::Tab) if mods.shift() => Some(Command::Up),
@@ -469,10 +492,45 @@ mod tests {
     }
 
     #[test]
+    fn section_navigation_skips_groups_and_keeps_the_target_visible() {
+        let a = apps();
+        let files: Vec<_> = (0..12).map(|i| file(&format!("f{i}.txt"), false)).collect();
+        let mut items: Vec<_> = calc_item("2+2").into_iter().collect();
+        items.extend(build_items(&a, &[(0, 900), (1, 800), (3, 450)], &files));
+        let mut c = Cursor::new(3);
+        for expected in [1, 3, 15, 15] {
+            c.move_section(true, &items);
+            assert_eq!(c.selected, expected);
+            assert!(c.window(items.len()).contains(&expected));
+        }
+        for expected in [3, 1, 0, 0] {
+            c.move_section(false, &items);
+            assert_eq!(c.selected, expected);
+            assert!(c.window(items.len()).contains(&expected));
+        }
+        c.select(8, items.len());
+        c.move_section(false, &items);
+        assert_eq!(c.selected, 1, "jump to the preceding group's first row from mid-group");
+        c.select(8, items.len());
+        c.move_section(true, &items);
+        assert_eq!(c.selected, 15);
+
+        let only_files = build_items(&a, &[], &files);
+        c.select(5, only_files.len());
+        c.move_section(false, &only_files);
+        c.move_section(true, &only_files);
+        assert_eq!(c.selected, 5, "a single group has no adjacent group");
+        c.move_section(true, &[]);
+        assert_eq!((c.selected, c.first), (0, 0));
+    }
+
+    #[test]
     fn key_map() {
         let none = Modifiers::empty();
         let k = |s: &str| Key::Character(s.into());
         assert_eq!(command_for(&Key::Named(Named::ArrowDown), none), Some(Command::Down));
+        assert_eq!(command_for(&Key::Named(Named::ArrowDown), Modifiers::CTRL), Some(Command::NextSection));
+        assert_eq!(command_for(&Key::Named(Named::ArrowUp), Modifiers::CTRL), Some(Command::PreviousSection));
         assert_eq!(command_for(&Key::Named(Named::Enter), none), Some(Command::Activate));
         assert_eq!(command_for(&Key::Named(Named::Enter), Modifiers::CTRL), Some(Command::Secondary));
         assert_eq!(command_for(&Key::Named(Named::Tab), Modifiers::SHIFT), Some(Command::Up));

@@ -420,6 +420,8 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     match cmd {
         Command::Up => s.cursor.move_by(-1, len),
         Command::Down => s.cursor.move_by(1, len),
+        Command::PreviousSection => s.cursor.move_section(false, &s.items),
+        Command::NextSection => s.cursor.move_section(true, &s.items),
         Command::PageUp => s.cursor.move_by(-page, len),
         Command::PageDown => s.cursor.move_by(page, len),
         Command::First => s.cursor.move_by(-(len as isize), len),

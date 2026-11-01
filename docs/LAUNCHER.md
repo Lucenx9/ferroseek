@@ -43,6 +43,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab, Ctrl+N/Ctrl+P | move the selection |
+| Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
 | Enter | launch the application, open the file, copy a calculator result |
 | Ctrl+Enter | show the file in its folder |
