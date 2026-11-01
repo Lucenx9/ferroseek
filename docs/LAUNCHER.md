@@ -47,9 +47,14 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
 | Enter | launch the application, open the file, copy a calculator result |
 | Ctrl+Enter | show the file in its folder |
-| Ctrl+K | action panel for the selected row |
+| Ctrl+K | open/close the searchable action panel for the selected row |
 | Ctrl+Shift+C | copy the file's path |
-| Esc | close the action panel, else clear the query, else close |
+| Esc | clear the action filter, close actions, clear the query, then close |
+
+Type in the action panel to filter its commands without changing the search
+query or selected result. Enter runs the highlighted matching action. File
+shortcuts remain available while filtering. After copying, the launcher stays
+open and returns focus to the main search field.
 
 ## Results
 
@@ -66,7 +71,10 @@ the engine and integrations. See [installation](INSTALLATION.md).
   shows its value; Enter copies it. A fixed grammar is evaluated in process;
   nothing is passed to a shell or interpreter.
 - **Empty query:** the most often opened applications and files that still
-  exist.
+  exist, followed by available applications to fill the suggestions. Removed
+  items do not use up a suggestion slot.
+- **No matches:** the query remains visible with a suggestion to refine it;
+  Esc clears the search.
 
 Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.

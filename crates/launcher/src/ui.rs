@@ -72,14 +72,30 @@ enum Status {
 }
 
 struct Panel {
+    title: String,
     actions: Vec<Action>,
+    query: String,
     selected: usize,
 }
 
 impl Panel {
+    fn new(item: &Item) -> Self {
+        Self { title: item.title.clone(), actions: model::actions_for(&item.target), query: String::new(), selected: 0 }
+    }
+
+    fn filtered_actions(&self) -> Vec<Action> {
+        let tokens: Vec<_> = self.query.split_whitespace().map(str::to_lowercase).collect();
+        self.actions.iter().copied().filter(|a| tokens.iter().all(|t| a.label().to_lowercase().contains(t))).collect()
+    }
+
+    fn filter(&mut self, query: String) {
+        self.query = query;
+        self.selected = 0;
+    }
+
     fn action_for_command(&self, cmd: Command) -> Option<Action> {
         match cmd {
-            Command::Activate => self.actions.get(self.selected).copied(),
+            Command::Activate => self.filtered_actions().get(self.selected).copied(),
             Command::Secondary => self.actions.contains(&Action::Reveal).then_some(Action::Reveal),
             Command::CopyPath => self.actions.contains(&Action::CopyPath).then_some(Action::CopyPath),
             _ => None,
@@ -112,6 +128,7 @@ pub struct Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     Query(String),
+    ActionQuery(String),
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
@@ -123,6 +140,10 @@ pub enum Message {
 
 fn search_id() -> Id {
     Id::new("search")
+}
+
+fn actions_id() -> Id {
+    Id::new("action-search")
 }
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
@@ -224,7 +245,7 @@ impl Launcher {
     fn rebuild(&mut self, keep_selection: bool) {
         let previous = keep_selection.then(|| self.selected().map(|i| i.target.clone())).flatten();
         self.items = if self.query.trim().is_empty() {
-            model::recent_items(&self.apps, &self.usage.recent(usage::now(), VISIBLE_ROWS))
+            model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), VISIBLE_ROWS)
         } else {
             let mut items: Vec<Item> = model::calc_item(&self.query).into_iter().collect();
             items.extend(model::build_items(&self.apps, &self.app_hits, &self.files));
@@ -256,8 +277,9 @@ impl Launcher {
 
     fn resize(&mut self) -> Task<Message> {
         // Not while searching: rows would collapse and reappear per key.
-        let compact =
-            self.items.is_empty() && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
+        let compact = self.query.trim().is_empty()
+            && self.items.is_empty()
+            && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
         }
@@ -308,7 +330,7 @@ impl Launcher {
     fn copy(&mut self, s: String, what: &str) -> Task<Message> {
         self.status = Status::Notice(format!("Copied {what}"));
         self.panel = None;
-        iced::clipboard::write(s)
+        Task::batch([iced::clipboard::write(s), widget::operation::focus(search_id())])
     }
 
     fn primary(&self) -> Option<Action> {
@@ -319,6 +341,9 @@ impl Launcher {
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     match message {
         Message::Query(q) => {
+            if s.panel.is_some() {
+                return widget::operation::focus(actions_id());
+            }
             s.query = q;
             s.generation += 1;
             let (usage, now) = (&s.usage, usage::now());
@@ -341,6 +366,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             };
             Task::batch([search, s.resize()])
         }
+        Message::ActionQuery(q) => {
+            if let Some(panel) = &mut s.panel {
+                panel.filter(q);
+            }
+            Task::none()
+        }
         Message::Files { generation, result } => {
             if generation != s.generation {
                 return Task::none(); // a newer query is in flight
@@ -359,8 +390,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                     s.status = Status::Error(format!("File search unavailable: {e}"));
                 }
             }
+            let had_panel = s.panel.is_some();
             s.rebuild(true);
-            s.resize()
+            let focus =
+                if had_panel && s.panel.is_none() { widget::operation::focus(search_id()) } else { Task::none() };
+            Task::batch([s.resize(), focus])
         }
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
@@ -370,6 +404,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::Clicked(i) => {
+            if s.panel.is_some() {
+                s.panel = None;
+                return widget::operation::focus(search_id());
+            }
             s.cursor.select(i, s.items.len());
             s.panel = None;
             match s.primary() {
@@ -378,7 +416,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             }
         }
         Message::PanelClicked(i) => {
-            let a = s.panel.as_ref().and_then(|p| p.actions.get(i).copied());
+            let a = s.panel.as_ref().and_then(|p| p.filtered_actions().get(i).copied());
             a.map_or_else(Task::none, |a| s.perform(a))
         }
         Message::Opened(Ok(())) => {
@@ -407,7 +445,13 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         }
         match cmd {
             Command::Up => p.selected = p.selected.saturating_sub(1),
-            Command::Down => p.selected = (p.selected + 1).min(p.actions.len().saturating_sub(1)),
+            Command::Down => p.selected = (p.selected + 1).min(p.filtered_actions().len().saturating_sub(1)),
+            Command::First | Command::PageUp => p.selected = 0,
+            Command::Last | Command::PageDown => p.selected = p.filtered_actions().len().saturating_sub(1),
+            Command::Back if !p.query.is_empty() => {
+                p.filter(String::new());
+                return widget::operation::focus(actions_id());
+            }
             Command::Back | Command::ToggleActions => {
                 s.panel = None;
                 return widget::operation::focus(search_id());
@@ -436,7 +480,8 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::CopyPath => return s.perform(Action::CopyPath),
         Command::ToggleActions => {
             if let Some(item) = s.selected() {
-                s.panel = Some(Panel { actions: model::actions_for(&item.target), selected: 0 });
+                s.panel = Some(Panel::new(item));
+                return widget::operation::focus(actions_id());
             }
         }
         Command::Back => {
@@ -500,11 +545,20 @@ fn divider<'a>() -> Element<'a, Message> {
 
 fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
-        let msg = match &s.status {
-            Status::Searching => "Searching…",
-            _ => "No results",
+        let (msg, help) = match &s.status {
+            Status::Searching => ("Searching…", ""),
+            Status::Error(_) => ("File search unavailable", "You can still search applications or calculate a result."),
+            _ if s.query.trim().is_empty() => ("Start typing to search", "Find an application, a file, or try 2 + 3."),
+            _ if s.query.trim().chars().count() < MIN_FILE_QUERY => {
+                ("No matching applications", "Type at least 2 characters to search files.")
+            }
+            _ => ("No results", "Try a shorter name or a different keyword."),
         };
-        return container(text(msg).color(palette::DIM)).center(Length::Fill).into();
+        return container(
+            column![text(msg).size(18), text(help).size(13).color(palette::DIM)].spacing(8).align_x(Horizontal::Center),
+        )
+        .center(Length::Fill)
+        .into();
     }
     let mut col = column![];
     for i in s.cursor.window(s.items.len()) {
@@ -556,8 +610,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching => ("Searching…".to_string(), palette::DIM),
+        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
         Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
-        Status::Idle if s.query.trim().is_empty() => ("Recently opened".to_string(), palette::DIM),
+        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
         Status::Idle => match s.items.len() {
             1 => ("1 result".to_string(), palette::DIM),
             n => (format!("{n} results"), palette::DIM),
@@ -572,7 +627,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         }
         hints = hints.push(hint("Ctrl+K", "Actions"));
     } else {
-        hints = hints.push(hint("Esc", "Close"));
+        hints = hints.push(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" }));
     }
     container(
         row![text(msg).size(12).color(color).wrapping(text::Wrapping::None), space::horizontal(), hints]
@@ -599,8 +654,14 @@ fn hint<'a>(key: &'a str, label: &'a str) -> Element<'a, Message> {
 }
 
 fn action_panel(p: &Panel) -> Element<'_, Message> {
-    let mut col = column![text("Actions").size(11).color(palette::DIM)].spacing(2);
-    for (i, a) in p.actions.iter().enumerate() {
+    let input =
+        text_input("Search actions…", &p.query).id(actions_id()).on_input(Message::ActionQuery).size(14).padding(8);
+    let mut col = column![text(ellipsize_end(&p.title, 32)).size(12).color(palette::DIM), input].spacing(4);
+    let actions = p.filtered_actions();
+    if actions.is_empty() {
+        col = col.push(container(text("No matching actions").size(13).color(palette::DIM)).padding(10));
+    }
+    for (i, a) in actions.iter().enumerate() {
         let selected = i == p.selected;
         let r = container(
             row![text(a.label()).size(14), space::horizontal(), text(a.shortcut()).size(11).color(palette::DIM)]
@@ -617,6 +678,7 @@ fn action_panel(p: &Panel) -> Element<'_, Message> {
         });
         col = col.push(mouse_area(r).on_press(Message::PanelClicked(i)).interaction(mouse::Interaction::Pointer));
     }
+    col = col.push(hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" }));
     let panel = container(col).width(280).padding(8).style(|_| container::Style {
         background: Some(Background::Color(Color::from_rgb8(0x22, 0x23, 0x29))),
         border: Border { color: palette::BORDER, width: 1.0, radius: 10.0.into() },
@@ -663,8 +725,12 @@ mod tests {
 
     #[test]
     fn displayed_shortcuts_work_inside_the_action_panel() {
-        let panel =
-            Panel { actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName], selected: 3 };
+        let panel = Panel {
+            title: "notes.txt".into(),
+            actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
+            query: String::new(),
+            selected: 3,
+        };
         let key = |key, mods| model::command_for(&key, mods).unwrap();
         assert_eq!(
             panel.action_for_command(key(Key::Named(keyboard::key::Named::Enter), Modifiers::CTRL)),
@@ -678,9 +744,48 @@ mod tests {
             panel.action_for_command(key(Key::Named(keyboard::key::Named::Enter), Modifiers::empty())),
             Some(Action::CopyName)
         );
-        let app = Panel { actions: vec![Action::Launch, Action::CopyName], selected: 0 };
+        let app = Panel {
+            title: "Files".into(),
+            actions: vec![Action::Launch, Action::CopyName],
+            query: String::new(),
+            selected: 0,
+        };
         assert_eq!(app.action_for_command(Command::Secondary), None);
         assert_eq!(app.action_for_command(Command::CopyPath), None);
+    }
+
+    #[test]
+    fn filtering_actions_keeps_the_target_and_selects_a_matching_action() {
+        let mut panel = Panel::new(&Item {
+            target: Target::File(FileHit {
+                id: "file:///tmp/notes.txt".into(),
+                name: "notes.txt".into(),
+                path: Some("/tmp/notes.txt".into()),
+                icon: String::new(),
+                subtext: "/tmp".into(),
+                is_dir: false,
+            }),
+            section: model::Section::Files,
+            title: "notes.txt".into(),
+            subtitle: "/tmp".into(),
+            icon: String::new(),
+            tag: "File",
+        });
+        panel.selected = 3;
+        panel.filter("  PATH  copy ".into());
+        assert_eq!(panel.title, "notes.txt");
+        assert_eq!(panel.selected, 0);
+        assert_eq!(panel.filtered_actions(), [Action::CopyPath]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyPath));
+        // Direct shortcuts retain their meaning even when filtered out.
+        assert_eq!(panel.action_for_command(Command::Secondary), Some(Action::Reveal));
+
+        panel.filter("does not match".into());
+        assert!(panel.filtered_actions().is_empty());
+        assert_eq!(panel.action_for_command(Command::Activate), None);
+        panel.filter(String::new());
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
+        assert_eq!(panel.actions.len(), 4);
     }
 
     #[test]
