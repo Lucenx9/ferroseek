@@ -8,6 +8,7 @@
 mod apps;
 mod backend;
 mod calc;
+mod favorites;
 mod icons;
 mod launch;
 mod matcher;
@@ -32,6 +33,8 @@ to a global shortcut in the desktop settings.
 
 The launch history (what you open, used to rank results and to fill the
 empty query) is stored only in $XDG_STATE_HOME/ferroseek/launcher-usage.
+Favorites are stored separately beside it in launcher-favorites. Private
+sessions read and write neither file.
 
 Keys: Up/Down or Tab move, Enter opens, Ctrl+Enter shows the file in its
 folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Esc clears the
@@ -83,7 +86,12 @@ fn main() -> ExitCode {
     };
     let apps = scan.join().unwrap_or_default();
     let history = if private { usage::Usage::disabled() } else { usage::Usage::load(usage::Usage::default_path()) };
-    match ui::run(ui::Boot { backend, apps, usage: history, initial_query }, events) {
+    let favorites = if private {
+        favorites::Favorites::disabled()
+    } else {
+        favorites::Favorites::load(favorites::Favorites::default_path())
+    };
+    match ui::run(ui::Boot { backend, apps, usage: history, favorites, initial_query }, events) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("ferroseek-launcher: {e}");

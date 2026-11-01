@@ -23,6 +23,7 @@ been published yet.
 - Find files and folders by name or path in configured indexing roots.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file, reveal it in its folder or copy its path through keyboard actions.
+- Pin applications and files as favorites at the top of the home suggestions.
 - Revisit frequently opened applications and files with local, decaying history.
   Use `--private` to avoid recording a session.
 
