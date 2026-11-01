@@ -24,6 +24,8 @@ jobs:
       - run: cargo test --workspace --locked
       - name: Noctalia launcher provider (mock host, no desktop access)
         run: lua5.4 tests/noctalia-provider.lua
+      - name: Noctalia application handoff (isolated GIO associations)
+        run: python3 tests/noctalia-open-smoke.py
       - run: cargo build --release --locked --workspace
       - run: python3 tests/install-smoke.py
       - run: python3 tests/package-smoke.py

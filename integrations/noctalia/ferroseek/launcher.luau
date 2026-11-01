@@ -114,7 +114,10 @@ function onActivate(id)
         noctalia.notifyError("FerroSeek", noctalia.tr("file_missing"))
         return
     end
-    local accepted = noctalia.runAsync({ "xdg-open", path }, function(result)
+    -- GIO returns after handing the request to the default application.
+    -- xdg-open may wait for that application's entire lifetime; Noctalia's
+    -- captured-process timeout would then report failure and kill its group.
+    local accepted = noctalia.runAsync({ "gio", "open", path }, function(result)
         if result.timedOut or result.exitCode ~= 0 then
             noctalia.notifyError("FerroSeek", noctalia.tr("open_failed"))
         end
