@@ -13,6 +13,19 @@ Documentation should lead with FerroSeek's own capabilities, clearly
 distinguish implemented adapters from future ones, and keep performance
 claims tied to their measured workloads. Do not imply Baloo feature parity.
 
+## README direction
+
+Keep the README centered on FerroSeek as a Linux launcher. Preserve the current
+user journey: a short product description and real screenshot, implemented
+tasks, requirements and installation, starting and binding a shortcut, keyboard
+controls, current limits and next steps, then optional engine/CLI/MCP tools.
+Use concise English and concrete actions. Keep available features distinct from
+planned work, and update the screenshot when visible changes make it inaccurate.
+Link architecture, benchmark results and historical research from the detailed
+guides instead of expanding them in the README. Changes to code or dependencies
+should update the relevant setup instructions and limits while retaining this
+structure and the launcher as the main product.
+
 ## Map
 
 - `crates/index`: SQLite store. `Writer`/`Txn` mutate the tree; `Reader`
