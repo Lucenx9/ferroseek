@@ -23,11 +23,19 @@ pub struct App {
     pub keywords: Vec<String>,
     pub icon: Option<String>,
     pub exec: String,
+    pub actions: Vec<DesktopAction>,
     pub terminal: bool,
     pub working_dir: Option<PathBuf>,
     pub file: PathBuf,
     /// Lower-cased labels for matching, computed once.
     search: Vec<(String, u32)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopAction {
+    pub id: String,
+    pub name: String,
+    pub exec: String,
 }
 
 impl App {
@@ -45,6 +53,26 @@ impl App {
     /// Argument vector for launching without files, per the `Exec` rules.
     pub fn argv(&self) -> Result<Vec<String>, ExecError> {
         expand_exec(&self.exec, self.icon.as_deref(), &self.name, &self.file)
+    }
+
+    pub fn action_argv(&self, index: usize) -> Result<Vec<String>, ExecError> {
+        let action = self.actions.get(index).ok_or(ExecError::MissingAction)?;
+        let mut chars = action.exec.chars();
+        while let Some(c) = chars.next() {
+            if c == '%'
+                && !matches!(
+                    chars.next(),
+                    Some('%' | 'f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm' | 'i' | 'c' | 'k')
+                )
+            {
+                return Err(ExecError::InvalidFieldCode);
+            }
+        }
+        let argv = expand_exec(&action.exec, self.icon.as_deref(), &self.name, &self.file)?;
+        if argv.iter().any(|arg| arg.contains('\0')) {
+            return Err(ExecError::Nul);
+        }
+        Ok(argv)
     }
 }
 
@@ -163,7 +191,7 @@ fn collect_desktop_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf
 
 /// Parses one desktop file into a launchable, visible application.
 pub fn parse(id: &str, file: &Path, text: &str, locales: &[String], desktops: &[String]) -> Option<App> {
-    let group = desktop_entry_group(text);
+    let group = entry_group(text, "Desktop Entry");
     let get = |key: &str| -> Option<String> { group.iter().find(|(k, _)| k == key).map(|(_, v)| unescape(v)) };
     let get_localized = |key: &str| -> Option<String> {
         for l in locales {
@@ -216,7 +244,7 @@ pub fn parse(id: &str, file: &Path, text: &str, locales: &[String], desktops: &[
     if let Some(c) = &comment {
         search.push((c.to_lowercase(), 40));
     }
-    Some(App {
+    let mut app = App {
         id: id.to_string(),
         name,
         generic_name,
@@ -224,16 +252,34 @@ pub fn parse(id: &str, file: &Path, text: &str, locales: &[String], desktops: &[
         keywords,
         icon: get("Icon").filter(|s| !s.is_empty()),
         exec,
+        actions: Vec::new(),
         terminal: get_bool("Terminal"),
         working_dir: get("Path").filter(|p| !p.is_empty()).map(PathBuf::from),
         file: file.to_path_buf(),
         search,
-    })
+    };
+    let mut seen = HashSet::new();
+    for id in get("Actions").map(|value| split_list(&value)).unwrap_or_default() {
+        if !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') || !seen.insert(id.clone()) {
+            continue;
+        }
+        let group = entry_group(text, &format!("Desktop Action {id}"));
+        let get = |key: &str| group.iter().find(|(k, _)| k == key).map(|(_, v)| unescape(v));
+        let name = locales.iter().find_map(|locale| get(&format!("Name[{locale}]"))).or_else(|| get("Name"));
+        let (Some(name), Some(exec)) = (name, get("Exec")) else { continue };
+        if name.trim().is_empty() || name.contains('\0') {
+            continue;
+        }
+        app.actions.push(DesktopAction { id, name, exec });
+        if app.action_argv(app.actions.len() - 1).is_err() {
+            app.actions.pop();
+        }
+    }
+    Some(app)
 }
 
-/// Raw `key=value` pairs of the `[Desktop Entry]` group, values unescaped
-/// lazily by the caller.
-fn desktop_entry_group(text: &str) -> Vec<(String, String)> {
+/// Raw `key=value` pairs of the first named group, unescaped by the caller.
+fn entry_group(text: &str, name: &str) -> Vec<(String, String)> {
     let mut in_group = false;
     let mut out = Vec::new();
     for line in text.lines() {
@@ -243,9 +289,9 @@ fn desktop_entry_group(text: &str) -> Vec<(String, String)> {
         }
         if line.starts_with('[') {
             if in_group {
-                break; // only the first group matters
+                break;
             }
-            in_group = line.trim_end() == "[Desktop Entry]";
+            in_group = line.trim_end().strip_prefix('[').and_then(|s| s.strip_suffix(']')) == Some(name);
             continue;
         }
         if in_group && let Some((k, v)) = line.split_once('=') {
@@ -319,6 +365,9 @@ fn executable_exists(prog: &str) -> bool {
 pub enum ExecError {
     UnterminatedQuote,
     Empty,
+    MissingAction,
+    Nul,
+    InvalidFieldCode,
 }
 
 impl std::fmt::Display for ExecError {
@@ -326,6 +375,9 @@ impl std::fmt::Display for ExecError {
         match self {
             ExecError::UnterminatedQuote => f.write_str("unterminated quote in Exec"),
             ExecError::Empty => f.write_str("empty Exec"),
+            ExecError::MissingAction => f.write_str("application action no longer exists"),
+            ExecError::Nul => f.write_str("NUL in Exec argument"),
+            ExecError::InvalidFieldCode => f.write_str("invalid field code in Exec"),
         }
     }
 }
@@ -434,6 +486,7 @@ mod tests {
         assert_eq!(a.keywords, ["folder", "explorer"]);
         assert_eq!(a.icon.as_deref(), Some("system-file-manager"));
         assert_eq!(a.argv().unwrap(), ["files"]);
+        assert!(a.actions.is_empty(), "undeclared action groups are ignored");
         assert!(a.score(&matcher::tokens("explorer")).is_some());
         assert!(a.score(&matcher::tokens("app")).is_some(), "ID stem is searchable");
     }
@@ -456,6 +509,70 @@ mod tests {
     fn first_group_only_and_first_key_wins() {
         let a = p("# c\n[Desktop Entry]\nType=Application\nName=A\nName=B\nExec=a\n[Other]\nName=C\n").unwrap();
         assert_eq!(a.name, "A");
+    }
+
+    #[test]
+    fn actions_follow_declaration_order_and_keep_parent_metadata() {
+        let a = p("[Desktop Action new]\nName=New window\nExec=browser --new\n\
+             [Desktop Entry]\nType=Application\nName=Browser\nName[it]=Navigatore\n\
+             Exec=browser\nIcon=browser-icon\nPath=/parent\nActions=private;new;private;missing;\n\
+             [Desktop Action private]\nName=Private window\nName[it]=Finestra privata\n\
+             Name[it]=Duplicate\nExec=browser --private\nIcon=action-icon\nTerminal=true\nPath=/action\n\
+             [Desktop Action extra]\nName=Extra\nExec=extra\n\
+             [Desktop Entry]\nName=Replacement\nExec=replacement\nActions=extra;\n\
+             [Desktop Action new]\nName=Replacement action\nExec=replacement\n")
+        .unwrap();
+        let actions: Vec<_> = a.actions.iter().map(|action| (action.id.as_str(), action.name.as_str())).collect();
+        assert_eq!(actions, [("private", "Finestra privata"), ("new", "New window")]);
+        assert_eq!(a.name, "Navigatore");
+        assert_eq!(a.argv().unwrap(), ["browser"]);
+        assert_eq!(a.icon.as_deref(), Some("browser-icon"));
+        assert!(!a.terminal);
+        assert_eq!(a.working_dir.as_deref(), Some(Path::new("/parent")));
+        assert_eq!(a.action_argv(1).unwrap(), ["browser", "--new"]);
+    }
+
+    #[test]
+    fn incomplete_and_unusable_actions_are_ignored() {
+        let a = p("[Desktop Entry]\nType=Application\nName=A\nExec=a\n\
+             Actions=noname;emptyname;noexec;emptyexec;onlyfiles;quote;nul;unknown;dangling;ok;\n\
+             [Desktop Action noname]\nExec=a\n\
+             [Desktop Action emptyname]\nName=\\s\nExec=a\n\
+             [Desktop Action noexec]\nName=No command\n\
+             [Desktop Action emptyexec]\nName=Empty command\nExec=   \n\
+             [Desktop Action onlyfiles]\nName=Files\nExec=%U\n\
+             [Desktop Action quote]\nName=Quote\nExec=a \"unclosed\n\
+             [Desktop Action nul]\nName=Nul\nExec=a bad\0arg\n\
+             [Desktop Action unknown]\nName=Unknown code\nExec=a %Z\n\
+             [Desktop Action dangling]\nName=Incomplete code\nExec=a %\n\
+             [Desktop Action ok]\nName=Valid\nExec=a --valid\n")
+        .unwrap();
+        assert_eq!(a.actions.len(), 1);
+        assert_eq!(a.actions[0].id, "ok");
+    }
+
+    #[test]
+    fn action_argv_uses_application_field_codes_without_a_shell() {
+        let a = p("[Desktop Entry]\nType=Application\nName=Browser\nName[it]=Il browser\n\
+             Exec=browser\nIcon=main-icon\nActions=new;\n\
+             [Desktop Action new]\nName=New window\nIcon=action-icon\n\
+             Exec=\"/opt/My App/bin\" --new %c %i %k %U \"x; $literal\" 100%%\n")
+        .unwrap();
+        assert_eq!(
+            a.action_argv(0).unwrap(),
+            [
+                "/opt/My App/bin",
+                "--new",
+                "Il browser",
+                "--icon",
+                "main-icon",
+                "/x/org.example.App.desktop",
+                "x; $literal",
+                "100%",
+            ]
+        );
+        assert_eq!(a.action_argv(1), Err(ExecError::MissingAction));
+        assert_eq!(a.action_argv(usize::MAX), Err(ExecError::MissingAction));
     }
 
     #[test]

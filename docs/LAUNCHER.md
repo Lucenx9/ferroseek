@@ -76,6 +76,11 @@ shortcuts remain available while filtering. After copying, the launcher stays
 open and returns focus to the main search field. Clicking the main field and
 typing closes actions and starts the new search.
 
+The panel shows up to eight actions at a time. Up/Down and the mouse wheel move
+the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
+the first/last action. A range indicator appears for longer menus. Numbers
+always refer to the currently visible actions.
+
 Click a result once to select it; double-click or press Enter to open it.
 Right-click a result to select it and open its actions, or click **Actions**
 in the footer. A click on a result that disappears while results update is
@@ -91,6 +96,13 @@ to another command.
   `NoDisplay`, `OnlyShowIn`/`NotShowIn`, `TryExec`). Strong name or keyword
   matches are shown above files, weak ones (description only, loose
   subsequence) below them.
+  The actions menu also lists the application's declared `.desktop` actions,
+  such as **New window** or **New private window**, using their localized names
+  and declared order. Search and Enter, a click, or a displayed Ctrl+1…8 shortcut
+  runs the chosen action. Only listed actions with a name and a usable `Exec`
+  command are shown; actions requiring D-Bus activation without an `Exec`
+  fallback are not supported. These commands use argument vectors, the app's
+  terminal preference and working directory, and the normal launch scope.
 - **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
   method; opening and revealing go through its `Open` method, which only
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.

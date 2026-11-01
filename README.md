@@ -20,6 +20,8 @@ been published yet.
 ## What you can do
 
 - Launch installed applications using names, keywords and fuzzy matching.
+- Run application actions such as new or private windows from the actions menu,
+  when the application's `.desktop` file declares them.
 - Find files and folders by name or path in configured indexing roots.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file, reveal it in its folder or copy its path through keyboard actions.
