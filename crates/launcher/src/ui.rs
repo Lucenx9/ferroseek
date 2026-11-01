@@ -85,8 +85,19 @@ impl Panel {
     }
 
     fn filtered_actions(&self) -> Vec<Action> {
-        let tokens: Vec<_> = self.query.split_whitespace().map(str::to_lowercase).collect();
-        self.actions.iter().copied().filter(|a| tokens.iter().all(|t| a.label().to_lowercase().contains(t))).collect()
+        let tokens = crate::matcher::tokens(&self.query);
+        if tokens.is_empty() {
+            return self.actions.clone();
+        }
+        let mut matches: Vec<_> = self
+            .actions
+            .iter()
+            .copied()
+            .filter_map(|action| action.search_score(&tokens).map(|score| (action, score)))
+            .collect();
+        // Stable ties preserve the familiar order of equally matching actions.
+        matches.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
+        matches.into_iter().map(|(action, _)| action).collect()
     }
 
     fn filter(&mut self, query: String) {
@@ -143,7 +154,7 @@ pub enum Message {
     Selected(Target),
     Clicked(Target),
     ContextMenu(Target),
-    PanelClicked(usize),
+    PanelClicked { target: Target, action: Action },
     Opened(Result<(), String>),
     Ui(UiEvent),
 }
@@ -513,8 +524,15 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             s.panel = s.selected().map(Panel::new);
             widget::operation::focus(actions_id())
         }
-        Message::PanelClicked(i) => {
-            let a = s.panel.as_ref().and_then(|p| p.filtered_actions().get(i).copied());
+        Message::PanelClicked { target, action } => {
+            // A filter or a late result can change rows after they were drawn.
+            // Resolve the action and target identities, never an old row number.
+            let a = s
+                .selected()
+                .filter(|item| item.target == target)
+                .and(s.panel.as_ref())
+                .filter(|p| p.filtered_actions().contains(&action))
+                .map(|_| action);
             a.map_or_else(Task::none, |a| s.perform(a))
         }
         Message::Opened(Ok(())) => {
@@ -661,9 +679,9 @@ fn view(s: &Launcher) -> Element<'_, Message> {
             ..Default::default()
         });
 
-    crate::shortcuts::capture_numbered(match &s.panel {
-        Some(p) => stack![surface, action_panel(p)].into(),
-        None => surface.into(),
+    crate::shortcuts::capture_numbered(match (&s.panel, s.selected()) {
+        (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target)].into(),
+        _ => surface.into(),
     })
 }
 
@@ -814,7 +832,7 @@ fn numbered_hint(slot: usize) -> Element<'static, Message> {
     text(label).size(11).color(palette::DIM).into()
 }
 
-fn action_panel(p: &Panel) -> Element<'_, Message> {
+fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let input =
         text_input("Search actions…", &p.query).id(actions_id()).on_input(Message::ActionQuery).size(14).padding(8);
     let mut col = column![text(ellipsize_end(&p.title, 32)).size(12).color(palette::DIM), input].spacing(4);
@@ -843,7 +861,11 @@ fn action_panel(p: &Panel) -> Element<'_, Message> {
             border: Border { radius: 7.0.into(), ..Default::default() },
             ..Default::default()
         });
-        col = col.push(mouse_area(r).on_press(Message::PanelClicked(i)).interaction(mouse::Interaction::Pointer));
+        col = col.push(
+            mouse_area(r)
+                .on_press(Message::PanelClicked { target: target.clone(), action: *a })
+                .interaction(mouse::Interaction::Pointer),
+        );
     }
     col = col.push(hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" }));
     let panel = container(col).width(280).padding(8).style(|_| container::Style {
@@ -1119,6 +1141,80 @@ mod tests {
         assert_eq!(panel.query, "copy");
         panel.filter("missing".into());
         assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), None);
+    }
+
+    #[test]
+    fn action_search_ranks_precise_matches_and_keeps_activation_consistent() {
+        let mut panel = Panel {
+            title: "notes.txt".into(),
+            actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
+            query: String::new(),
+            selected: 0,
+        };
+        let original = panel.actions.clone();
+        for query in ["", "  "] {
+            panel.filter(query.into());
+            assert_eq!(panel.filtered_actions(), original);
+        }
+        for (query, action) in [
+            ("copnm", Action::CopyName),
+            ("COPY filename", Action::CopyName),
+            ("reveal", Action::Reveal),
+            ("directory", Action::Reveal),
+            ("copy location", Action::CopyPath),
+            ("rank reset", Action::ResetRanking),
+        ] {
+            panel.filter(query.into());
+            assert_eq!(panel.filtered_actions(), [action], "{query}");
+            assert_eq!(panel.action_for_command(Command::Activate), Some(action));
+            assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(action));
+            assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), None);
+        }
+        panel.filter("name".into());
+        assert_eq!(panel.action_for_command(Command::Secondary), Some(Action::Reveal));
+        assert_eq!(panel.action_for_command(Command::CopyPath), Some(Action::CopyPath));
+        panel.filter("open".into());
+        assert_eq!(panel.filtered_actions().first(), Some(&Action::Open));
+        panel.filter("r".into());
+        assert_eq!(panel.filtered_actions(), [Action::ResetRanking, Action::Reveal]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::ResetRanking));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::ResetRanking));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), Some(Action::Reveal));
+        panel.filter("copy".into());
+        assert_eq!(panel.filtered_actions(), [Action::CopyPath, Action::CopyName], "ties keep their order");
+        panel.filter("copy xyz".into());
+        assert!(panel.filtered_actions().is_empty());
+        assert_eq!(panel.action_for_command(Command::Activate), None);
+    }
+
+    #[test]
+    fn action_clicks_keep_their_identity_after_filtering_and_ignore_changed_targets() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        s.cursor.select(1, s.items.len());
+        let target = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("copy".into()));
+        let status = s.status.clone();
+        let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::Open });
+        assert!(s.opening.is_none(), "a removed action must not run the row that replaced it");
+        assert_eq!(s.status, status);
+        assert_eq!(s.panel.as_ref().unwrap().query, "copy");
+
+        let _ = update(&mut s, Message::ActionQuery("name".into()));
+        let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::CopyName });
+        assert_eq!(s.status, Status::Notice("Copied name".into()));
+        assert!(s.panel.is_none());
+        assert_eq!(s.query, "report");
+
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _ = command(&mut s, Command::OpenActions);
+        let status = s.status.clone();
+        let _ = update(&mut s, Message::PanelClicked { target, action: Action::CopyName });
+        assert_eq!(s.status, status, "an old file click must not copy the newly selected app name");
+        assert!(s.panel.is_some());
     }
 
     #[test]

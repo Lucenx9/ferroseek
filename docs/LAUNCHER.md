@@ -63,7 +63,11 @@ suggestions. Calculator expressions without `=` appear only in All; an explicit
 selection; replies from earlier searches are ignored.
 
 Type in the action panel to filter its commands without changing the search
-query or selected result. Enter runs the highlighted matching action. Ctrl+1…8
+query or selected result. Action search accepts abbreviations such as `copnm`
+for **Copy name**, and alternatives such as `reveal` for **Show in folder** or
+`continue` for **Use result**. Every query word must match; closer label matches
+appear first, and an empty filter restores the original order. Enter runs the
+highlighted matching action. Ctrl+1…8
 runs the corresponding visible row; numbers follow the window after scrolling
 and the matching actions after filtering. The top number-row positions also
 work on layouts such as AZERTY, where typing digits normally requires Shift.
@@ -75,7 +79,9 @@ typing closes actions and starts the new search.
 Click a result once to select it; double-click or press Enter to open it.
 Right-click a result to select it and open its actions, or click **Actions**
 in the footer. A click on a result that disappears while results update is
-ignored rather than opening a different row.
+ignored rather than opening a different row. Action clicks also keep the target
+and action they were drawn for; changing a filter cannot redirect a queued click
+to another command.
 
 ## Results
 
