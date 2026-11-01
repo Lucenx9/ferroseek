@@ -176,6 +176,10 @@ together to use the status and folder interfaces.
 
 ## Search folders and initial setup
 
+![Search folders with active exclusion settings](assets/launcher-folders.png)
+
+Screenshot from a nested test session with sample folders.
+
 If the configuration file is missing, the launcher opens **Search folders** before
 sending any file queries, including a `--query` prefill. Review the default home
 folder, add or remove folders, then use **Save & apply** (Ctrl+S). Choosing no
