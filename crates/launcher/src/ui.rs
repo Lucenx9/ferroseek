@@ -349,6 +349,9 @@ impl Launcher {
                 self.rebuild(true);
                 Status::Notice("Ranking reset".into())
             }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Status::Error("History is busy. Try reset again.".into())
+            }
             Err(e) => Status::Error(format!("Cannot reset ranking: {e}")),
         };
         Task::batch([self.resize(), widget::operation::focus(search_id())])

@@ -103,7 +103,8 @@ Use **Reset ranking** in an application or file's action panel to remove that
 item's overall and query-specific history. Other items keep their history, and
 the results update immediately. The application or file remains searchable;
 opening it again starts a new history. In a `--private` session, reset changes
-only the session's in-memory history. A failed reset is shown in the launcher.
+only the session's in-memory history. A failed reset is shown in the launcher;
+if another instance is updating history, retry after it finishes.
 
 ## Design
 
