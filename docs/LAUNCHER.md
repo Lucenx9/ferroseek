@@ -170,9 +170,46 @@ is not displayed as zero. Applications and calculations remain usable.
 Status calls time out after three seconds so a stalled diagnostic reply cannot
 hold up later file searches or open actions indefinitely. Refresh can retry.
 
-This view does not edit configuration or pause/resume indexing. Folder selection
-and first-run configuration in the launcher remain planned. Install or update
-the launcher and daemon together to use the status interface.
+This view does not edit configuration or pause/resume indexing. Use **Folders**
+or Ctrl+, to choose search locations. Install or update the launcher and daemon
+together to use the status and folder interfaces.
+
+## Search folders and initial setup
+
+If the configuration file is missing, the launcher opens **Search folders** before
+sending any file queries, including a `--query` prefill. Review the default home
+folder, add or remove folders, then use **Save & apply** (Ctrl+S). Choosing no
+folders disables file indexing. Esc closes an unsaved first-run screen without
+creating a configuration or starting the service. CLI and explicitly enabled
+services retain their existing configuration/default behavior.
+
+Later, open **Folders** in the search header or press Ctrl+,. Empty file results
+also offer **Choose folders**. Type an absolute path or `~/Documents` and press
+Enter to add it; use Up/Down to select a folder and Ctrl+D or **Remove** to remove
+it. New folders must exist, be readable directories and not be symbolic links;
+existing offline locations can be retained. Nested locations are covered by the
+parent. The selected full path wraps below the list. Page Up/Down, Ctrl+Home/End
+and the wheel scroll the details. Exclusions are shown read-only, with active
+service settings distinguished from saved settings when the service is absent.
+Viewing this screen does not activate the service.
+
+Saving changes only `roots` in the TOML file and preserves other settings and
+surrounding comments. Writes use a locked, atomic replacement with private file
+permissions. A stale file snapshot is refused; **Reload** (Ctrl+R) reloads disk
+settings after confirming discard of unsaved edits. Esc keeps editing when a
+discard prompt is visible; Ctrl+D explicitly discards. Invalid or symlinked
+configuration files are not overwritten. Symlink targets must be edited separately.
+
+**Save & apply** explicitly starts the service if necessary, then applies the
+saved folders without a restart. Removing a location removes its indexed entries
+and watches, never user files. Indexing continues in the background and a paused
+service stays paused. Other saved settings are not applied to an already running
+service; a message reports if they still need a service restart. A service using a
+different configuration file refuses the application. Errors preserve the draft;
+if saving succeeded but application could not be confirmed, settings remain saved
+and Ctrl+S can safely retry. Applying times out after 30 seconds; older daemons
+without this method must be updated. The screen cannot close during saving or
+application; after a failure, Esc returns to search and refreshes its file results.
 
 ## Favorites
 

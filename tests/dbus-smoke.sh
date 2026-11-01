@@ -156,6 +156,47 @@ done
 echo "== Introspection"
 gdbus introspect --session --dest "$SVC" --object-path /io/github/ferroseek/Search | grep -E "method|out|in " | head -20
 
+echo "== Save and apply folder scope without restarting"
+mkdir "$T/reconfigured:2026"
+echo new > "$T/reconfigured:2026/new-scope-file.txt"
+printf 'roots = ["%s"]\ndebounce_ms = 20\n' "$T/reconfigured:2026" > "$T/config.toml"
+cp "$T/config.toml" "$T/other-config.toml"
+reload_folders() { call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.ReloadFolders "$@"; }
+folder_policy() { call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.FolderPolicy; }
+if reload_folders "$T/other-config.toml" "['$T/reconfigured:2026']" >/dev/null 2>&1; then
+    fail "different configuration file accepted"
+fi
+if reload_folders "$T/config.toml" "['$T/root']" >/dev/null 2>&1; then
+    fail "outdated folder draft accepted"
+fi
+out=$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Search "report")
+[[ "$out" == *"Quarterly Report.pdf"* ]] || fail "refused apply changed scope"
+[[ "$(reload_folders "$T/config.toml" "['$T/reconfigured:2026']")" == "(false,)" ]] || fail "folder apply not confirmed"
+for _ in $(seq 100); do
+    out=$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Search "new-scope-file")
+    [[ "$out" == *"new-scope-file.txt"* ]] && break
+    sleep 0.05
+done
+[[ "$out" == *"new-scope-file.txt"* ]] || fail "new folder not indexed"
+empty "$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Search "report")" || fail "old scope retained"
+if call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "" "" >/dev/null 2>&1; then
+    fail "removed scope still openable"
+fi
+[[ -f "$T/root/Documents/Quarterly Report.pdf" ]] || fail "user file removed"
+kill -0 "$PID" || fail "folder apply restarted service"
+[[ "$(folder_policy)" == *"$T/reconfigured:2026"* ]] || fail "active policy roots not updated"
+printf 'roots = ["%s"]\ndebounce_ms = 20\nmax_cpu_percent = 17\n' "$T/reconfigured:2026" > "$T/config.toml"
+[[ "$(reload_folders "$T/config.toml" "['$T/reconfigured:2026']")" == "(true,)" ]] || fail "pending non-folder settings not reported"
+[[ "$(folder_policy)" == *"max_cpu_percent = 50"* ]] || fail "folder apply changed CPU policy"
+printf 'roots = []\ndebounce_ms = 20\nmax_cpu_percent = 17\n' > "$T/config.toml"
+[[ "$(reload_folders "$T/config.toml" "[]")" == "(true,)" ]] || fail "empty scope rejected"
+for _ in $(seq 100); do
+    out=$(file_status)
+    [[ "$out" == "('idle', uint64 0, uint64 0, "* ]] && break
+    sleep 0.05
+done
+[[ "$out" == "('idle', uint64 0, uint64 0, "* && "$out" == *"@as []"* ]] || fail "empty scope not cleared"
+
 echo "== SIGTERM shutdown"
 kill -TERM "$PID"; wait "$PID"; rc=$?
 [[ $rc == 0 ]] || fail "exit code $rc"

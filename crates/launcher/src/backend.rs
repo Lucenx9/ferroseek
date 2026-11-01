@@ -647,7 +647,7 @@ mod tests {
     fn viewing_folder_settings_does_not_activate_an_absent_service() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
-            let conn = zbus::connection::Builder::address(address.trim()).unwrap().build().await.unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
             assert!(folder_policy(&conn).await.unwrap().is_none());
             assert!(folder_policy(&conn).await.unwrap().is_none());
         });

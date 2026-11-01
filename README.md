@@ -47,13 +47,11 @@ cd ferroseek
 
 This installs `ferroseek-launcher`, the indexing daemon and the CLI under your
 user account, without sudo. Existing configuration and indexes are preserved;
-installation does not start or restart indexing. Review your roots before the
-first file query, which can activate the daemon. The engine defaults to your
-home directory with exclusions.
+installation does not start or restart indexing. On first launch, choose your
+search folders and use **Save & apply** before file search starts. Existing
+configurations are retained; use **Folders** or Ctrl+, to review them.
 
 ```sh
-ferroseek config --default              # inspect the default configuration
-# Set roots in ~/.config/ferroseek/config.toml before searching for files.
 ferroseek-launcher
 ```
 
@@ -74,6 +72,7 @@ configuration, optional service enablement, archives and uninstall.
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
 | Ctrl+I | Show file search status; Esc returns to search |
+| Ctrl+, | Choose search folders; Ctrl+S saves and applies |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
@@ -89,7 +88,7 @@ Themes and layout configuration are planned. Application focus depends on the
 compositor because the UI cannot yet supply an XDG activation token.
 
 The next priorities are real desktop validation, reliable activation, clear
-first-run indexing setup and appearance settings. Window switching, clipboard
+appearance settings and measured startup/search latency. Window switching, clipboard
 history, web search and a plugin API are not implemented. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools

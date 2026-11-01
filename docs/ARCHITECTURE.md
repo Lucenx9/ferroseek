@@ -23,7 +23,8 @@ decisions and historical measurements are retained with their evidence.
 | crate | kind | responsibility |
 |---|---|---|
 | `crates/index` (`ferroseek-index`) | lib | SQLite store: schema, versioning and recovery, the tree mutation transaction, search and ranking |
-| `crates/engine` (`ferroseek-engine`) | lib | config/XDG/exclusions, mount policy, scanner (reconciliation), inotify watcher, indexing pipeline (batching, pause, throttle, status) |
+| `crates/config` (`ferroseek-config`) | lib | pure-Rust config/XDG validation and folder-only atomic settings edits |
+| `crates/engine` (`ferroseek-engine`) | lib | exclusions, mount policy, scanner (reconciliation), inotify watcher, indexing pipeline (batching, pause, throttle, status) |
 | `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control, file search and opening |
 | `crates/cli` (`ferroseek`) | bin | `search`, `status`, `pause`, `resume`, `index`, `rebuild`, `config` |
 | `crates/mcp` (`ferroseek-mcp`) | bin | optional read-only stdio MCP adapter and access policy, independent of KDE |
@@ -39,8 +40,9 @@ responsibilities were consolidated before adding the optional MCP adapter:
   the filesystem. They share the exclusion rules, the tree lookups and the
   same state-based "re-examine (dir, name)" primitive. Separating them would
   duplicate that logic.
-- **core → engine.** Config is consumed only by the engine, the daemon and
-  the CLI.
+- **Shared config.** The launcher and engine use one configuration schema. The
+  pure-Rust config crate lets the launcher validate and save folders without
+  linking the index/SQLite dependencies. The engine re-exports its original API.
 
 ## Storage: SQLite FTS5 trigram
 
@@ -232,6 +234,16 @@ containing colons remain separate paths. The index reader runs on a blocking
 worker and closes after the request; unavailable index data returns a D-Bus
 error. This method does not pause, resume or reconcile the engine. The existing
 string-map `Status()` response is unchanged.
+
+The same control interface provides `FolderPolicy()` (configuration path and
+active configuration as TOML) and `ReloadFolders(config_path, roots)` (boolean:
+other saved settings still need restart). Reload validates that the caller's
+configuration path and root list match the saved file. Only roots are applied;
+the indexer acknowledges the scope change and queues full reconciliation using
+its active exclusions. Removed roots/watches are dropped through the existing
+transactional policy path. Pause, throttling and other settings are retained.
+The launcher's policy read checks the current unique bus owner to avoid service
+activation during first-run editing; explicit Save & apply may activate it.
 
 D-Bus activation uses `io.github.ferroseek.FerroSeek.service`, optionally backed
 by `ferroseek.service`. The installer reloads bus registrations without
