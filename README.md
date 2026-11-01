@@ -66,6 +66,7 @@ configuration, optional service enablement, archives and uninstall.
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab | Select a result |
+| Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
 | Ctrl+Enter | Reveal a file in its folder |
