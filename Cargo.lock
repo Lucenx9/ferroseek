@@ -1025,16 +1025,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferroseek-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "toml",
+ "toml_edit",
+]
+
+[[package]]
 name = "ferroseek-engine"
 version = "0.1.0"
 dependencies = [
+ "ferroseek-config",
  "ferroseek-index",
  "libc",
  "log",
  "proptest",
- "serde",
  "tempfile",
- "toml",
 ]
 
 [[package]]
@@ -1051,6 +1060,7 @@ dependencies = [
 name = "ferroseek-launcher"
 version = "0.1.0"
 dependencies = [
+ "ferroseek-config",
  "ferroseek-engine",
  "freedesktop-icons",
  "iced",
@@ -3987,6 +3997,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

@@ -55,6 +55,7 @@ enum Msg {
     Resume,
     Reindex(Mode),
     Rebuild,
+    Roots(Vec<std::path::PathBuf>, mpsc::Sender<Result<(), String>>),
     Stop,
 }
 
@@ -82,6 +83,7 @@ pub struct Engine {
     stop_reader: Arc<AtomicBool>,
     wake: Arc<WakePipe>,
     lock: Mutex<Option<InstanceLock>>,
+    config: Mutex<Config>,
 }
 
 fn now_unix() -> i64 {
@@ -143,6 +145,7 @@ impl Engine {
     /// reconcile of all roots. Fails with [`EngineError::Busy`] if another
     /// process owns the index.
     pub fn start(cfg: &Config, paths: &Paths) -> Result<Engine, EngineError> {
+        let active_config = Mutex::new(cfg.clone());
         let lock = acquire(paths)?;
         let status = Arc::new(Status::default());
         let ino = Inotify::new()?;
@@ -195,6 +198,7 @@ impl Engine {
             stop_reader,
             wake,
             lock: Mutex::new(Some(lock)),
+            config: active_config,
         })
     }
 
@@ -204,6 +208,25 @@ impl Engine {
 
     pub fn status_handle(&self) -> Arc<Status> {
         self.status.clone()
+    }
+
+    pub fn configuration(&self) -> Config {
+        self.config.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Apply a saved folder scope on the indexer thread without restarting.
+    /// Acknowledgement means scope is installed, not that scanning is finished.
+    pub fn apply_roots(&self, roots: Vec<String>) -> Result<(), String> {
+        let mut config = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let updated = config.with_roots(roots).map_err(|e| e.to_string())?;
+        if *config == updated {
+            return Ok(());
+        }
+        let (reply, received) = mpsc::channel();
+        self.tx.send(Msg::Roots(updated.root_paths(), reply)).map_err(|_| "Indexer is not running".to_string())?;
+        received.recv().map_err(|_| "Indexer stopped before applying folders".to_string())??;
+        *config = updated;
+        Ok(())
     }
 
     pub fn pause(&self) {
@@ -330,6 +353,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                 Some(Msg::Resume) => {
                     if paused {
                         paused = false;
+                        scanning = false;
                         // Dropped events can include file metadata changes, which
                         // do not change the parent directory's mtime.
                         if missed_while_paused || !pending.is_empty() || ix.has_work() {
@@ -345,6 +369,23 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                     pending.clear();
                     first_event = None;
                     ix.rebuild()?;
+                }
+                Some(Msg::Roots(roots, reply)) => {
+                    pending.clear();
+                    first_event = None;
+                    let applied = ix.replace_roots(roots);
+                    let _ = reply.send(applied.as_ref().map(|_| ()).map_err(ToString::to_string));
+                    applied?;
+                    refresh_counts(&ix, status);
+                    scanning = ix.has_work();
+                    status.set_state(if paused {
+                        State::Paused
+                    } else if scanning {
+                        State::Scanning
+                    } else {
+                        State::Idle
+                    });
+                    scan_not_before = Instant::now();
                 }
                 Some(Msg::Stop) => return Ok(true),
                 None => {}

@@ -21,6 +21,7 @@ use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
 use crate::favorites::Favorites;
+use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::usage::{self, Kind, Usage};
@@ -44,7 +45,7 @@ fn full_height() -> u32 {
     compact_height() + (ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD) as u32
 }
 
-mod palette {
+pub(crate) mod palette {
     use iced::Color;
     pub const SURFACE: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.97);
     pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
@@ -67,6 +68,7 @@ pub struct Boot {
     pub usage: Usage,
     pub favorites: Favorites,
     pub initial_query: String,
+    pub settings_path: std::path::PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,6 +182,10 @@ pub struct Launcher {
     clicks: ClickTracker,
     panel: Option<Panel>,
     search_status: Option<SearchStatusPanel>,
+    folder_settings: Option<folders::Panel>,
+    folder_generation: u64,
+    settings_path: std::path::PathBuf,
+    deferred_query: Option<String>,
     status_generation: u64,
     generation: u64,
     status: Status,
@@ -193,6 +199,9 @@ pub enum Message {
     Scope(Scope),
     ActionQuery(String),
     ShowSearchStatus,
+    ShowFolders,
+    FolderShortcut(folders::Shortcut),
+    Folder { generation: u64, event: folders::Event },
     RefreshSearchStatus,
     CloseSearchStatus,
     SearchStatusLoaded { generation: u64, result: Result<SearchStatus, String> },
@@ -251,8 +260,9 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { backend, apps, usage, favorites, initial_query } =
+    let Boot { backend, apps, usage, favorites, initial_query, settings_path } =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    let first_run = !settings_path.exists();
     let mut state = Launcher {
         backend,
         apps,
@@ -271,12 +281,18 @@ fn boot() -> (Launcher, Task<Message>) {
         clicks: ClickTracker::default(),
         panel: None,
         search_status: None,
+        folder_settings: None,
+        folder_generation: 0,
+        settings_path,
+        deferred_query: first_run.then(|| initial_query.clone()),
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
     };
-    let prefill = if initial_query.is_empty() {
+    let prefill = if first_run {
+        state.show_folders(true)
+    } else if initial_query.is_empty() {
         Task::none()
     } else {
         Task::batch([Task::done(Message::Query(initial_query)), widget::operation::move_cursor_to_end(search_id())])
@@ -309,6 +325,9 @@ fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
     if mods == Modifiers::CTRL {
         match key.as_ref() {
+            Key::Character(",") => return Some(Message::ShowFolders),
+            Key::Character("s" | "S") => return Some(Message::FolderShortcut(folders::Shortcut::Save)),
+            Key::Character("d" | "D") => return Some(Message::FolderShortcut(folders::Shortcut::Remove)),
             Key::Character("i" | "I") => return Some(Message::ShowSearchStatus),
             Key::Character("r" | "R") => return Some(Message::RefreshSearchStatus),
             _ => {}
@@ -381,6 +400,7 @@ impl Launcher {
         let compact = self.query.trim().is_empty()
             && self.items.is_empty()
             && self.search_status.is_none()
+            && self.folder_settings.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -559,9 +579,61 @@ impl Launcher {
         let generation = self.status_generation;
         Task::perform(self.backend.clone().status(), move |result| Message::SearchStatusLoaded { generation, result })
     }
+
+    fn show_folders(&mut self, first_run: bool) -> Task<Message> {
+        self.folder_generation += 1;
+        let generation = self.folder_generation;
+        self.panel = None;
+        self.search_status = None;
+        self.clicks = ClickTracker::default();
+        let mut panel = folders::Panel::new(self.settings_path.clone(), first_run);
+        let load = panel.load(self.backend.clone()).map(move |event| Message::Folder { generation, event });
+        self.folder_settings = Some(panel);
+        Task::batch([load, self.resize()])
+    }
+
+    fn finish_folders(&mut self, task: Task<folders::Event>, effect: folders::Effect) -> Task<Message> {
+        let generation = self.folder_generation;
+        let task = task.map(move |event| Message::Folder { generation, event });
+        match effect {
+            folders::Effect::None => task,
+            folders::Effect::Close { .. } if self.folder_settings.as_ref().is_some_and(|p| p.exit_on_cancel) => {
+                iced::exit()
+            }
+            folders::Effect::Close { refresh } => {
+                self.folder_settings = None;
+                self.folder_generation += 1;
+                let refresh = if refresh { update(self, Message::Query(self.query.clone())) } else { Task::none() };
+                Task::batch([task, refresh, self.resize(), widget::operation::focus(search_id())])
+            }
+            folders::Effect::Applied => {
+                self.folder_settings = None;
+                self.folder_generation += 1;
+                let query = self.deferred_query.take().unwrap_or_else(|| self.query.clone());
+                let search = update(self, Message::Query(query));
+                self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
+                Task::batch([task, search, self.resize(), widget::operation::focus(search_id())])
+            }
+        }
+    }
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.folder_settings.is_some()
+        && matches!(
+            message,
+            Message::Query(_)
+                | Message::Scope(_)
+                | Message::ActionQuery(_)
+                | Message::Selected(_)
+                | Message::Clicked(_)
+                | Message::ContextMenu(_)
+                | Message::PanelClicked { .. }
+                | Message::ShowSearchStatus
+        )
+    {
+        return Task::none();
+    }
     // Queued input from the search view must not act through the status view.
     if s.search_status.is_some()
         && matches!(
@@ -578,6 +650,34 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::ShowFolders => {
+            if let Some(panel) = &mut s.folder_settings {
+                let (task, effect) = panel.update(folders::Event::Back, s.backend.clone());
+                s.finish_folders(task, effect)
+            } else if s.opening.is_some() {
+                Task::none()
+            } else {
+                s.show_folders(false)
+            }
+        }
+        Message::FolderShortcut(shortcut) => {
+            let Some(panel) = &mut s.folder_settings else { return Task::none() };
+            let (task, effect) = panel.shortcut(shortcut, s.backend.clone());
+            s.finish_folders(task, effect)
+        }
+        Message::Folder { generation, event } => {
+            if generation != s.folder_generation {
+                return Task::none();
+            }
+            let Some(panel) = &mut s.folder_settings else { return Task::none() };
+            let (task, effect) = panel.update(event, s.backend.clone());
+            s.finish_folders(task, effect)
+        }
+        Message::RefreshSearchStatus if s.folder_settings.is_some() => {
+            let panel = s.folder_settings.as_mut().unwrap();
+            let (task, effect) = panel.update(folders::Event::Reload, s.backend.clone());
+            s.finish_folders(task, effect)
+        }
         Message::ShowSearchStatus => {
             if s.search_status.is_some() {
                 return update(s, Message::CloseSearchStatus);
@@ -680,7 +780,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
-            if s.search_status.is_some() {
+            if s.search_status.is_some() || s.folder_settings.is_some() {
                 return Task::none(); // the status scrollable handles its own wheel events
             }
             let delta = if dy > 0.0 { -1 } else { 1 };
@@ -762,6 +862,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.folder_settings {
+        let (task, effect) = panel.command(cmd, s.backend.clone());
+        return s.finish_folders(task, effect);
+    }
     if s.search_status.is_some() {
         use widget::operation::{AbsoluteOffset, RelativeOffset};
         return match cmd {
@@ -849,6 +953,10 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.folder_settings {
+        let generation = s.folder_generation;
+        return panel.view().map(move |event| Message::Folder { generation, event });
+    }
     if let Some(status) = &s.search_status {
         return search_status_view(status);
     }
@@ -889,7 +997,9 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         .on_press(Message::ShowSearchStatus)
         .padding([6, 8])
         .style(status_button_style);
-    let header = container(row![input, scopes, index_status].spacing(4).align_y(Vertical::Center))
+    let folders =
+        button(text("Folders").size(11)).on_press(Message::ShowFolders).padding([6, 8]).style(status_button_style);
+    let header = container(row![input, scopes, index_status, folders].spacing(4).align_y(Vertical::Center))
         .padding([0, 8])
         .height(INPUT_HEIGHT)
         .align_y(Vertical::Center);
@@ -916,6 +1026,15 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     })
 }
 
+pub(crate) fn surface_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(palette::SURFACE)),
+        border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
+        text_color: Some(palette::TEXT),
+        ..Default::default()
+    }
+}
+
 fn divider<'a>() -> Element<'a, Message> {
     container(space::horizontal())
         .height(1)
@@ -935,7 +1054,7 @@ fn index_summary(status: &SearchStatus) -> (&'static str, &'static str) {
     }
 }
 
-fn status_button_style(_: &Theme, status: button::Status) -> button::Style {
+pub(crate) fn status_button_style(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: matches!(status, button::Status::Hovered | button::Status::Pressed)
             .then_some(Background::Color(palette::FAINT)),
@@ -1179,7 +1298,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     .into()
 }
 
-fn hint<'a>(key: &'a str, label: &'a str) -> Element<'a, Message> {
+pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     row![
         container(text(key).size(11).color(palette::TEXT)).padding([1, 6]).style(|_| container::Style {
             background: Some(Background::Color(palette::FAINT)),
@@ -1314,6 +1433,10 @@ mod tests {
             clicks: ClickTracker::default(),
             panel: None,
             search_status: None,
+            folder_settings: None,
+            folder_generation: 0,
+            settings_path: "/synthetic/config.toml".into(),
+            deferred_query: None,
             status_generation: 0,
             generation: 0,
             status: Status::Idle,

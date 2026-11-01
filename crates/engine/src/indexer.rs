@@ -139,6 +139,22 @@ impl Indexer {
         self.schedule_all(mode)
     }
 
+    /// Replace only folder scope; reconciliation uses the existing active rules.
+    pub fn replace_roots(&mut self, roots: Vec<PathBuf>) -> Result<()> {
+        if self.st.roots == roots {
+            return Ok(());
+        }
+        let previous = std::mem::replace(&mut self.st.roots, roots);
+        self.st.work.clear();
+        self.st.retry.clear();
+        if let Err(error) = self.sync_roots(Mode::Full) {
+            self.st.roots = previous;
+            let _ = self.sync_roots(Mode::Full);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// Queues a reconcile pass over every root. A new pass supersedes
     /// pending work (it covers everything); `Full` wins over `Quick`.
     pub fn schedule_all(&mut self, mode: Mode) -> Result<()> {

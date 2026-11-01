@@ -8,8 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 ferroseek-index.workspace = true
-serde.workspace = true
-toml.workspace = true
+ferroseek-config.workspace = true
 libc.workspace = true
 log.workspace = true
 

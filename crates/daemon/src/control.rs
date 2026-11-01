@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use ferroseek_engine::{Engine, Paths, Snapshot};
+use ferroseek_engine::{Config, Engine, Paths, Snapshot};
 
 type FileSearchStatus = (String, u64, u64, u64, bool, u64, Vec<String>);
 
@@ -16,6 +16,40 @@ pub struct Control {
 
 #[zbus::interface(name = "io.github.ferroseek.FerroSeek1")]
 impl Control {
+    /// Active rules, distinct from a configuration file edited after startup.
+    async fn folder_policy(&self) -> (String, String) {
+        let engine = self.engine.clone();
+        let path = self.paths.config_file.to_string_lossy().into_owned();
+        (path, zruntime::unblock(move || engine.configuration().to_toml()).await)
+    }
+
+    /// Apply an explicitly saved folder list without restarting or resuming.
+    async fn reload_folders(&self, config_path: String, roots: Vec<String>) -> zbus::fdo::Result<bool> {
+        let engine = self.engine.clone();
+        let path = self.paths.config_file.clone();
+        zruntime::unblock(move || {
+            let selected =
+                std::fs::canonicalize(&config_path).map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))?;
+            let active = std::fs::canonicalize(&path).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            if selected != active {
+                return Err(zbus::fdo::Error::InvalidArgs(
+                    "The running service uses a different configuration file. Saved folders were not applied.".into(),
+                ));
+            }
+            let config = Config::load(&path).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            if config.roots != roots {
+                return Err(zbus::fdo::Error::InvalidArgs(
+                    "Folders changed on disk before applying. Reload settings first.".into(),
+                ));
+            }
+            engine.apply_roots(roots).map_err(zbus::fdo::Error::Failed)?;
+            let mut active = engine.configuration();
+            active.roots = config.roots.clone();
+            Ok(active != config)
+        })
+        .await
+    }
+
     /// Typed status for the launcher, including the indexed roots as an array.
     async fn file_search_status(&self) -> zbus::fdo::Result<(String, u64, u64, u64, bool, u64, Vec<String>)> {
         let snapshot = self.engine.status();
