@@ -133,6 +133,10 @@ search service without leaving the launcher. Empty file searches and search
 errors also offer **Check file search status**. Esc or **Back to search** returns
 to the same query, filter and selected result.
 
+![File search status with synthetic indexed folders](assets/launcher-index-status.png)
+
+Screenshot from a nested test session with sample files.
+
 The view distinguishes starting, indexing, watching for changes, paused and
 stopping states. It shows indexed file/folder counts, queued folders and indexed
 locations. Counts describe the index, not the current query's results or a
@@ -143,9 +147,9 @@ session and does not mean every reported error is still unresolved.
 Opening the view requests a snapshot and can D-Bus-activate the search service.
 It does not poll in the background. Use **Refresh** or Ctrl+R for a new snapshot;
 only one status request is sent at a time. Up/Down, Page Up/Page Down,
-Ctrl+Home/Ctrl+End and the mouse wheel scroll the details. If the service cannot
-answer, the view shows an error with retry and return controls; missing data is
-not displayed as zero. Applications and calculations remain usable.
+Ctrl+Home/Ctrl+End and the mouse wheel scroll the details. If status cannot be
+retrieved, the view shows an error with retry and return controls; missing data
+is not displayed as zero. Applications and calculations remain usable.
 
 This view does not edit configuration or pause/resume indexing. Folder selection
 and first-run configuration in the launcher remain planned. Install or update

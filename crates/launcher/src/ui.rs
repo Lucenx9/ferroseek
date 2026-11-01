@@ -958,9 +958,11 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
             content = content.push(text("Connecting to the search service.").size(13).color(palette::DIM));
         }
         SearchStatusPanel::Error(error) => {
-            content = content.push(text("File search unavailable").size(18).color(palette::ERROR));
-            content =
-                content.push(text("Refresh to try again, or go back to search applications and calculate.").size(13));
+            content = content.push(text("Search status unavailable").size(18).color(palette::ERROR));
+            content = content.push(
+                text("Refresh to try again. If this persists, update the launcher and search service together.")
+                    .size(13),
+            );
             content = content.push(text(error).size(12).color(palette::DIM));
         }
         SearchStatusPanel::Ready(info) => {
@@ -1726,9 +1728,12 @@ mod tests {
     #[test]
     fn search_status_blocks_queued_result_actions_and_scope_navigation() {
         let mut s = search_state();
+        // A misrouted activation must never spawn an external program in this test.
+        s.apps[0].exec.clear();
         let _ = update(&mut s, Message::Query("report".into()));
         let target = s.selected().unwrap().target.clone();
         let generation = s.generation;
+        let search_status = s.status.clone();
         let _ = update(&mut s, Message::ShowSearchStatus);
         for message in [
             Message::Query("changed".into()),
@@ -1757,6 +1762,7 @@ mod tests {
         assert_eq!(s.cursor.selected, 0);
         assert!(s.panel.is_none());
         assert!(s.opening.is_none());
+        assert_eq!(s.status, search_status);
         // A current file reply can finish without replacing the status view.
         let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
         assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
@@ -1768,6 +1774,11 @@ mod tests {
         let mut s = search_state();
         let _ = update(&mut s, Message::RefreshSearchStatus);
         assert_eq!(s.status_generation, 0, "refresh outside the view must not activate the daemon");
+        s.opening = Some(("file:///synthetic/report.txt".into(), String::new()));
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(s.search_status.is_none(), "an ongoing file open must finish before opening status");
+        assert_eq!(s.status_generation, 0);
+        s.opening = None;
         let _ = update(&mut s, Message::ShowSearchStatus);
         assert!(!s.compact);
         let generation = s.status_generation;
