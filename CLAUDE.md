@@ -1,8 +1,11 @@
 # FerroSeek: notes for agents
 
-FerroSeek is a desktop-independent Rust filename/path search engine for
-Linux. The core CLI, optional KDE KRunner D-Bus adapter and optional MCP
-stdio server share one index. Design is in `docs/ARCHITECTURE.md`, measured
+FerroSeek is a keyboard-first Linux launcher for applications, files and
+calculations, powered by its Rust filename/path search engine. Prioritize
+the standalone launcher and its daily-use reliability. Keep the engine/CLI
+usable independently, maintain existing KRunner/Noctalia integrations and
+optional MCP, and defer new desktop adapters. These clients share one index.
+Design is in `docs/ARCHITECTURE.md`, measured
 results in `docs/BENCHMARKS.md`, installation in `docs/INSTALLATION.md`,
 and historical Baloo/KRunner research in `docs/RESEARCH.md`.
 
@@ -28,7 +31,7 @@ claims tied to their measured workloads. Do not imply Baloo feature parity.
 - `crates/mcp` (`ferroseek-mcp`): optional read-only MCP stdio server (rmcp 3.8).
   `policy.rs` (allowlist/deny/path validation, pure) and `server.rs` (tools,
   reader cache, idle release). See `docs/MCP.md`.
-- `crates/launcher` (`ferroseek-launcher`): optional pure-Rust Wayland
+- `crates/launcher` (`ferroseek-launcher`): main pure-Rust Wayland
   launcher (iced + iced_layershell). `model.rs` (rows, selection, keys,
   pure), `backend.rs` (bus thread), `apps.rs` (own .desktop parser),
   `usage.rs` (launch history), `calc.rs`. See `docs/LAUNCHER.md`.
@@ -191,7 +194,9 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 
 - Installer needs Python 3.11+; shell entrypoints only dispatch. No engine,
   schema, KRunner protocol or MCP server changes are needed for packaging.
-- Default is interactive; explicit component flags are scriptable. Core is
+- Default is interactive; on Wayland recommend launcher + core, otherwise core.
+  `--launcher` installs the main UI; package.py defaults to launcher archives.
+  Explicit component flags are scriptable. Core is
   required by integrations; additions preserve previously installed components.
 - Never restart on upgrade. --enable and uninstall --stop are explicit actions.
   Agent edits require a displayed plan, explicit roots and a separate yes.

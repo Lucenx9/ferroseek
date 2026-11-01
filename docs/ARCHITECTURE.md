@@ -1,19 +1,22 @@
 # FerroSeek architecture
 
-Status: filename/path MVP architecture, updated 2026-10-31. Technical
+Status: launcher and search engine architecture, updated 2026-11-01. Technical
 decisions and historical measurements are retained with their evidence.
 
 ## Goals and non-goals
 
+- **Goal:** a keyboard-first Linux launcher for applications, files and
+  calculations, with local history and keyboard actions. The current UI
+  targets Wayland with `wlr-layer-shell`.
 - **Goal:** lightweight, desktop-independent filename and path discovery
   over configured Linux directories, kept current with inotify, without
   root privileges or mandatory graphical dependencies.
-- **Goal:** one persistent search index shared by the CLI and optional
+- **Goal:** one persistent search index powering the main launcher, CLI and optional
   integrations: KRunner for KDE Plasma, Noctalia's launcher and MCP for agents.
 - **Future option:** bounded, opt-in text-content search measured separately.
 - **Non-goal for the MVP:** replacing the Baloo framework API (`Baloo::Query`,
   KIO `baloosearch:/`, tags or Dolphin search integration). GNOME, Rofi and
-  other launchers beyond Noctalia are planned adapters, not currently implemented.
+  other launchers beyond Noctalia are deferred adapters, not currently implemented.
 
 ## Workspace layout
 
@@ -24,7 +27,7 @@ decisions and historical measurements are retained with their evidence.
 | `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control interface, KRunner runner |
 | `crates/cli` (`ferroseek`) | bin | `search`, `status`, `pause`, `resume`, `index`, `rebuild`, `config` |
 | `crates/mcp` (`ferroseek-mcp`) | bin | optional read-only stdio MCP adapter and access policy, independent of KDE |
-| `crates/launcher` (`ferroseek-launcher`) | bin | optional Wayland launcher: applications, daemon file results, calculator; never opens the index |
+| `crates/launcher` (`ferroseek-launcher`) | bin | main Wayland launcher: applications, daemon file results, calculator; never opens the index |
 | `crates/bench` (`ferroseek-bench`) | bin | deterministic corpus generator and benchmark runner |
 
 The original engineering brief proposed eight crates. Several of those
@@ -209,7 +212,7 @@ Noctalia ──> CLI (search --json) ──> same index
 ferroseek-launcher ──> daemon D-Bus runner (Match/Run) ──> same index
 ```
 
-The optional `ferroseek-launcher` is a separate layer-shell client. It gets
+The main `ferroseek-launcher` is a separate layer-shell client. It gets
 file results from the daemon's runner over D-Bus, parses desktop entries for
 applications itself and keeps its own launch history. See
 [LAUNCHER.md](LAUNCHER.md).
@@ -217,7 +220,7 @@ applications itself and keeps its own launch history. See
 The optional Noctalia v5 adapter lives in `integrations/noctalia/ferroseek`.
 It uses argument-array subprocesses, coalesces input while a query is in flight,
 and opens results through `xdg-open`. See [setup and validation limits](NOCTALIA.md).
-GNOME, Rofi and other launchers are future adapters.
+New GNOME, Rofi and other desktop adapters are deferred while the standalone launcher is hardened.
 
 ## KRunner integration
 

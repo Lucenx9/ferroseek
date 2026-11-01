@@ -20,16 +20,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--components', choices=['core', 'mcp', 'krunner', 'noctalia', 'full'], default='full')
+    parser.add_argument('--components', choices=['launcher', 'core', 'mcp', 'krunner', 'noctalia', 'full'], default='launcher')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')
     parser.add_argument('--no-build', action='store_true')
     args = parser.parse_args()
     if platform.system() != 'Linux':
         parser.error('native Linux packaging only; cross-built artifacts need a separate validation workflow')
-    components = ['core'] + (['mcp', 'krunner', 'noctalia'] if args.components == 'full' else [] if args.components == 'core' else [args.components])
+    components = ['core'] + (['launcher', 'mcp', 'krunner', 'noctalia'] if args.components == 'full' else [] if args.components == 'core' else [args.components])
     binaries = {'ferroseek': 'ferroseek-cli', 'ferroseekd': 'ferroseek-daemon'}
     if 'mcp' in components:
         binaries['ferroseek-mcp'] = 'ferroseek-mcp'
+    if 'launcher' in components:
+        binaries['ferroseek-launcher'] = 'ferroseek-launcher'
     if not args.no_build:
         subprocess.run(['cargo', 'build', '--release', '--locked', *[a for p in binaries.values() for a in ['-p', p]]], cwd=ROOT, check=True)
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']

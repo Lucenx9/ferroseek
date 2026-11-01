@@ -1,8 +1,36 @@
 # FerroSeek roadmap
 
-FerroSeek is a **desktop-independent Linux filename/path search engine** with optional terminal, desktop and agent interfaces. Checked items reflect implemented and tested work; they do **not** mean a public binary release or cross-distribution certification is complete.
+FerroSeek is a **keyboard-first Linux launcher** for applications, files and
+calculations, powered by its own Rust file search engine. The standalone
+launcher is the main product. The engine and CLI remain independently usable;
+KRunner, Noctalia and MCP remain optional components.
 
-## Implemented in the 0.1 MVP
+The launcher is experimental. Checked items describe implemented work, not a
+published release or verified compatibility with every Linux desktop.
+
+## Main priority: a launcher for daily use
+
+- [x] Wayland layer-shell UI with application search, indexed file results,
+  calculator, local launch history and keyboard actions.
+- [x] Single-instance toggle, private mode, file opening and reveal-in-folder.
+- [x] Managed `--launcher` installation/removal and launcher archives including
+  the engine and CLI; guided setup recommends the launcher on Wayland.
+- [ ] Validate real desktop sessions and publish an explicit compositor support
+  matrix. Current graphical evidence is nested virtual KWin only.
+- [ ] Make focus and application activation reliable, including XDG activation
+  tokens where supported.
+- [ ] Give the launcher a dedicated daemon search interface; remove interference
+  between simultaneous KRunner and launcher queries.
+- [ ] Add configuration for appearance, light/dark themes, size and position.
+- [ ] Make initial indexing setup and missing-service/error feedback clear in
+  the launcher, including selection of indexing roots.
+- [ ] Measure startup and typing-to-results latency with the UI and daemon
+  together before choosing further performance work.
+- [ ] Publish a scoped launcher beta after desktop and packaging validation.
+
+See [launcher setup and current limits](LAUNCHER.md).
+
+## Existing search engine and supporting components
 
 - [x] Rust search core, SQLite FTS5 trigram filename index, parent-pointer tree and ranked path/name queries.
 - [x] Inotify-driven incremental indexing, reconciliations, recovery, background throttling and pause/resume.
@@ -20,12 +48,11 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 - [ ] Finish extended real-world stability checks across larger and more varied user directories.
 - [ ] Validate additional Linux distributions, architectures, libc environments and desktop configurations.
 - [ ] Decide binary libc baselines; add release provenance, SBOM/dependency notices, signing/checksums and reproducible release builds.
-- [ ] Publish a scoped first beta after packaging and functional validation.
 - [ ] Strengthen stress tests for forced inotify overflow, permission failures, suspend/resume, races and interrupted reconciliation.
 - [ ] Improve per-root watch/degradation reporting, and investigate occasional rename-visibility outliers at scale.
 - [ ] Keep source installation and uninstall safe; improve diagnostics without automatically modifying running installations.
 
-## Search and indexing
+## Search engine improvements
 
 - [ ] Improve broad/short-path fallback latency and the mixed-query p95 while preserving correctness and low memory use.
 - [ ] Consider indexed or query-time metadata filters for type, extension, size and modification date, measured against the existing baseline.
@@ -33,19 +60,20 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 - [ ] Keep potential PDF/office extractors isolated and optional until justified by measurements.
 - [ ] Investigate initial-scan heap retention, dedicated resume reconciliation, SIGHUP config reload and alternate watch strategies only where supported by evidence.
 
-## Desktop and terminal integrations
+## Existing integrations: maintenance
 
 - [x] Core CLI and KDE KRunner.
-- [x] Optional Noctalia v5 `/ferro` provider and versioned CLI JSON output; isolated CLI/mock-host tests. See [setup and remaining desktop validation](NOCTALIA.md).
-- [x] Managed Noctalia installer component, explicit activation, partial removal and native archives.
-- [ ] Rofi adapter: validate real query/update capabilities rather than assuming arbitrary per-keystroke search.
-- [ ] GNOME Shell SearchProvider2 adapter, tested under a real GNOME session.
-- [ ] Evaluate bounded dmenu/Fuzzel/Wofi workflows and Walker/Elephant integration.
-- [ ] Consider Dolphin/KIO search integration and a KDE settings page as optional adapters; neither is a core dependency.
+- [x] Optional Noctalia v5 `/ferro` provider and versioned CLI JSON output;
+  managed installation, activation, partial removal and native archives.
+- [ ] Maintain bug fixes and compatibility for KRunner and Noctalia. Complete
+  remaining [Noctalia desktop validation](NOCTALIA.md).
 
-All desktop adapters should reuse the same index and avoid a permanent extra background service when not needed.
+These integrations reuse the same index. They remain available to users who
+prefer another launcher. New GNOME SearchProvider2, Rofi, dmenu/Fuzzel/Wofi,
+Walker/Elephant and Dolphin/KIO adapters are deferred. They are not requirements
+for the standalone launcher beta.
 
-## AI agent integration
+## Optional AI agent integration
 
 - [x] MCP stdio `search_files`, `get_file_info`, `index_status` with read-only index access.
 - [x] Restricted and optional global indexed-root modes, hidden/sensitive-name filtering, and live existence checks.
@@ -64,6 +92,8 @@ See [comparisons](COMPARISONS.md), [source-level Baloo research](RESEARCH.md) an
 
 ## Non-goals
 
-- Rebuilding KRunner, replacing KDE Plasma or silently disabling other search engines.
+- Replacing KDE Plasma or silently disabling other search engines.
+- Expanding into a general plugin platform or clipboard manager before the
+  application/file launcher is reliable for daily use.
 - Mandatory agent tooling, embeddings, remote indexing services or telemetry.
 - Claiming feature parity or universal platform support before verification.

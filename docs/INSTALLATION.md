@@ -1,6 +1,11 @@
 # Installing FerroSeek
 
-FerroSeek currently supports Linux. Install as your normal user, without sudo.
+FerroSeek is a Linux launcher with a reusable file search engine. Install as
+your normal user, without sudo. The main installation is `--launcher`, which
+includes the indexing daemon and CLI. The UI requires Wayland with
+`wlr-layer-shell` and session D-Bus; see [tested scope and limits](LAUNCHER.md).
+Launcher source builds also need libxkbcommon development files. The engine
+and CLI can be installed independently for headless use.
 Python 3.11+ is required by the installer; source builds also need Rust 1.89+,
 a C compiler/linker and Cargo. SQLite is bundled. `/usr/bin/env` is used for
 setting activation environment variables. A fixed `/bin/sh` exec command
@@ -11,7 +16,8 @@ No downloads or remote scripts are executed by the installer.
 ## Select components
 
 ```sh
-./scripts/install.sh                # interactive detection and recommendations
+./scripts/install.sh --launcher     # main product: launcher + daemon + CLI
+./scripts/install.sh                # guided setup; launcher recommended on Wayland
 ./scripts/install.sh --dry-run      # inspect recommended changes; no writes/build
 ./scripts/install.sh --core         # daemon + CLI, no graphical integration
 ./scripts/install.sh --krunner      # core + KDE Plasma KRunner registration
@@ -24,14 +30,18 @@ No downloads or remote scripts are executed by the installer.
 
 Explicit component flags are non-interactive, except optional agent registration.
 No flags with redirected input is rejected; scripts must choose components.
-KRunner is recommended on Plasma. Noctalia supplies its own optional launcher
-integration, including on Niri. CLI indexing/search works without a graphical
+Guided setup recommends launcher + core in a Wayland session and core alone
+otherwise. Wayland detection does not establish compositor layer-shell support.
+Explicit `--launcher` also permits installation for a later graphical session.
+KRunner, Noctalia and MCP are optional selections. `--full` includes the launcher
+when Wayland is detected, plus compatible integrations. Noctalia supplies its
+own optional launcher integration, including on Niri. CLI indexing/search works without a graphical
 session or session D-Bus. Core includes optional user systemd/D-Bus activation
 files for its control interface; it does not depend on KDE packages or MCP.
 
 The installer reports distribution, architecture, desktop, session D-Bus,
 systemd user manager, agent CLI availability and existing configuration.
-Noctalia is recommended/included in `--full` when stable Noctalia v5+ and GLib
+Noctalia is included in `--full` when stable Noctalia v5+ and GLib
 `gio` are available. Explicit `--noctalia` validates those requirements before
 installing files; dependencies are not installed automatically. Its managed
 plugin copy lives at `$XDG_DATA_HOME/noctalia/plugins/ferroseek` and defaults to
@@ -48,8 +58,10 @@ Choose roots with `ferroseek config` before starting if you want a smaller scope
 `--config /absolute/path/config.toml` installs initial engine configuration only
 when no configuration exists; subsequent installs never replace it or an index.
 
-Installation does not start or restart the daemon. On Plasma, D-Bus activation
-starts it on the first relevant query. To opt into background indexing now:
+Installation does not start or restart the daemon. The standalone launcher
+and KRunner D-Bus-activate it on their first file query. Bind
+`ferroseek-launcher` to a shortcut in your desktop settings; the installer does
+not register shortcuts or launch the UI. To opt into background indexing now:
 
 ```sh
 ./scripts/install.sh --core --enable
@@ -166,6 +178,7 @@ close their configuration editors during registration.
 
 ```sh
 ./scripts/uninstall.sh --dry-run
+./scripts/uninstall.sh --launcher    # remove UI only, retain engine/integrations
 ./scripts/uninstall.sh --mcp         # remove only the optional executable
 ./scripts/uninstall.sh --krunner     # remove only KDE registration
 ./scripts/uninstall.sh --noctalia    # disable/remove only the managed plugin
@@ -191,6 +204,8 @@ unsupported: user data removal is separate from software uninstallation.
 ## Local distribution archives (no release published)
 
 ```sh
+python3 scripts/package.py                    # default: launcher + core
+python3 scripts/package.py --components launcher
 python3 scripts/package.py --components core
 python3 scripts/package.py --components krunner
 python3 scripts/package.py --components mcp
@@ -202,7 +217,8 @@ python3 scripts/package.py --components full
 Archives are native Linux `tar.gz` files under `dist/`, with a SHA-256 sidecar,
 `bin/`, component/platform metadata, per-file integrity hashes, installation
 scripts/templates, license and installation/MCP documentation.
-Noctalia/full archives also include the plugin payload and Noctalia guide.
+Launcher/full archives include the standalone UI. All archives include the
+launcher guide; Noctalia/full archives also include the plugin payload and Noctalia guide.
 Metadata is normalized for reproducibility (`SOURCE_DATE_EPOCH`, default zero). Output files
 are never silently overwritten. No upload, GitHub release or AUR dependency.
 

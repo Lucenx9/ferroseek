@@ -1,14 +1,14 @@
 # FerroSeek launcher (`ferroseek-launcher`)
 
-An optional, keyboard-first launcher for applications and FerroSeek file
-search on Wayland. It draws a layer-shell overlay, asks the running
+FerroSeek's main user interface is a keyboard-first Linux launcher for
+applications, files and calculations on Wayland. It draws a layer-shell overlay, asks the running
 `ferroseekd` for file results and launches applications from their
 freedesktop desktop entries. It is a separate process: it never opens or
 writes the index and adds no background service.
 
 **Status:** experimental. Built and tested in a nested, virtual KWin
 (Plasma 6). Other compositors that implement `wlr-layer-shell` should work
-but have not been tested. The installer does not manage it yet.
+but have not been tested. The installer manages the launcher and its search engine with `--launcher`.
 
 ## Build and run
 
@@ -17,8 +17,7 @@ Building needs the libxkbcommon development files (`pkg-config xkbcommon`;
 dependency of the layer-shell backend probes at build time.
 
 ```sh
-cargo build --release -p ferroseek-launcher
-install -Dm755 target/release/ferroseek-launcher ~/.local/bin/ferroseek-launcher
+./scripts/install.sh --launcher  # builds and installs launcher + daemon + CLI
 ferroseek-launcher            # opens; run it again to close it
 ```
 
@@ -33,6 +32,11 @@ closes the open instance (single instance via the session-bus name
 | `--query TEXT` | start with `TEXT` already typed |
 | `--private` | do not record anything opened in this session |
 | `--forget-history` | delete the launch history and exit |
+
+The installer preserves configuration and indexes and does not start indexing
+unless `--enable` is supplied. Review indexing roots before enabling it.
+`./scripts/uninstall.sh --launcher` removes only the launcher and retains
+the engine and integrations. See [installation](INSTALLATION.md).
 
 ## Keys
 

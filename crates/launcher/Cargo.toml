@@ -1,6 +1,8 @@
 [package]
 name = "ferroseek-launcher"
-description = "Keyboard-first Wayland launcher for applications and FerroSeek file search"
+description = "FerroSeek Linux launcher for applications, files and calculations on Wayland"
+keywords = ["launcher", "linux", "wayland", "file-search"]
+categories = ["gui"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
