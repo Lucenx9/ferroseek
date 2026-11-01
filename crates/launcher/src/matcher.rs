@@ -6,13 +6,16 @@
 //! prefix, word prefix, substring, then an in-order subsequence that
 //! prefers word starts. File names are ranked by the daemon, not here.
 
+/// Score of a whole-label match.
+pub const EXACT: u32 = 1000;
+
 /// Score of one token against one label, or `None` if it does not match.
 fn token_score(token: &str, label: &str) -> Option<u32> {
     if token.is_empty() {
         return Some(0);
     }
     if label == token {
-        return Some(1000);
+        return Some(EXACT);
     }
     if let Some(rest) = label.strip_prefix(token) {
         // Shorter remainders rank higher: "fire" prefers "firefox" to

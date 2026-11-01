@@ -34,15 +34,31 @@ pub fn evaluate(input: &str) -> Option<f64> {
     (p.pos == p.tokens.len() && v.is_finite()).then_some(v)
 }
 
-/// Display form: integers without a fraction, others with up to 10
-/// significant decimals and no trailing zeros.
+/// Significant digits shown (and copied) for non-integer results.
+const SIGNIFICANT: i32 = 10;
+
+/// Display form with up to 10 significant digits and no trailing zeros:
+/// integers as integers, ordinary magnitudes in fixed point, very small or
+/// very large values in scientific notation (so `10^-12` never becomes 0).
 pub fn format(v: f64) -> String {
-    if v == v.trunc() && v.abs() < 1e15 {
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    let a = v.abs();
+    if v == v.trunc() && a < 1e15 {
         return format!("{}", v as i64);
     }
-    let s = format!("{v:.10}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".to_string() } else { s.to_string() }
+    if (1e-4..1e15).contains(&a) {
+        let int_digits = a.log10().floor() as i32 + 1;
+        let decimals = (SIGNIFICANT - int_digits).max(0) as usize;
+        let s = format!("{v:.decimals$}");
+        let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.') } else { &s };
+        return s.to_string();
+    }
+    let s = format!("{v:.prec$e}", prec = (SIGNIFICANT - 1) as usize);
+    let (mantissa, exp) = s.split_once('e').unwrap_or((&s, "0"));
+    let mantissa = if mantissa.contains('.') { mantissa.trim_end_matches('0').trim_end_matches('.') } else { mantissa };
+    format!("{mantissa}e{exp}")
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +257,18 @@ mod tests {
         assert_eq!(ev("0.1+0.2").as_deref(), Some("0.3"));
         assert_eq!(ev("6 × 7 ÷ 2").as_deref(), Some("21"));
         assert_eq!(ev("sqrt(16) + abs(-2)").as_deref(), Some("6"));
-        assert_eq!(ev("2*pi").as_deref(), Some("6.2831853072"));
+        assert_eq!(ev("2*pi").as_deref(), Some("6.283185307"));
+    }
+
+    #[test]
+    fn small_and_large_results_keep_significant_digits() {
+        assert_eq!(ev("10^-12").as_deref(), Some("1e-12"));
+        assert_eq!(ev("-1/3000000").as_deref(), Some("-3.333333333e-7"));
+        assert_eq!(ev("1/4000").as_deref(), Some("0.00025"));
+        assert_eq!(ev("2^60").as_deref(), Some("1.152921505e18"));
+        assert_eq!(ev("12345.678901234*1").as_deref(), Some("12345.6789"));
+        assert_eq!(ev("0.1*3").as_deref(), Some("0.3"));
+        assert_eq!(ev("-0.5*0").as_deref(), Some("0"));
     }
 
     #[test]

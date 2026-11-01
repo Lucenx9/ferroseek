@@ -33,6 +33,11 @@ pub struct App {
 impl App {
     /// Matching score for query tokens, or `None`.
     pub fn score(&self, tokens: &[String]) -> Option<u32> {
+        // The whole name typed out is an exact match even when it has
+        // several words (token scores alone would average below exact).
+        if !tokens.is_empty() && tokens.iter().map(String::as_str).eq(self.search[0].0.split_whitespace()) {
+            return Some(matcher::EXACT);
+        }
         let labels: Vec<(&str, u32)> = self.search.iter().map(|(l, w)| (l.as_str(), *w)).collect();
         matcher::score(tokens, &labels)
     }

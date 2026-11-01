@@ -49,8 +49,8 @@ pub struct Item {
     pub tag: &'static str,
 }
 
-/// Score of an exact whole-name match (see `matcher`).
-const EXACT_SCORE: u32 = 1000;
+/// Score of an exact whole-name match.
+const EXACT_SCORE: u32 = matcher::EXACT;
 
 /// Matching applications for `query` as `(index, match score)`, best
 /// first. Launch history (`boost`, capped) only reorders matches of the
@@ -383,6 +383,34 @@ mod tests {
         order_files(&mut files, |f| if f.name == "c" { 30 } else { 0 });
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn history_never_crosses_match_classes() {
+        let mk = |n: &str, comment: &str| {
+            let t = format!("[Desktop Entry]\nType=Application\nName={n}\nComment={comment}\nExec=x\n");
+            crate::apps::parse(&format!("{n}.desktop"), Path::new("/a"), &t, &[], &[]).unwrap()
+        };
+        let max = crate::usage::MAX_BOOST;
+
+        // A heavily used prefix match never passes an exact name, and a
+        // used description-only match stays weak (below files).
+        let b = vec![mk("Files Plus", ""), mk("Files", ""), mk("Viewer", "files")];
+        let used = |x: &App| if x.name != "Files" { max } else { 0 };
+        let hits = match_apps(&b, "files", used);
+        assert_eq!(b[hits[0].0].name, "Files");
+        let items = build_items(&b, &hits, &[file("files.txt", false)]);
+        assert_eq!(items.last().unwrap().title, "Viewer", "description match stays below files");
+
+        // A multi-word name typed out in full is exact too.
+        let c = vec![mk("Visual Studio Code - Insiders", ""), mk("Visual Studio Code", "")];
+        let used = |x: &App| if x.name.ends_with("Insiders") { max } else { 0 };
+        for q in ["visual studio code", "Visual  Studio Code "] {
+            let hits = match_apps(&c, q, used);
+            assert_eq!(c[hits[0].0].name, "Visual Studio Code", "{q:?}");
+            assert_eq!(hits[0].1, EXACT_SCORE);
+        }
+        assert!(match_apps(&c, "studio visual code", |_| 0)[0].1 < EXACT_SCORE, "word order matters for exact");
     }
 
     #[test]
