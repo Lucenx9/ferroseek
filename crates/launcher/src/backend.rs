@@ -27,6 +27,47 @@ pub const LAUNCHER_BUS_NAME: &str = "io.github.ferroseek.Launcher";
 pub const LAUNCHER_PATH: &str = "/io/github/ferroseek/Launcher";
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 const STATUS_TIMED_OUT: &str = "Search status timed out. Try again.";
+const SEARCH_TIMED_OUT: &str = "File search timed out. Try another query or check index status.";
+const OPEN_TIMED_OUT: &str = "No confirmation received before the open request timed out.";
+
+#[derive(Clone, Copy)]
+struct Timeouts {
+    search: Duration,
+    open: Duration,
+    status: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self { search: Duration::from_secs(5), open: Duration::from_secs(15), status: STATUS_TIMEOUT }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunError {
+    Failed(String),
+    /// The request may have taken effect; it must not be sent again automatically.
+    Unconfirmed(String),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failed(message) | Self::Unconfirmed(message) => f.write_str(message),
+        }
+    }
+}
+
+fn open_error(error: zbus::Error) -> RunError {
+    // Only known pre-dispatch/validation rejections prove the action was not
+    // performed. NoReply and transport errors can arrive after it took effect.
+    let rejected = matches!(&error, zbus::Error::FDO(e) if matches!(e.as_ref(),
+        zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_)
+        | zbus::fdo::Error::UnknownObject(_) | zbus::fdo::Error::UnknownInterface(_)
+        | zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::InvalidArgs(_)
+        | zbus::fdo::Error::AccessDenied(_)));
+    if rejected { RunError::Failed(error.to_string()) } else { RunError::Unconfirmed(error.to_string()) }
+}
 
 /// One file or folder result from the daemon.
 #[derive(Debug, Clone, PartialEq)]
@@ -62,7 +103,7 @@ pub enum UiEvent {
 
 enum Request {
     Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
-    Run { id: String, action: String, reply: oneshot::Sender<Result<(), String>> },
+    Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
 }
 
@@ -141,14 +182,14 @@ pub fn start() -> Result<Startup, String> {
                 if ready_tx.send(Ok(Startup::Primary(Backend { tx }, ev_rx))).is_err() {
                     return;
                 }
-                serve(conn, rx).await;
+                serve(conn, rx, Timeouts::default()).await;
             });
         })
         .map_err(|e| format!("cannot start bus thread: {e}"))?;
     ready_rx.recv().map_err(|_| "bus thread exited during startup".to_string())?
 }
 
-async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>) {
+async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>, timeouts: Timeouts) {
     while let Some(mut req) = rx.next().await {
         // Keystrokes queue searches faster than they may complete; only the
         // newest pending one is worth running. Dropping a superseded reply
@@ -157,38 +198,41 @@ async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>)
             match rx.try_recv() {
                 Ok(next @ Request::Search { .. }) if matches!(req, Request::Search { .. }) => req = next,
                 Ok(other) => {
-                    handle(&conn, req).await;
+                    handle(&conn, req, timeouts).await;
                     req = other;
                 }
                 _ => break,
             }
         }
-        handle(&conn, req).await;
+        handle(&conn, req, timeouts).await;
     }
 }
 
-async fn handle(conn: &zbus::Connection, req: Request) {
+async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
     match req {
         Request::Search { query, reply } => {
-            let r = search(conn, &query).await;
+            let r = search(conn, &query, timeouts.search).await;
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            let r = conn
-                .call_method(
-                    Some(DAEMON_BUS_NAME),
-                    SEARCH_PATH,
-                    Some(SEARCH_IFACE),
-                    "Open",
-                    &(id.as_str(), action.as_str(), ""),
-                )
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string());
+            let request = conn.call_method(
+                Some(DAEMON_BUS_NAME),
+                SEARCH_PATH,
+                Some(SEARCH_IFACE),
+                "Open",
+                &(id.as_str(), action.as_str(), ""),
+            );
+            let r = match zruntime::SharedRuntime::current() {
+                Ok(runtime) => match runtime.timeout(timeouts.open, request).await {
+                    Ok(result) => result.map(|_| ()).map_err(open_error),
+                    Err(_) => Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())),
+                },
+                Err(e) => Err(RunError::Failed(e.to_string())),
+            };
             let _ = reply.send(r);
         }
         Request::Status { reply } => {
-            let r = file_search_status(conn).await;
+            let r = file_search_status(conn, timeouts.status).await;
             let _ = reply.send(r);
         }
     }
@@ -197,13 +241,11 @@ async fn handle(conn: &zbus::Connection, req: Request) {
 type FileResult = (String, String, String, String, bool);
 type StatusResult = (String, u64, u64, u64, bool, u64, Vec<String>);
 
-async fn file_search_status(conn: &zbus::Connection) -> Result<SearchStatus, String> {
-    // Diagnostics must release the serial dispatcher even if the service
-    // never replies. Keep search/open calls on their existing timeout policy.
+async fn file_search_status(conn: &zbus::Connection, timeout: Duration) -> Result<SearchStatus, String> {
     let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
     let request = conn.call_method(Some(DAEMON_BUS_NAME), CONTROL_PATH, Some(CONTROL_IFACE), "FileSearchStatus", &());
     let msg = runtime
-        .timeout(STATUS_TIMEOUT, request)
+        .timeout(timeout, request)
         .await
         .map_err(|_| STATUS_TIMED_OUT.to_string())?
         .map_err(|e| e.to_string())?;
@@ -215,11 +257,13 @@ fn to_status((state, files, dirs, queued_dirs, watch_limit_hit, errors, roots): 
     SearchStatus { state, files, dirs, queued_dirs, watch_limit_hit, errors, roots }
 }
 
-async fn search(conn: &zbus::Connection, query: &str) -> Result<Vec<FileHit>, String> {
+async fn search(conn: &zbus::Connection, query: &str, timeout: Duration) -> Result<Vec<FileHit>, String> {
     // Calling the daemon's name D-Bus-activates it when it is not running.
-    let msg = conn
-        .call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Search", &(query,))
+    let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+    let msg = runtime
+        .timeout(timeout, conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Search", &(query,)))
         .await
+        .map_err(|_| SEARCH_TIMED_OUT.to_string())?
         .map_err(|e| e.to_string())?;
     let matches: Vec<FileResult> = msg.body().deserialize().map_err(|e| e.to_string())?;
     Ok(matches.into_iter().map(to_hit).collect())
@@ -250,12 +294,12 @@ impl Backend {
 
     /// Asks the daemon to open a match (`action` `""`) or reveal it
     /// (`ACTION_OPEN_PARENT`). The daemon only opens indexed paths.
-    pub async fn run(self, id: String, action: &'static str) -> Result<(), String> {
+    pub async fn run(self, id: String, action: &'static str) -> Result<(), RunError> {
         let (reply, rx) = oneshot::channel();
         self.tx
             .unbounded_send(Request::Run { id, action: action.to_string(), reply })
-            .map_err(|_| "bus thread stopped".to_string())?;
-        rx.await.map_err(|_| "bus thread stopped".to_string())?
+            .map_err(|_| RunError::Failed("bus thread stopped".into()))?;
+        rx.await.map_err(|_| RunError::Unconfirmed("bus thread stopped before confirming the open request".into()))?
     }
 
     pub async fn status(self) -> Result<SearchStatus, String> {
@@ -282,13 +326,33 @@ mod tests {
 
     #[zbus::interface(name = "io.github.ferroseek.Search1")]
     impl SearchService {
-        async fn search(&self, query: &str) -> Vec<FileResult> {
-            assert_eq!(query, "report");
-            vec![("file:///synthetic/report.txt".into(), "report.txt".into(), "".into(), "/synthetic".into(), false)]
+        async fn search(&self, query: &str) -> zbus::fdo::Result<Vec<FileResult>> {
+            match query {
+                "stall" => return std::future::pending().await,
+                "slow" => zruntime::SharedRuntime::current().unwrap().sleep(Duration::from_millis(20)).await,
+                "reject" => return Err(zbus::fdo::Error::Failed("test search failure".into())),
+                _ => {}
+            }
+            Ok(vec![(
+                "file:///synthetic/report.txt".into(),
+                "report.txt".into(),
+                "".into(),
+                "/synthetic".into(),
+                false,
+            )])
         }
 
-        async fn open(&self, id: &str, action: &str, _token: &str) {
+        async fn open(&self, id: &str, action: &str, _token: &str) -> zbus::fdo::Result<()> {
             self.0.send((id.into(), action.into())).unwrap();
+            match action {
+                "stall" => std::future::pending().await,
+                "slow" => {
+                    zruntime::SharedRuntime::current().unwrap().sleep(Duration::from_millis(20)).await;
+                    Ok(())
+                }
+                "reject" => Err(zbus::fdo::Error::AccessDenied("test rejection".into())),
+                _ => Ok(()),
+            }
         }
     }
 
@@ -301,8 +365,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn stalled_status_releases_queued_search_and_open_requests() {
+    fn private_bus() -> (tempfile::TempDir, TestBus, String) {
         use std::io::BufRead;
         use std::process::{Command, Stdio};
 
@@ -332,6 +395,12 @@ mod tests {
         std::io::BufReader::new(bus.0.stdout.take().unwrap()).read_line(&mut address).unwrap();
         assert!(!address.trim().is_empty(), "private bus did not start");
 
+        (temp, bus, address)
+    }
+
+    #[test]
+    fn stalled_status_releases_queued_search_and_open_requests() {
+        let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
             let (opened_tx, opened_rx) = std::sync::mpsc::channel();
             let _service = zbus::connection::Builder::address(address.trim())
@@ -365,7 +434,7 @@ mod tests {
                 assert_eq!(search_rx.await.unwrap().unwrap()[0].name, "report.txt");
                 run_rx.await.unwrap().unwrap();
             };
-            iced::futures::future::join(serve(conn, rx), verify).await;
+            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
             assert_eq!(
                 opened_rx.try_recv().unwrap(),
                 ("file:///synthetic/report.txt".into(), ACTION_OPEN_PARENT.into())
@@ -380,6 +449,131 @@ mod tests {
         assert_eq!(SEARCH_IFACE, ferroseek_engine::ipc::SEARCH_IFACE);
         assert_eq!(CONTROL_PATH, ferroseek_engine::ipc::CONTROL_PATH);
         assert_eq!(CONTROL_IFACE, ferroseek_engine::ipc::CONTROL_IFACE);
+    }
+
+    #[test]
+    fn stalled_search_and_open_release_the_queue_without_retrying_open() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (opened_tx, opened_rx) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(opened_tx))
+                .build()
+                .await
+                .unwrap();
+            let timeouts = Timeouts {
+                search: Duration::from_millis(500),
+                open: Duration::from_millis(500),
+                ..Timeouts::default()
+            };
+            for stalled_search in [true, false] {
+                let conn = zbus::connection::Builder::address(address.trim())
+                    .method_timeout(Duration::from_secs(2))
+                    .build()
+                    .await
+                    .unwrap();
+                let (tx, rx) = mpsc::unbounded();
+                let (first_tx, first_rx) = oneshot::channel();
+                let (run_tx, run_rx) = oneshot::channel();
+                let (last_tx, last_rx) = oneshot::channel();
+                if stalled_search {
+                    tx.unbounded_send(Request::Search { query: "stall".into(), reply: first_tx }).unwrap();
+                    tx.unbounded_send(Request::Run {
+                        id: "file:///synthetic/report.txt".into(),
+                        action: "slow".into(),
+                        reply: run_tx,
+                    })
+                    .unwrap();
+                } else {
+                    // A read before and after the stalled open also proves the
+                    // dispatcher remains usable when the open has no outcome.
+                    tx.unbounded_send(Request::Search { query: "slow".into(), reply: first_tx }).unwrap();
+                    tx.unbounded_send(Request::Run {
+                        id: "file:///synthetic/report.txt".into(),
+                        action: "stall".into(),
+                        reply: run_tx,
+                    })
+                    .unwrap();
+                }
+                tx.unbounded_send(Request::Search { query: "report".into(), reply: last_tx }).unwrap();
+                drop(tx);
+                let verify = async {
+                    let first = first_rx.await.unwrap();
+                    let opened = run_rx.await.unwrap();
+                    if stalled_search {
+                        assert_eq!(first.unwrap_err(), SEARCH_TIMED_OUT);
+                        opened.unwrap();
+                    } else {
+                        assert_eq!(first.unwrap()[0].name, "report.txt");
+                        assert_eq!(opened, Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())));
+                    }
+                    assert_eq!(last_rx.await.unwrap().unwrap()[0].name, "report.txt");
+                };
+                iced::futures::future::join(serve(conn, rx, timeouts), verify).await;
+                let (_, action) = opened_rx.try_recv().unwrap();
+                assert_eq!(action, if stalled_search { "slow" } else { "stall" });
+                assert!(opened_rx.try_recv().is_err(), "an open must never be retried automatically");
+            }
+        });
+    }
+
+    #[test]
+    fn rejected_and_disconnected_opens_have_distinct_outcomes() {
+        let (_temp, mut bus, address) = private_bus();
+        zbus::block_on(async {
+            let (opened_tx, opened_rx) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(opened_tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                assert!(matches!(
+                    backend.clone().run("file:///synthetic/report.txt".into(), "reject").await,
+                    Err(RunError::Failed(_))
+                ));
+                assert_eq!(opened_rx.try_recv().unwrap().1, "reject");
+                let open = backend.run("file:///synthetic/report.txt".into(), "stall");
+                let disconnect = async {
+                    let runtime = zruntime::SharedRuntime::current().unwrap();
+                    for _ in 0..200 {
+                        if let Ok((_, action)) = opened_rx.try_recv() {
+                            assert_eq!(action, "stall");
+                            bus.0.kill().unwrap();
+                            return;
+                        }
+                        runtime.sleep(Duration::from_millis(5)).await;
+                    }
+                    panic!("open request was not dispatched");
+                };
+                let (result, ()) = iced::futures::future::join(open, disconnect).await;
+                assert!(matches!(result, Err(RunError::Unconfirmed(_))));
+                assert!(opened_rx.try_recv().is_err());
+            };
+            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn no_reply_is_not_misreported_as_a_rejected_open() {
+        assert!(matches!(
+            open_error(zbus::fdo::Error::NoReply("connection lost".into()).into()),
+            RunError::Unconfirmed(_)
+        ));
+        assert!(matches!(open_error(zbus::fdo::Error::InvalidArgs("bad URL".into()).into()), RunError::Failed(_)));
+        assert!(matches!(
+            open_error(zbus::fdo::Error::Failed("opener may have started".into()).into()),
+            RunError::Unconfirmed(_)
+        ));
     }
 
     #[test]

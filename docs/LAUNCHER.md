@@ -126,6 +126,23 @@ Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.
 `Terminal=true` entries run in `xdg-terminal-exec` or a known terminal.
 
+## Slow or disconnected search services
+
+File search calls wait up to five seconds, and file open/reveal calls up to
+fifteen seconds, including service activation. The launcher does not retry
+these calls automatically. A timed-out search leaves an error; typing a new
+query starts a new search, and replies for older queries remain ignored.
+
+An open request can take effect even if its confirmation is lost. On timeout,
+connection loss or an ambiguous service failure, a persistent footer warns
+that the open was not confirmed. No launch history is recorded, and further
+application/file open actions are blocked for that launcher session to avoid
+sending a duplicate. Check the desktop, then close and reopen FerroSeek before
+trying again. Search, copy actions, calculations and index status remain usable.
+A definite rejection, such as an unindexed path or invalid arguments, allows
+an explicit new attempt after the issue is corrected. Only confirmed success
+records file usage and closes the launcher.
+
 ## File search status
 
 Click **Index status** beside the search filters, or press Ctrl+I, to check the
