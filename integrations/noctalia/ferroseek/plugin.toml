@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 id = "lucenx9/ferroseek"
 name = "FerroSeek"
-version = "0.1.0"
+version = "0.1.1"
 # Argument-array subprocess execution, without shell interpolation.
 plugin_api = 24
 author = "Lucenx9"
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 icon = "file-search"
 description = "Search the existing FerroSeek filename and path index."
 tags = ["launcher", "utility", "productivity"]
-dependencies = ["ferroseek", "xdg-open"]
+dependencies = ["ferroseek", "gio"]
 
 [[setting]]
 key = "binary"

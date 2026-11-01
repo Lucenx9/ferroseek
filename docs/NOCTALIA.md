@@ -10,7 +10,8 @@ open in the file manager. No KDE, KRunner or MCP server is needed.
 - Noctalia v5 with plugin API **24 or newer** (argument-array subprocesses).
   Noctalia v4/QML plugins use a different API and are not supported.
 - The FerroSeek CLI from the same checkout, with `search --json` support.
-- `xdg-open` from `xdg-utils` and a configured default file manager/applications.
+- GLib's `gio` command and a configured default file manager/applications
+  (`glib2` on Arch, `libglib2.0-bin` on Debian/Ubuntu).
 
 From the FerroSeek checkout, install the core if needed:
 
@@ -73,8 +74,14 @@ Noctalia debounces input by 100 ms. The provider runs `ferroseek search --json
 --no-hidden -n 30 -- <query>` through `noctalia.runAsync` with an argument
 array. It keeps at most one search in flight, replaces queued queries with
 the latest text and discards stale replies. Result order comes from FerroSeek.
-Activation passes the selected absolute path directly to `xdg-open` as an
+Activation passes the selected absolute path directly to `gio open` as an
 argument; neither search text nor file paths are interpolated into shell code.
+GIO reports completion after handing the request to the default application.
+The callback checks that handoff's exit status, not the application's lifetime.
+Some `xdg-open` desktop backends wait until the launched application exits;
+capturing those calls with Noctalia's default five-second process timeout can
+produce a false failure notification and terminate the application's process
+group even though it opened successfully. The provider therefore requires GIO.
 
 Missing executables, absent/unreadable indexes, failed or truncated responses,
 no matches and deleted files have distinct messages. The plugin does not
@@ -123,6 +130,7 @@ Existing CLI filters and query syntax are unchanged.
 ```sh
 cargo test -p ferroseek-cli --locked
 lua5.4 tests/noctalia-provider.lua
+python3 tests/noctalia-open-smoke.py
 noctalia plugins lint integrations/noctalia/ferroseek
 ```
 
@@ -131,8 +139,13 @@ script is exercised in the Lua/Luau common subset with a mocked Noctalia host:
 query coalescing, stale responses, literal argument handling, scope, ranking,
 activation, errors and unsupported paths. These tests never install a plugin
 or open files on the desktop. Lint was also checked with Noctalia 5.4.1.
-An interactive Noctalia launcher/xdg-open smoke test remains a manual check;
-the mock-host tests do not establish end-to-end desktop compatibility.
+The GIO smoke test uses isolated desktop associations and a fake application
+that stays alive beyond Noctalia's default timeout. It verifies literal path
+delivery, prompt handoff and actual launch errors without opening a desktop
+application. A live check on Arch Linux, Niri and Noctalia 5.4.1 opened a
+directory from `/ferro` in a fresh Nautilus process; its window remained open
+beyond the five-second timeout, without an error notification. Other desktop
+and file-type combinations still need manual validation.
 
 API references: [launcher providers](https://docs.noctalia.dev/noctalia/plugins/development/entries/),
 [subprocesses](https://docs.noctalia.dev/noctalia/plugins/development/runtime-api/),
