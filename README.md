@@ -1,6 +1,6 @@
 # FerroSeek
 
-**Lightweight, real-time filename and path search for Linux.** FerroSeek is a Rust-powered, desktop-independent search engine that maintains a local index and exposes it through a CLI, an optional KDE Plasma KRunner integration, and an optional MCP server for AI agents.
+**Lightweight, real-time filename and path search for Linux.** FerroSeek is a Rust-powered, desktop-independent search engine that maintains a local index and exposes it through a CLI, optional KDE Plasma KRunner and Noctalia launcher integrations, and an optional MCP server for AI agents.
 
 > **Status: 0.1 MVP (development).** Filename/path search, live indexing, CLI, KRunner and MCP work. There is **no published binary release yet**. File-content search, GNOME/Rofi integrations and full Baloo API compatibility are not implemented.
 
@@ -52,6 +52,7 @@ For headless use, `ferroseek index` and `ferroseek search` work without a runnin
 | **CLI** (`ferroseek`) | Search, index, status and maintenance commands | Core, available |
 | **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
 | **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
+| **Noctalia v5** | Optional `/ferro` launcher plugin | Source-checkout adapter; [setup and validation limits](docs/NOCTALIA.md) |
 | **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Planned, **not available yet** |
 
 ### Command line
@@ -62,6 +63,7 @@ ferroseek search report               # find names containing "report"
 ferroseek search --in ~/Documents cv  # restrict search to a directory
 ferroseek search src/ main.rs          # path fragment and filename
 ferroseek search -n 50 --long report  # metadata and ranking
+ferroseek search --json report        # ranked machine-readable results
 ferroseek status                      # daemon and index statistics
 ferroseek config --default            # show default configuration
 ```
@@ -71,6 +73,14 @@ The engine config is at `$XDG_CONFIG_HOME/ferroseek/config.toml` (normally `~/.c
 ### KDE Plasma
 
 Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. Results can open a file or show its containing directory. This adapter does not replace KRunner or modify KDE/Baloo configuration. If the existing KDE file-search runner also returns matches, you can disable that runner manually in **System Settings → Search → Plasma Search**.
+
+### Noctalia v5
+
+The optional `lucenx9/ferroseek` plugin adds `/ferro` file search to Noctalia's
+launcher, including on Niri. It reuses the CLI and existing index, with no
+second background service. Installation is separate from the core installer;
+see the [Noctalia guide](docs/NOCTALIA.md) for setup, requirements and validation
+limits.
 
 ### AI agents (optional MCP)
 
@@ -107,6 +117,7 @@ The current engine does not implement file-content indexing, advanced tags, KIO/
 |---|---|
 | [Installation](docs/INSTALLATION.md) | Components, setup, upgrade, rollback and archive details |
 | [MCP](docs/MCP.md) | Agent tools, access modes and configuration |
+| [Noctalia](docs/NOCTALIA.md) | Optional launcher plugin and CLI JSON contract |
 | [Architecture](docs/ARCHITECTURE.md) | Core, index, watcher and optional adapters |
 | [Benchmarks](docs/BENCHMARKS.md) | Reproducible performance results and caveats |
 | [Comparisons](docs/COMPARISONS.md) | Where FerroSeek, Baloo, fd, rg and plocate fit |

@@ -273,6 +273,8 @@ dependencies = [
  "ferroseek-engine",
  "ferroseek-index",
  "libc",
+ "serde",
+ "serde_json",
  "tempfile",
  "zbus",
 ]
