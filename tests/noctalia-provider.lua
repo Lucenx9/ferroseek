@@ -68,6 +68,21 @@ onActivate("made-up-id")
 assert(#calls == 1)
 onActivate(latest().rows[1].id)
 assert(#calls == 2 and calls[2].argv[1] == "xdg-open" and calls[2].argv[2] == path and #calls[2].argv == 2)
+finish(2)
+assert(#notices == 0, "successful opening must not report an error")
+
+for _, failure in ipairs({ {exitCode = 4}, {exitCode = 0, timedOut = true} }) do
+    reset()
+    onQuery("report")
+    decoded.results = { hit("/test/report.txt") }
+    finish(1)
+    onActivate(latest().rows[1].id)
+    assert(#notices == 0, "opening failure is only known when the process completes")
+    -- Completion may arrive after the launcher moved on to another query.
+    onQuery("")
+    finish(2, failure)
+    assert(#notices == 1 and notices[1] == "open_failed", "report asynchronous opener failures")
+end
 
 reset()
 onQuery("a")

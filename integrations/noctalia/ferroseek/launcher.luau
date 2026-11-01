@@ -114,7 +114,12 @@ function onActivate(id)
         noctalia.notifyError("FerroSeek", noctalia.tr("file_missing"))
         return
     end
-    if not noctalia.runAsync({ "xdg-open", path }) then
+    local accepted = noctalia.runAsync({ "xdg-open", path }, function(result)
+        if result.timedOut or result.exitCode ~= 0 then
+            noctalia.notifyError("FerroSeek", noctalia.tr("open_failed"))
+        end
+    end)
+    if not accepted then
         noctalia.notifyError("FerroSeek", noctalia.tr("open_failed"))
     end
 end
