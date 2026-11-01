@@ -335,7 +335,6 @@ mod tests {
         zbus::block_on(async {
             let (opened_tx, opened_rx) = std::sync::mpsc::channel();
             let _service = zbus::connection::Builder::address(address.trim())
-                .unwrap()
                 .name(DAEMON_BUS_NAME)
                 .serve_at(CONTROL_PATH, StalledStatus)
                 .serve_at(SEARCH_PATH, SearchService(opened_tx))
@@ -343,7 +342,6 @@ mod tests {
                 .await
                 .unwrap();
             let conn = zbus::connection::Builder::address(address.trim())
-                .unwrap()
                 // A watchdog makes a missing production bound fail, not hang.
                 .method_timeout(Duration::from_secs(10))
                 .build()
