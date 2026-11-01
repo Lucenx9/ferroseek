@@ -236,6 +236,27 @@ pub struct Cursor {
     pub visible: usize,
 }
 
+/// Confirms that both presses of a widget-reported double click refer to
+/// the same result, even when rows were reused after an asynchronous update.
+#[derive(Default)]
+pub struct ClickTracker {
+    previous: Option<Target>,
+    repeated: bool,
+}
+
+impl ClickTracker {
+    pub fn press(&mut self, target: &Target) {
+        self.repeated = self.previous.as_ref() == Some(target);
+        self.previous = Some(target.clone());
+    }
+
+    pub fn double_click(&mut self, target: &Target) -> bool {
+        let same_target = self.repeated && self.previous.as_ref() == Some(target);
+        *self = Self::default();
+        same_target
+    }
+}
+
 impl Cursor {
     pub fn new(visible: usize) -> Cursor {
         Cursor { selected: 0, first: 0, visible: visible.max(1) }
@@ -593,6 +614,25 @@ mod tests {
         assert!(!cursor.select_target(&target, &items), "removed targets cannot activate a different row");
         assert_eq!(cursor.selected, 0);
         assert!(!cursor.select_target(&target, &[]));
+    }
+
+    #[test]
+    fn double_click_rejects_a_row_reused_for_another_result() {
+        let first = Target::File(file("first.txt", false));
+        let second = Target::File(file("second.txt", false));
+        let mut clicks = ClickTracker::default();
+        clicks.press(&first);
+        // The second press hits the same widget position after rows move.
+        clicks.press(&second);
+        assert!(!clicks.double_click(&second));
+
+        clicks.press(&second);
+        clicks.press(&second);
+        assert!(clicks.double_click(&second));
+        assert!(!clicks.double_click(&second), "one gesture activates at most once");
+
+        clicks.press(&first);
+        assert!(!clicks.double_click(&first), "a single press is not an activation");
     }
 
     #[test]

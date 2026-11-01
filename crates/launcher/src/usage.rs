@@ -141,7 +141,7 @@ impl Usage {
             add_use(&mut self.entries, kind, key, query.as_deref(), now);
             return;
         };
-        let r = with_lock(&path, || {
+        let r = with_lock(&path, true, || {
             // The file is authoritative: another instance may have added
             // uses, or the history may have been forgotten, since load.
             self.entries = read_entries(&path);
@@ -154,7 +154,8 @@ impl Usage {
     }
 
     /// Removes all ranking signals for one item, preserving other instances'
-    /// updates. A failed write leaves the in-memory ranking unchanged.
+    /// updates. Returns `WouldBlock` when another writer holds the lock;
+    /// a failed reset leaves the in-memory ranking unchanged.
     pub fn reset(&mut self, kind: Kind, key: &str) -> std::io::Result<()> {
         let item = (kind, key.to_string());
         let Some(path) = self.path.clone() else {
@@ -171,7 +172,7 @@ impl Usage {
                 Ok(_) => {}
             }
         }
-        let entries = with_lock(&path, || {
+        let entries = with_lock(&path, false, || {
             let mut entries = try_read_entries(&path)?;
             if entries.remove(&item).is_some() {
                 write_entries(&path, &entries)?;
@@ -188,7 +189,7 @@ impl Usage {
         if !path.parent().is_some_and(Path::exists) {
             return Ok(());
         }
-        with_lock(path, || match std::fs::remove_file(path) {
+        with_lock(path, true, || match std::fs::remove_file(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             r => r,
         })
@@ -272,15 +273,19 @@ fn private_options() -> std::fs::OpenOptions {
 }
 
 /// Runs `f` holding an exclusive lock on `<path>.lock`, creating the
-/// directory owner-only if needed.
-fn with_lock<T>(path: &Path, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+/// directory owner-only if needed. Without `wait`, contention returns an error.
+fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
     let lock =
         private_options().read(true).write(true).create(true).truncate(false).open(path.with_extension("lock"))?;
-    lock.lock()?;
+    if wait {
+        lock.lock()?;
+    } else {
+        lock.try_lock()?;
+    }
     let r = f();
     let _ = lock.unlock();
     r
@@ -520,6 +525,39 @@ mod tests {
         std::fs::create_dir(&p).unwrap();
         assert!(u.reset(Kind::App, "app").is_err());
         assert_eq!(u.entries, before);
+    }
+
+    #[test]
+    fn reset_returns_without_waiting_for_a_busy_history_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("launcher-usage");
+        let mut u = Usage::load(Some(p.clone()));
+        u.record(Kind::App, "app", "a", 100);
+        let before = u.entries.clone();
+        let disk = std::fs::read(&p).unwrap();
+        let lock = private_options().read(true).write(true).open(p.with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = u.reset(Kind::App, "app");
+            tx.send((u, result)).unwrap();
+        });
+        let received = rx.recv_timeout(Duration::from_secs(2));
+        // Release before asserting so a blocking-lock regression cannot hang.
+        lock.unlock().unwrap();
+        worker.join().unwrap();
+        let (mut u, result) = received.expect("reset must return while the history lock is held");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert_eq!(u.entries, before);
+        assert_eq!(std::fs::read(&p).unwrap(), disk);
+
+        u.reset(Kind::App, "app").unwrap();
+        assert!(u.entries.is_empty());
+        assert!(Usage::load(Some(p)).entries.is_empty());
     }
 
     #[test]

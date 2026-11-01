@@ -18,7 +18,7 @@ use iced_layershell::to_layer_message;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
 use crate::icons::{Icon, Icons};
-use crate::model::{self, Action, Command, Cursor, Item, Target};
+use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Target};
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -119,6 +119,7 @@ pub struct Launcher {
     /// Resolved icon per item, filled when the list is rebuilt.
     item_icons: Vec<Option<Icon>>,
     cursor: Cursor,
+    clicks: ClickTracker,
     panel: Option<Panel>,
     generation: u64,
     status: Status,
@@ -195,6 +196,7 @@ fn boot() -> (Launcher, Task<Message>) {
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
+        clicks: ClickTracker::default(),
         panel: None,
         generation: 0,
         status: Status::Idle,
@@ -299,6 +301,7 @@ impl Launcher {
     }
 
     fn perform(&mut self, action: Action) -> Task<Message> {
+        self.clicks = ClickTracker::default();
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens = matches!(action, Action::Launch | Action::Open | Action::Reveal);
         if opens && self.opening.is_some() {
@@ -368,6 +371,7 @@ impl Launcher {
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     match message {
         Message::Query(q) => {
+            s.clicks = ClickTracker::default();
             if s.panel.is_some() {
                 return widget::operation::focus(actions_id());
             }
@@ -424,6 +428,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
+            s.clicks = ClickTracker::default();
             if s.panel.is_none() {
                 s.cursor.move_by(if dy > 0.0 { -1 } else { 1 }, s.items.len());
             }
@@ -431,14 +436,19 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         Message::Selected(target) => {
             if s.panel.is_some() {
+                s.clicks = ClickTracker::default();
                 s.panel = None;
                 return widget::operation::focus(search_id());
             }
-            s.cursor.select_target(&target, &s.items);
+            if s.cursor.select_target(&target, &s.items) {
+                s.clicks.press(&target);
+            } else {
+                s.clicks = ClickTracker::default();
+            }
             widget::operation::focus(search_id())
         }
         Message::Clicked(target) => {
-            if !s.cursor.select_target(&target, &s.items) {
+            if !s.clicks.double_click(&target) || !s.cursor.select_target(&target, &s.items) {
                 return Task::none();
             }
             s.panel = None;
@@ -448,6 +458,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             }
         }
         Message::ContextMenu(target) => {
+            s.clicks = ClickTracker::default();
             if !s.cursor.select_target(&target, &s.items) {
                 return Task::none();
             }
@@ -477,6 +488,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
+    s.clicks = ClickTracker::default();
     let len = s.items.len();
     if let Some(p) = &mut s.panel {
         if let Some(action) = p.action_for_command(cmd) {
