@@ -18,6 +18,7 @@ use iced_layershell::to_layer_message;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
 use crate::calc;
+use crate::favorites::Favorites;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::usage::{self, Kind, Usage};
@@ -61,6 +62,7 @@ pub struct Boot {
     pub backend: Backend,
     pub apps: Vec<App>,
     pub usage: Usage,
+    pub favorites: Favorites,
     pub initial_query: String,
 }
 
@@ -80,8 +82,13 @@ struct Panel {
 }
 
 impl Panel {
-    fn new(item: &Item) -> Self {
-        Self { title: item.title.clone(), actions: model::actions_for(&item.target), query: String::new(), selected: 0 }
+    fn new(item: &Item, favorite: bool) -> Self {
+        Self {
+            title: item.title.clone(),
+            actions: model::actions_for(&item.target, favorite),
+            query: String::new(),
+            selected: 0,
+        }
     }
 
     fn filtered_actions(&self) -> Vec<Action> {
@@ -122,6 +129,7 @@ pub struct Launcher {
     backend: Backend,
     apps: Vec<App>,
     usage: Usage,
+    favorites: Favorites,
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
@@ -199,12 +207,13 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { backend, apps, usage, initial_query } =
+    let Boot { backend, apps, usage, favorites, initial_query } =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
     let mut state = Launcher {
         backend,
         apps,
         usage,
+        favorites,
         opening: None,
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
@@ -268,7 +277,13 @@ impl Launcher {
     fn rebuild(&mut self, keep_selection: bool) {
         let previous = keep_selection.then(|| self.selected().map(|i| i.target.clone())).flatten();
         self.items = if self.query.trim().is_empty() {
-            model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), self.scope, VISIBLE_ROWS)
+            model::home_items(
+                &self.apps,
+                &self.usage.recent(usage::now(), usize::MAX),
+                self.favorites.items(),
+                self.scope,
+                VISIBLE_ROWS,
+            )
         } else {
             let mut items: Vec<Item> = if self.scope.shows_calculator(&self.query) {
                 model::calc_item(&self.query).into_iter().collect()
@@ -365,9 +380,57 @@ impl Launcher {
                     widget::operation::move_cursor_to_end(search_id()),
                 ])
             }
+            (Action::AddFavorite | Action::RemoveFavorite, _) => {
+                self.set_favorite(&item.target, action == Action::AddFavorite)
+            }
             (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
+    }
+
+    fn is_favorite(&self, target: &Target) -> bool {
+        match target {
+            Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
+            Target::File(file) => self.favorites.contains(Kind::File, &file.id),
+            Target::Calc(_) => false,
+        }
+    }
+
+    fn actions_for(&self, target: &Target) -> Vec<Action> {
+        model::actions_for(target, self.is_favorite(target))
+    }
+
+    fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
+        let (kind, key) = match target {
+            Target::App(i) => {
+                let Some(app) = self.apps.get(*i) else { return Task::none() };
+                (Kind::App, app.id.clone())
+            }
+            Target::File(file) if file.path.is_some() => (Kind::File, file.id.clone()),
+            _ => return Task::none(),
+        };
+        self.status = match self.favorites.set(kind, &key, enabled) {
+            Ok(()) => {
+                self.panel = None;
+                self.rebuild(true);
+                let message = if enabled {
+                    if self.favorites.is_persistent() {
+                        "Added to favorites"
+                    } else {
+                        "Added to favorites for this session"
+                    }
+                } else {
+                    "Removed from favorites"
+                };
+                Status::Notice(message.into())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Status::Error("Favorites are busy. Try again.".into())
+            }
+            Err(e) => Status::Error(format!("Cannot update favorites: {e}")),
+        };
+        let focus = if self.panel.is_some() { actions_id() } else { search_id() };
+        Task::batch([self.resize(), widget::operation::focus(focus)])
     }
 
     fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
@@ -407,7 +470,7 @@ impl Launcher {
     }
 
     fn primary(&self) -> Option<Action> {
-        self.selected().and_then(|i| model::actions_for(&i.target).first().copied())
+        self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 }
 
@@ -521,7 +584,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             if !s.cursor.select_target(&target, &s.items) {
                 return Task::none();
             }
-            s.panel = s.selected().map(Panel::new);
+            s.panel = s.selected().map(|item| Panel::new(item, s.is_favorite(&item.target)));
             widget::operation::focus(actions_id())
         }
         Message::PanelClicked { target, action } => {
@@ -598,7 +661,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
         }
         Command::Secondary => {
-            let action = s.selected().and_then(|i| model::secondary_action(&model::actions_for(&i.target)));
+            let action = s.selected().and_then(|i| model::secondary_action(&s.actions_for(&i.target)));
             if let Some(action) = action {
                 return s.perform(action);
             }
@@ -607,7 +670,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::NextScope | Command::PreviousScope => unreachable!("handled before the action panel"),
         Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
-                s.panel = Some(Panel::new(item));
+                s.panel = Some(Panel::new(item, s.is_favorite(&item.target)));
                 return widget::operation::focus(actions_id());
             }
         }
@@ -744,7 +807,11 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         border: Border { radius: 6.0.into(), ..Default::default() },
         ..Default::default()
     });
-    let mut content = row![icon, container(labels).width(Length::Fill).clip(true), tag];
+    let mut content = row![icon, container(labels).width(Length::Fill).clip(true)];
+    if s.is_favorite(&item.target) {
+        content = content.push(text("★").size(13).color(palette::ACCENT));
+    }
+    let mut content = content.push(tag);
     if s.panel.is_none() {
         content = content.push(numbered_hint(slot));
     }
@@ -785,7 +852,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     };
     let mut hints = row![].spacing(14).align_y(Vertical::Center);
     if let Some(item) = s.selected() {
-        let acts = model::actions_for(&item.target);
+        let acts = s.actions_for(&item.target);
         hints = hints.push(hint("Enter", acts[0].label()));
         if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
@@ -925,6 +992,7 @@ mod tests {
             backend: Backend::disconnected(),
             apps: vec![app],
             usage: Usage::disabled(),
+            favorites: Favorites::disabled(),
             opening: None,
             icons: Icons::disabled(),
             query: String::new(),
@@ -1039,6 +1107,94 @@ mod tests {
     }
 
     #[test]
+    fn session_favorites_toggle_from_actions_without_changing_ranking() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let target = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("pin".into()));
+        assert_eq!(s.panel.as_ref().unwrap().filtered_actions(), [Action::AddFavorite]);
+        let _ = command(&mut s, Command::ActivateVisible(0));
+        assert!(s.is_favorite(&target));
+        assert_eq!(s.status, Status::Notice("Added to favorites for this session".into()));
+        assert_eq!(s.query, "report");
+        assert!(s.panel.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+        assert_eq!(s.usage.boost(Kind::App, "report.desktop", "report", usage::now()), 0);
+        let _ = s.reset_ranking(&target);
+        assert!(s.is_favorite(&target), "reset ranking must not remove an explicit favorite");
+        let _ = update(&mut s, Message::Query(String::new()));
+        assert_eq!(s.items.len(), 1, "no duplicate app fallback");
+        assert_eq!(s.items[0].target, target);
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("unpin".into()));
+        assert_eq!(s.panel.as_ref().unwrap().filtered_actions(), [Action::RemoveFavorite]);
+        let _ = command(&mut s, Command::Activate);
+        assert!(!s.is_favorite(&target));
+        assert_eq!(s.items.len(), 1, "unpinning retains the available application suggestion");
+    }
+
+    #[test]
+    fn favorite_files_lead_home_suggestions_and_respect_scope_and_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.txt");
+        std::fs::write(&path, "synthetic").unwrap();
+        let id = format!("file://{}", path.display());
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let hit = FileHit {
+            id: id.clone(),
+            path: Some(path),
+            name: "report.txt".into(),
+            icon: String::new(),
+            subtext: String::new(),
+            is_dir: false,
+        };
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![hit])) });
+        s.cursor.select(1, s.items.len());
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::AddFavorite);
+        assert!(s.is_favorite(&target));
+        let _ = update(&mut s, Message::Query(String::new()));
+        assert!(matches!(&s.items[0].target, Target::File(file) if file.id == id));
+        assert_eq!(s.items.len(), 2, "favorite before the app fallback");
+        let _ = update(&mut s, Message::Scope(Scope::Applications));
+        assert!(s.items.iter().all(|item| matches!(item.target, Target::App(_))));
+        assert!(s.is_favorite(&target));
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        assert_eq!(s.items.len(), 1);
+        assert!(matches!(&s.items[0].target, Target::File(file) if file.id == id));
+        let _ = s.perform(Action::RemoveFavorite);
+        assert!(s.items.is_empty(), "no history or app fallback in Files mode");
+        assert!(s.panel.is_none());
+    }
+
+    #[test]
+    fn busy_favorite_store_preserves_the_menu_and_allows_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-favorites");
+        let mut s = search_state();
+        s.favorites = Favorites::load(Some(path.clone()));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::AddFavorite);
+        assert_eq!(s.status, Status::Notice("Added to favorites".into()));
+        let lock = std::fs::OpenOptions::new().read(true).write(true).open(path.with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("unpin".into()));
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.is_favorite(&target));
+        assert!(s.panel.is_some());
+        assert_eq!(s.status, Status::Error("Favorites are busy. Try again.".into()));
+        drop(lock);
+        let _ = command(&mut s, Command::Activate);
+        assert!(!s.is_favorite(&target));
+        assert!(s.panel.is_none());
+    }
+
+    #[test]
     fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {
         let event = Event::Keyboard(keyboard::Event::KeyPressed {
             key: Key::Character("1".into()),
@@ -1085,21 +1241,24 @@ mod tests {
 
     #[test]
     fn filtering_actions_keeps_the_target_and_selects_a_matching_action() {
-        let mut panel = Panel::new(&Item {
-            target: Target::File(FileHit {
-                id: "file:///tmp/notes.txt".into(),
-                name: "notes.txt".into(),
-                path: Some("/tmp/notes.txt".into()),
+        let mut panel = Panel::new(
+            &Item {
+                target: Target::File(FileHit {
+                    id: "file:///tmp/notes.txt".into(),
+                    name: "notes.txt".into(),
+                    path: Some("/tmp/notes.txt".into()),
+                    icon: String::new(),
+                    subtext: "/tmp".into(),
+                    is_dir: false,
+                }),
+                section: model::Section::Files,
+                title: "notes.txt".into(),
+                subtitle: "/tmp".into(),
                 icon: String::new(),
-                subtext: "/tmp".into(),
-                is_dir: false,
-            }),
-            section: model::Section::Files,
-            title: "notes.txt".into(),
-            subtitle: "/tmp".into(),
-            icon: String::new(),
-            tag: "File",
-        });
+                tag: "File",
+            },
+            false,
+        );
         panel.selected = 3;
         panel.filter("  PATH  copy ".into());
         assert_eq!(panel.title, "notes.txt");
@@ -1118,7 +1277,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 5);
+        assert_eq!(panel.actions.len(), 6);
     }
 
     #[test]
@@ -1219,7 +1378,7 @@ mod tests {
 
     #[test]
     fn calculator_secondary_action_is_available_while_filtering_for_copy() {
-        let mut panel = Panel::new(&model::calc_item("= 1/3").unwrap());
+        let mut panel = Panel::new(&model::calc_item("= 1/3").unwrap(), false);
         panel.filter("copy".into());
         assert_eq!(panel.filtered_actions(), [Action::CopyResult]);
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyResult));

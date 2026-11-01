@@ -265,7 +265,7 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
 }
 
 /// Owner-only file creation: the history names files the user opened.
-fn private_options() -> std::fs::OpenOptions {
+pub(crate) fn private_options() -> std::fs::OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
     let mut o = std::fs::OpenOptions::new();
     o.mode(0o600);
@@ -274,7 +274,7 @@ fn private_options() -> std::fs::OpenOptions {
 
 /// Runs `f` holding an exclusive lock on `<path>.lock`, creating the
 /// directory owner-only if needed. Without `wait`, contention returns an error.
-fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+pub(crate) fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;

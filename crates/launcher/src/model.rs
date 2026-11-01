@@ -2,6 +2,7 @@
 //! UI-independent launcher state: result list, selection window, actions
 //! and the keyboard map. Everything here is unit-tested without a display.
 
+use std::collections::HashSet;
 use std::ops::Range;
 
 use iced::keyboard::{
@@ -166,16 +167,19 @@ pub fn calc_item(query: &str) -> Option<Item> {
     })
 }
 
-/// Valid history rows, resolved lazily so a full home needs no further
+/// Valid saved rows, resolved lazily so a full home needs no further
 /// filesystem checks.
-fn recent_items<'a>(apps: &'a [App], recent: &'a [(Kind, String)], scope: Scope) -> impl Iterator<Item = Item> + 'a {
+fn recent_items<'a>(
+    apps: &'a [App],
+    recent: impl Iterator<Item = &'a (Kind, String)> + 'a,
+    scope: Scope,
+) -> impl Iterator<Item = Item> + 'a {
     recent
-        .iter()
         .filter(move |(kind, _)| match kind {
             Kind::App => scope.includes_apps(),
             Kind::File => scope.includes_files(),
         })
-        .filter_map(|(kind, key)| match kind {
+        .filter_map(move |(kind, key)| match kind {
             Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
             Kind::File => {
                 let path = uri::path_from_file_url(key)?;
@@ -195,11 +199,19 @@ fn recent_items<'a>(apps: &'a [App], recent: &'a [(Kind, String)], scope: Scope)
         })
 }
 
-/// Valid history rows in scope first, then available applications in catalog
-/// order when that scope includes them.
-pub fn home_items(apps: &[App], recent: &[(Kind, String)], scope: Scope, limit: usize) -> Vec<Item> {
+/// Favorites first, then valid history rows in scope, then available applications
+/// in catalog order. Deduplication precedes resolution and the row limit.
+pub fn home_items(
+    apps: &[App],
+    recent: &[(Kind, String)],
+    favorites: &[(Kind, String)],
+    scope: Scope,
+    limit: usize,
+) -> Vec<Item> {
+    let mut seen = HashSet::new();
+    let ordered = favorites.iter().chain(recent.iter()).filter(move |(kind, key)| seen.insert((*kind, key.clone())));
     let mut seen_apps = vec![false; apps.len()];
-    let mut items: Vec<_> = recent_items(apps, recent, scope)
+    let mut items: Vec<_> = recent_items(apps, ordered, scope)
         .filter(|item| match item.target {
             Target::App(i) => !std::mem::replace(&mut seen_apps[i], true),
             _ => true,
@@ -252,6 +264,8 @@ pub enum Action {
     CopyResult,
     UseResult,
     ResetRanking,
+    AddFavorite,
+    RemoveFavorite,
 }
 
 impl Action {
@@ -265,6 +279,8 @@ impl Action {
             Action::CopyResult => "Copy result",
             Action::UseResult => "Use result",
             Action::ResetRanking => "Reset ranking",
+            Action::AddFavorite => "Add to favorites",
+            Action::RemoveFavorite => "Remove from favorites",
         }
     }
 
@@ -284,6 +300,8 @@ impl Action {
             Self::CopyPath => &["location"],
             Self::CopyResult => &["answer"],
             Self::UseResult => &["continue"],
+            Self::AddFavorite => &["pin"],
+            Self::RemoveFavorite => &["unpin"],
             Self::Launch | Self::Open | Self::ResetRanking => &[],
         };
         let labels: Vec<_> =
@@ -296,21 +314,26 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::CopyName | Action::ResetRanking => "",
+            Action::CopyName | Action::ResetRanking | Action::AddFavorite | Action::RemoveFavorite => "",
         }
     }
 }
 
-/// Actions for an item; the first is the primary (Enter) action.
-pub fn actions_for(t: &Target) -> Vec<Action> {
-    match t {
+/// Actions for an item; the first is the primary (Enter) action. Favorites are
+/// appended so the existing numbered slots keep their meanings.
+pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
+    let mut actions = match t {
         Target::App(_) => vec![Action::Launch, Action::CopyName, Action::ResetRanking],
         Target::File(f) if f.path.is_some() => {
             vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]
         }
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
+    };
+    if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
+        actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
     }
+    actions
 }
 
 /// Ctrl+Enter always uses the selected result's secondary action, including
@@ -655,7 +678,7 @@ mod tests {
     fn calculator_and_recent_rows() {
         let c = calc_item(" 2 + 3*4 ").unwrap();
         assert_eq!((c.title.as_str(), c.subtitle.as_str()), ("= 14", "2 + 3*4"));
-        assert_eq!(actions_for(&c.target), [Action::CopyResult, Action::UseResult]);
+        assert_eq!(actions_for(&c.target, false), [Action::CopyResult, Action::UseResult]);
         assert!(calc_item("report").is_none());
         assert_eq!(calc_item("= 42").unwrap().title, "= 42");
         assert!(calc_item("=").is_none());
@@ -671,7 +694,7 @@ mod tests {
             (Kind::App, "gone.desktop".to_string()),
             (Kind::File, "file:///nonexistent/ferroseek-test".to_string()),
         ];
-        let items: Vec<_> = recent_items(&a, &recent, Scope::All).collect();
+        let items: Vec<_> = recent_items(&a, recent.iter(), Scope::All).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);
     }
@@ -688,7 +711,7 @@ mod tests {
             (Kind::App, "Kate.desktop".to_string()),
             (Kind::File, format!("file://{}", f.display())),
         ];
-        let items = home_items(&a, &recent, Scope::All, 2);
+        let items = home_items(&a, &recent, &[], Scope::All, 2);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "valid.txt"]);
     }
@@ -696,21 +719,21 @@ mod tests {
     #[test]
     fn home_without_history_suggests_available_apps_in_catalog_order() {
         let a = apps();
-        let items = home_items(&a, &[], Scope::All, 3);
+        let items = home_items(&a, &[], &[], Scope::All, 3);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Firefox", "Files", "Fonts"]);
-        assert_eq!(home_items(&a, &[], Scope::All, usize::MAX).len(), a.len());
-        assert!(home_items(&[], &[], Scope::All, 3).is_empty());
+        assert_eq!(home_items(&a, &[], &[], Scope::All, usize::MAX).len(), a.len());
+        assert!(home_items(&[], &[], &[], Scope::All, 3).is_empty());
     }
 
     #[test]
     fn home_suggestions_do_not_duplicate_recent_apps_and_respect_zero_limit() {
         let a = apps();
         let recent = [(Kind::App, "Files.desktop".to_string()), (Kind::App, "Files.desktop".to_string())];
-        let items = home_items(&a, &recent, Scope::All, 4);
+        let items = home_items(&a, &recent, &[], Scope::All, 4);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Files", "Firefox", "Fonts", "Calculator"]);
-        assert!(home_items(&a, &recent, Scope::All, 0).is_empty());
+        assert!(home_items(&a, &recent, &[], Scope::All, 0).is_empty());
     }
 
     #[test]
@@ -729,19 +752,72 @@ mod tests {
             (Kind::App, "Fonts.desktop".into()),
             (Kind::File, format!("file://{}", two.display())),
         ];
-        let files = home_items(&a, &recent, Scope::Files, 2);
+        let files = home_items(&a, &recent, &[], Scope::Files, 2);
         assert_eq!(files.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["one.txt", "two.txt"]);
         assert!(files.iter().all(|i| i.section == Section::Files));
-        let applications = home_items(&a, &recent, Scope::Applications, 4);
+        let applications = home_items(&a, &recent, &[], Scope::Applications, 4);
         assert_eq!(
             applications.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
             ["Kate", "Files", "Fonts", "Firefox"]
         );
         assert!(applications.iter().all(|i| i.section == Section::Applications));
-        assert!(home_items(&a, &[], Scope::Files, 8).is_empty());
+        assert!(home_items(&a, &[], &[], Scope::Files, 8).is_empty());
         for scope in Scope::ALL {
-            assert!(home_items(&a, &recent, scope, 0).is_empty());
+            assert!(home_items(&a, &recent, &[], scope, 0).is_empty());
         }
+    }
+
+    #[test]
+    fn favorites_precede_history_without_duplicate_rows_or_consuming_missing_slots() {
+        let a = apps();
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        let two = dir.path().join("two.txt");
+        std::fs::write(&one, "").unwrap();
+        std::fs::write(&two, "").unwrap();
+        let one_key = (Kind::File, format!("file://{}", one.display()));
+        let two_key = (Kind::File, format!("file://{}", two.display()));
+        let favorites = vec![
+            (Kind::App, "gone.desktop".into()),
+            (Kind::File, "https:///invalid".into()),
+            (Kind::File, format!("file://{}/missing.txt", dir.path().display())),
+            one_key.clone(),
+            (Kind::App, "Kate.desktop".into()),
+            one_key.clone(),
+            (Kind::App, "Kate.desktop".into()),
+        ];
+        let original = favorites.clone();
+        let recent = vec![
+            (Kind::App, "Kate.desktop".into()),
+            one_key,
+            two_key.clone(),
+            (Kind::App, "Files.desktop".into()),
+            two_key,
+        ];
+        let titles = |scope, limit| {
+            home_items(&a, &recent, &favorites, scope, limit).into_iter().map(|i| i.title).collect::<Vec<_>>()
+        };
+        assert_eq!(titles(Scope::All, 5), ["one.txt", "Kate", "two.txt", "Files", "Firefox"]);
+        assert_eq!(titles(Scope::Applications, 3), ["Kate", "Files", "Firefox"]);
+        assert_eq!(titles(Scope::Files, 2), ["one.txt", "two.txt"]);
+        for scope in Scope::ALL {
+            assert!(titles(scope, 0).is_empty());
+        }
+        assert_eq!(favorites, original, "resolution never removes saved favorites");
+    }
+
+    #[test]
+    fn temporarily_missing_favorite_files_return_without_readding_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("returning.txt");
+        let favorites = [(Kind::File, format!("file://{}", path.display()))];
+        assert!(home_items(&[], &[], &favorites, Scope::Files, 8).is_empty());
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(home_items(&[], &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
+        std::fs::remove_file(&path).unwrap();
+        assert!(home_items(&[], &[], &favorites, Scope::Files, 8).is_empty());
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(home_items(&[], &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
     }
 
     #[test]
@@ -948,17 +1024,40 @@ mod tests {
 
     #[test]
     fn actions_put_primary_first() {
-        assert_eq!(actions_for(&Target::App(0)), [Action::Launch, Action::CopyName, Action::ResetRanking]);
-        let f = actions_for(&Target::File(file("a", false)));
-        assert_eq!(f, [Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]);
+        assert_eq!(
+            actions_for(&Target::App(0), false),
+            [Action::Launch, Action::CopyName, Action::ResetRanking, Action::AddFavorite]
+        );
+        let f = actions_for(&Target::File(file("a", false)), false);
+        assert_eq!(
+            f,
+            [
+                Action::Open,
+                Action::Reveal,
+                Action::CopyPath,
+                Action::CopyName,
+                Action::ResetRanking,
+                Action::AddFavorite
+            ]
+        );
         let mut odd = file("a", false);
         odd.path = None;
-        assert!(!actions_for(&Target::File(odd)).contains(&Action::CopyPath));
-        let calculator = actions_for(&Target::Calc("2".into()));
+        let odd = Target::File(odd);
+        assert_eq!(actions_for(&odd, false), [Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking]);
+        assert_eq!(actions_for(&odd, true), actions_for(&odd, false));
+        let calculator = actions_for(&Target::Calc("2".into()), false);
         assert_eq!(calculator, [Action::CopyResult, Action::UseResult]);
+        assert_eq!(actions_for(&Target::Calc("2".into()), true), calculator);
         assert_eq!(secondary_action(&calculator), Some(Action::UseResult));
         assert_eq!(secondary_action(&f), Some(Action::Reveal));
-        assert_eq!(secondary_action(&actions_for(&Target::App(0))), None);
+        assert_eq!(secondary_action(&actions_for(&Target::App(0), false)), None);
+        for target in [Target::App(0), Target::File(file("a", false))] {
+            let add = actions_for(&target, false);
+            let remove = actions_for(&target, true);
+            assert_eq!(add.last(), Some(&Action::AddFavorite));
+            assert_eq!(remove.last(), Some(&Action::RemoveFavorite));
+            assert_eq!(&add[..add.len() - 1], &remove[..remove.len() - 1]);
+        }
     }
 
     #[test]
@@ -981,6 +1080,8 @@ mod tests {
             (Action::CopyPath, "location"),
             (Action::CopyResult, "answer"),
             (Action::UseResult, "continue"),
+            (Action::AddFavorite, "pin"),
+            (Action::RemoveFavorite, "unpin"),
         ] {
             assert_eq!(action.search_score(&matcher::tokens(query)), Some(700), "{action:?}: {query}");
         }
@@ -1000,6 +1101,8 @@ mod tests {
             Action::CopyResult,
             Action::UseResult,
             Action::ResetRanking,
+            Action::AddFavorite,
+            Action::RemoveFavorite,
         ] {
             assert_eq!(action.search_score(&matcher::tokens(action.label())), Some(matcher::EXACT));
             assert_eq!(action.search_score(&[]), None);

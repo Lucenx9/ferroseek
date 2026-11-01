@@ -112,6 +112,22 @@ Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.
 `Terminal=true` entries run in `xdg-terminal-exec` or a known terminal.
 
+## Favorites
+
+Use **Add to favorites** or **Remove from favorites** in an app or file's action
+panel (search for `pin` or `unpin`). A star marks favorite rows. With an empty
+query, favorites appear before recent items, in the order they were added;
+the Applications and Files filters still apply. Missing apps or files do not
+consume a suggestion slot; their preference is retained if they return.
+Favorites do not change the ranking of a typed query.
+
+Favorites are stored separately in
+`$XDG_STATE_HOME/ferroseek/launcher-favorites`, with owner-only permissions and
+locked, atomic updates. Up to 400 favorites are retained. **Reset ranking** and `--forget-history` leave them
+intact. `--private` reads and writes neither saved history nor saved favorites;
+any favorites added there last only until that launcher closes. File opening
+continues through the daemon, which still requires an indexed path.
+
 ## Launch history
 
 `$XDG_STATE_HOME/ferroseek/launcher-usage` (mode `0600`, directory `0700`)
