@@ -189,6 +189,7 @@ pub enum Action {
     CopyPath,
     CopyName,
     CopyResult,
+    UseResult,
     ResetRanking,
 }
 
@@ -201,6 +202,7 @@ impl Action {
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
             Action::CopyResult => "Copy result",
+            Action::UseResult => "Use result",
             Action::ResetRanking => "Reset ranking",
         }
     }
@@ -208,7 +210,7 @@ impl Action {
     pub fn shortcut(self) -> &'static str {
         match self {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
-            Action::Reveal => "Ctrl+Enter",
+            Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::CopyName | Action::ResetRanking => "",
         }
@@ -223,8 +225,14 @@ pub fn actions_for(t: &Target) -> Vec<Action> {
             vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]
         }
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
-        Target::Calc(_) => vec![Action::CopyResult],
+        Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
     }
+}
+
+/// Ctrl+Enter always uses the selected result's secondary action, including
+/// while that action is hidden by an action-panel filter.
+pub fn secondary_action(actions: &[Action]) -> Option<Action> {
+    actions.iter().copied().find(|a| matches!(a, Action::Reveal | Action::UseResult))
 }
 
 /// Selection plus the window of rows currently drawn (the list is
@@ -515,8 +523,10 @@ mod tests {
     fn calculator_and_recent_rows() {
         let c = calc_item(" 2 + 3*4 ").unwrap();
         assert_eq!((c.title.as_str(), c.subtitle.as_str()), ("= 14", "2 + 3*4"));
-        assert_eq!(actions_for(&c.target), [Action::CopyResult]);
+        assert_eq!(actions_for(&c.target), [Action::CopyResult, Action::UseResult]);
         assert!(calc_item("report").is_none());
+        assert_eq!(calc_item("= 42").unwrap().title, "= 42");
+        assert!(calc_item("=").is_none());
 
         let a = apps();
         let dir = tempfile::tempdir().unwrap();
@@ -650,7 +660,11 @@ mod tests {
         let mut odd = file("a", false);
         odd.path = None;
         assert!(!actions_for(&Target::File(odd)).contains(&Action::CopyPath));
-        assert_eq!(actions_for(&Target::Calc("2".into())), [Action::CopyResult]);
+        let calculator = actions_for(&Target::Calc("2".into()));
+        assert_eq!(calculator, [Action::CopyResult, Action::UseResult]);
+        assert_eq!(secondary_action(&calculator), Some(Action::UseResult));
+        assert_eq!(secondary_action(&f), Some(Action::Reveal));
+        assert_eq!(secondary_action(&actions_for(&Target::App(0))), None);
     }
 
     #[test]
