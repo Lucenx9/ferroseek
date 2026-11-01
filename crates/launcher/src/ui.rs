@@ -76,6 +76,17 @@ struct Panel {
     selected: usize,
 }
 
+impl Panel {
+    fn action_for_command(&self, cmd: Command) -> Option<Action> {
+        match cmd {
+            Command::Activate => self.actions.get(self.selected).copied(),
+            Command::Secondary => self.actions.contains(&Action::Reveal).then_some(Action::Reveal),
+            Command::CopyPath => self.actions.contains(&Action::CopyPath).then_some(Action::CopyPath),
+            _ => None,
+        }
+    }
+}
+
 pub struct Launcher {
     backend: Backend,
     apps: Vec<App>,
@@ -391,13 +402,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     let len = s.items.len();
     if let Some(p) = &mut s.panel {
+        if let Some(action) = p.action_for_command(cmd) {
+            return s.perform(action);
+        }
         match cmd {
             Command::Up => p.selected = p.selected.saturating_sub(1),
             Command::Down => p.selected = (p.selected + 1).min(p.actions.len().saturating_sub(1)),
-            Command::Activate => {
-                let a = p.actions[p.selected];
-                return s.perform(a);
-            }
             Command::Back | Command::ToggleActions => {
                 s.panel = None;
                 return widget::operation::focus(search_id());
@@ -648,6 +658,28 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn displayed_shortcuts_work_inside_the_action_panel() {
+        let panel =
+            Panel { actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName], selected: 3 };
+        let key = |key, mods| model::command_for(&key, mods).unwrap();
+        assert_eq!(
+            panel.action_for_command(key(Key::Named(keyboard::key::Named::Enter), Modifiers::CTRL)),
+            Some(Action::Reveal)
+        );
+        assert_eq!(
+            panel.action_for_command(key(Key::Character("C".into()), Modifiers::CTRL | Modifiers::SHIFT)),
+            Some(Action::CopyPath)
+        );
+        assert_eq!(
+            panel.action_for_command(key(Key::Named(keyboard::key::Named::Enter), Modifiers::empty())),
+            Some(Action::CopyName)
+        );
+        let app = Panel { actions: vec![Action::Launch, Action::CopyName], selected: 0 };
+        assert_eq!(app.action_for_command(Command::Secondary), None);
+        assert_eq!(app.action_for_command(Command::CopyPath), None);
+    }
 
     #[test]
     fn ellipsizing() {
