@@ -54,9 +54,11 @@ exit 0
     def options():
         return SimpleNamespace(core=False, mcp=False, krunner=False, full=False, dry_run=False,
                                register_claude=False, register_codex=False, allow=[])
-    detected = dict(kde=True, claude=True, codex=True)
-    with patch.object(sys.stdin, 'isatty', return_value=True), patch('builtins.input', side_effect=['', 'n', 'n']):
-        assert installer.choose(options(), detected, None) == {'core', 'mcp', 'krunner'}
+    detected = dict(kde=True, claude=True, codex=True, wayland=True)
+    with patch.object(sys.stdin, 'isatty', return_value=True), patch('builtins.input', return_value=''):
+        assert installer.choose(options(), detected, None) == {'core', 'launcher'}
+        assert installer.choose(options(), dict(detected, wayland=False), None) == {'core'}
+        assert installer.choose(options(), detected, {'components': ['core', 'mcp']}) == {'core'}
     with patch.object(sys.stdin, 'isatty', return_value=True), patch('builtins.input', return_value='core'):
         assert installer.choose(options(), detected, None) == {'core'}
     with patch.object(sys.stdin, 'isatty', return_value=True), patch('builtins.input', return_value='q'):
@@ -93,6 +95,20 @@ exit 0
     bindir = home / '.local/bin'
     assert (bindir / 'ferroseekd').read_bytes() == (repo / 'target/release/ferroseekd').read_bytes()
     assert not (bindir / 'ferroseek-mcp').exists()
+    run('--launcher')
+    launcher = bindir / 'ferroseek-launcher'
+    assert launcher.read_bytes() == (repo / 'target/release/ferroseek-launcher').read_bytes()
+    assert launcher.stat().st_mode & 0o777 == 0o755
+    run('--core')
+    assert launcher.exists()  # Core upgrades retain the installed UI.
+    uninstall('--core', expected=1)
+    launcher.write_bytes(b'local override')
+    uninstall('--launcher', expected=1)
+    run('--launcher', expected=1)
+    assert launcher.read_bytes() == b'local override'
+    launcher.write_bytes((repo / 'target/release/ferroseek-launcher').read_bytes())
+    uninstall('--launcher')
+    assert not launcher.exists() and (bindir / 'ferroseekd').exists()
     runner = home / '.local/share/krunner/dbusplugins/ferroseek.desktop'
     assert not runner.exists()
     config = home / '.config/ferroseek/config.toml'

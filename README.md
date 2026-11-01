@@ -1,11 +1,13 @@
 # FerroSeek
 
-**Lightweight, real-time filename and path search for Linux.** FerroSeek is a Rust-powered, desktop-independent search engine that maintains a local index and exposes it through a CLI, optional KDE Plasma KRunner and Noctalia launcher integrations, and an optional MCP server for AI agents.
+**A keyboard-first launcher for Linux, with its own file search engine.** FerroSeek opens applications, finds files and folders, evaluates calculations and ranks results using local launch history. The launcher is the main product; its Rust indexing engine also supports standalone CLI use and optional KRunner, Noctalia and MCP integrations.
 
-> **Status: 0.1 MVP (development).** Filename/path search, live indexing, CLI, KRunner and MCP work. There is **no published binary release yet**. File-content search, GNOME/Rofi integrations and full Baloo API compatibility are not implemented.
+> **Status: 0.1 development.** The standalone launcher is experimental and requires Wayland with `wlr-layer-shell` and session D-Bus. Graphical validation so far uses nested virtual KWin, not a broad desktop compatibility matrix. There is **no published binary release yet**. See [launcher setup and limits](docs/LAUNCHER.md).
 
 ## Features
 
+- **Launch applications from the keyboard**, with localized desktop entries, icons and fuzzy matching.
+- **Calculate and copy results**, revisit frequently opened items and use file actions without leaving the launcher.
 - **Find files and directories by name or path**, with case-insensitive substring matching and ranked results.
 - **Keep an index up to date** using inotify, incremental reconciliation and crash recovery.
 - **Low background overhead** through bounded queues, throttled scans and cache release while idle.
@@ -21,15 +23,18 @@ Clone the source repository and use the user-scoped installer:
 ```sh
 git clone https://github.com/Lucenx9/ferroseek.git
 cd ferroseek
-./scripts/install.sh               # guided installation and recommendations
+./scripts/install.sh --launcher    # launcher + indexing daemon + CLI
 ```
 
-The source installer needs **Python 3.11+** and **Rust 1.89+** with Cargo and a C linker. It runs without sudo and does not download remote scripts. Prebuilt local archive packaging exists, but release binaries have not been published.
+The source installer needs **Python 3.11+** and **Rust 1.89+** with Cargo and a C linker. Launcher builds also need libxkbcommon development files. The installer runs without sudo and does not download remote scripts. Prebuilt local archive packaging exists, but release binaries have not been published.
+
+Bind `ferroseek-launcher` to a keyboard shortcut after installation. See the [launcher guide](docs/LAUNCHER.md) for runtime requirements.
 
 For scripted or selective installation:
 
 ```sh
-./scripts/install.sh --core        # daemon + CLI, including headless Linux
+./scripts/install.sh               # guided setup; recommends launcher on Wayland
+./scripts/install.sh --core        # engine + CLI only, including headless Linux
 ./scripts/install.sh --noctalia    # core + managed Noctalia v5 launcher plugin
 ./scripts/install.sh --krunner     # core + KDE Plasma integration
 ./scripts/install.sh --mcp         # core + optional MCP executable
@@ -50,12 +55,18 @@ For headless use, `ferroseek index` and `ferroseek search` work without a runnin
 
 | Interface | Functionality | Status |
 |---|---|---|
+| **Launcher** (`ferroseek-launcher`) | Applications, files, calculator, history and keyboard actions | Main product, experimental; [setup and limits](docs/LAUNCHER.md) |
 | **CLI** (`ferroseek`) | Search, index, status and maintenance commands | Core, available |
 | **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
 | **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
 | **Noctalia v5** | Optional `/ferro` launcher plugin | Managed install with `--noctalia`; [setup and validation limits](docs/NOCTALIA.md) |
-| **`ferroseek-launcher`** | Keyboard-first Wayland launcher for applications and files | Optional, experimental; [build and limits](docs/LAUNCHER.md) |
-| **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Planned, **not available yet** |
+| **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Deferred, **not available** |
+
+### Standalone launcher
+
+Run `ferroseek-launcher` to open it; run it again to close it. Type an application name, a filename or an arithmetic expression. Enter opens the selected result or copies a calculation; Ctrl+K shows its actions. The launcher uses the shared index for files.
+
+The main development priority is making this launcher reliable for daily use. Existing KRunner and Noctalia adapters remain supported optional ways to use the engine; MCP remains optional. New desktop adapters are deferred.
 
 ### Command line
 
@@ -121,7 +132,7 @@ The current engine does not implement file-content indexing, advanced tags, KIO/
 | [Installation](docs/INSTALLATION.md) | Components, setup, upgrade, rollback and archive details |
 | [MCP](docs/MCP.md) | Agent tools, access modes and configuration |
 | [Noctalia](docs/NOCTALIA.md) | Optional launcher plugin and CLI JSON contract |
-| [Launcher](docs/LAUNCHER.md) | Optional standalone Wayland launcher (`ferroseek-launcher`) |
+| [Launcher](docs/LAUNCHER.md) | Main launcher: installation, keyboard actions and current limits |
 | [Architecture](docs/ARCHITECTURE.md) | Core, index, watcher and optional adapters |
 | [Benchmarks](docs/BENCHMARKS.md) | Reproducible performance results and caveats |
 | [Comparisons](docs/COMPARISONS.md) | Where FerroSeek, Baloo, fd, rg and plocate fit |

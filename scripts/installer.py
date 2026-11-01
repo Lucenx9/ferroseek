@@ -27,11 +27,11 @@ NOCTALIA_FILES = {
     'noctalia_it': 'integrations/noctalia/ferroseek/translations/it.json',
     'noctalia_guide': 'docs/NOCTALIA.md',
 }
-COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'], 'mcp': ['mcp'], 'krunner': ['runner'],
+COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'], 'launcher': ['launcher'], 'mcp': ['mcp'], 'krunner': ['runner'],
                    'noctalia': list(NOCTALIA_FILES)}
-BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'mcp': 'ferroseek-mcp'}
-PACKAGES = {'daemon': 'ferroseek-daemon', 'cli': 'ferroseek-cli', 'mcp': 'ferroseek-mcp'}
-ARCHIVE_FILES = ['LICENSE', 'README.md', 'docs/INSTALLATION.md', 'docs/MCP.md',
+BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'launcher': 'ferroseek-launcher', 'mcp': 'ferroseek-mcp'}
+PACKAGES = {'daemon': 'ferroseek-daemon', 'cli': 'ferroseek-cli', 'launcher': 'ferroseek-launcher', 'mcp': 'ferroseek-mcp'}
+ARCHIVE_FILES = ['LICENSE', 'README.md', 'docs/INSTALLATION.md', 'docs/LAUNCHER.md', 'docs/MCP.md',
                  'scripts/install.sh', 'scripts/uninstall.sh', 'scripts/installer.py', 'scripts/install_transaction.py',
                  'data/ferroseek.service', 'data/io.github.ferroseek.FerroSeek.service', 'data/ferroseek-krunner.desktop']
 
@@ -68,6 +68,7 @@ def paths():
     codex = Path(os.environ.get('CODEX_HOME') or home / '.codex') / 'config.toml'
     claude = Path(os.environ['CLAUDE_CONFIG_DIR']) / '.claude.json' if os.environ.get('CLAUDE_CONFIG_DIR') else home / '.claude.json'
     targets = dict(daemon=home / '.local/bin/ferroseekd', cli=home / '.local/bin/ferroseek',
+                   launcher=home / '.local/bin/ferroseek-launcher',
                    mcp=home / '.local/bin/ferroseek-mcp', unit=config / 'systemd/user/ferroseek.service',
                    bus=data / 'dbus-1/services/io.github.ferroseek.FerroSeek.service',
                    runner=data / 'krunner/dbusplugins/ferroseek.desktop', config=config / 'ferroseek/config.toml',
@@ -95,7 +96,8 @@ def detect():
     noctalia = bool(match and int(match[1]) >= 5 and not match[4])
     return dict(distro=distro, arch=platform.machine(), desktop=desktop, kde=kde, bus=bus, manager=manager,
                 claude=bool(shutil.which('claude')), codex=bool(shutil.which('codex')),
-                noctalia=noctalia, gio=bool(shutil.which('gio')))
+                noctalia=noctalia, gio=bool(shutil.which('gio')),
+                wayland=bool(os.environ.get('WAYLAND_DISPLAY') or os.environ.get('XDG_SESSION_TYPE') == 'wayland'))
 
 
 def systemd_quote(value):
@@ -174,6 +176,8 @@ def archive_info():
     expected = set(archive_files(components)) | {'bin/ferroseek', 'bin/ferroseekd'}
     if 'mcp' in components:
         expected.add('bin/ferroseek-mcp')
+    if 'launcher' in components:
+        expected.add('bin/ferroseek-launcher')
     if set(package['sha256']) != expected:
         raise InstallError('archive checksum manifest is incomplete or unexpected')
     if package['os'] != 'linux' or package['arch'] != platform.machine():
@@ -192,6 +196,10 @@ def choose(args, env, package):
     selected = {name for name in COMPONENT_FILES if getattr(args, name, False)}
     if args.full:
         selected |= {'core', 'mcp'}
+        if env.get('wayland'):
+            selected.add('launcher')
+        else:
+            print('No Wayland session detected: --full skips the standalone launcher; use --launcher to install for a later session.')
         if env['kde']:
             selected.add('krunner')
         else:
@@ -201,18 +209,18 @@ def choose(args, env, package):
     if args.register_claude or args.register_codex:
         selected.add('mcp')
     if not selected:
-        recommended = {'core'} | ({'krunner'} if env['kde'] else set()) | ({'mcp'} if env['claude'] or env['codex'] else set())
-        if env.get('noctalia') and env.get('gio'):
-            recommended.add('noctalia')
+        recommended = {'core', 'launcher'} if env.get('wayland') else {'core'}
+        print('FerroSeek is a Linux launcher. The standalone UI needs Wayland with wlr-layer-shell and session D-Bus.')
+        print('KRunner, Noctalia and MCP are optional components; core alone supports headless use.')
         if package:
             recommended &= set(package['components'])
         print('Recommended components: ' + ', '.join(sorted(recommended)))
         if args.dry_run:
             selected = recommended
         elif not sys.stdin.isatty():
-            raise InstallError('non-interactive input: choose --core, --mcp, --krunner, --noctalia or --full (or --dry-run)')
+            raise InstallError('non-interactive input: choose --launcher, --core, --mcp, --krunner, --noctalia or --full (or --dry-run)')
         else:
-            reply = input('Components [Enter = recommended; core mcp krunner noctalia; q = cancel]: ').strip()
+            reply = input('Components [Enter = recommended; launcher core mcp krunner noctalia; q = cancel]: ').strip()
             if reply == 'q':
                 raise InstallError('installation cancelled')
             selected = set(reply.replace(',', ' ').split()) if reply else recommended
@@ -387,7 +395,7 @@ def install(args, env, layout):
     print('Install: ' + ', '.join(sorted(selected)))
     print('Existing configuration: ' + ('preserved' if targets['config'].exists() else 'none (engine defaults apply)'))
     print('Running daemons are never restarted automatically.')
-    if not env['kde'] and 'noctalia' not in selected:
+    if not selected & {'launcher', 'krunner', 'noctalia'}:
         print('No graphical adapter selected; CLI and MCP work on this desktop.')
     if not env['bus']:
         print('No session D-Bus: foreground CLI indexing/search remains available.')
@@ -468,6 +476,8 @@ def install(args, env, layout):
     print('Installed. Configuration and indexes preserved. No service restart performed.')
     print('Add ' + shlex.quote(str(home / '.local/bin')) + ' to PATH if necessary.')
     print('Choose indexing roots with ferroseek config before starting; engine defaults index your home.')
+    if 'launcher' in selected:
+        print('Bind ferroseek-launcher to a desktop shortcut. Requires Wayland with wlr-layer-shell and session D-Bus; see docs/LAUNCHER.md.')
     if 'krunner' in selected:
         print('KRunner discovers new runners at its next restart/login. No KDE settings were changed.')
     if 'mcp' in selected:
@@ -557,7 +567,7 @@ def uninstall(args, env, layout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for flag in ['full', 'core', 'mcp', 'krunner', 'noctalia', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
+    for flag in ['full', 'launcher', 'core', 'mcp', 'krunner', 'noctalia', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
         parser.add_argument('--' + flag, action='store_true')
     parser.add_argument('--mcp-access', choices=['restricted', 'home', 'all_indexed'], default=None, help='agent authorization; default all_indexed for new registrations, with typed confirmation; --allow implies restricted')
     parser.add_argument('--config', help='initial engine TOML; never replace an existing config')

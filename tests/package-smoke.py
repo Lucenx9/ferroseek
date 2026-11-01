@@ -21,11 +21,14 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         p.chmod(0o755)
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith('FERROSEEK_')}
     env = dict(clean_env, XDG_RUNTIME_DIR=str(runtime), SOURCE_DATE_EPOCH='0', XDG_CURRENT_DESKTOP='KDE',
+               XDG_SESSION_TYPE='wayland', WAYLAND_DISPLAY='wayland-test',
                PATH=str(commands) + ':' + os.environ['PATH'],
                DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-package-test')
-    for component in ['core', 'mcp', 'krunner', 'noctalia', 'full']:
+    for component in ['launcher', 'core', 'mcp', 'krunner', 'noctalia', 'full']:
         output = root / component
         args = ['python3', str(repo / 'scripts/package.py'), '--no-build', '--components', component, '--output', str(output)]
+        if component == 'launcher':
+            args[3:5] = []  # The default archive must contain the main product.
         r = subprocess.run(args, env=env, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         archive = next(output.glob('*.tar.gz'))
@@ -43,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         payload = next(extract.iterdir())
         metadata = json.loads((payload / 'package.json').read_text())
         assert (payload / 'bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
+        assert (payload / 'bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
         assert (payload / 'integrations/noctalia/ferroseek/plugin.toml').exists() == (component in ['noctalia', 'full'])
         for name, expected in metadata['sha256'].items():
             assert hashlib.sha256((payload / name).read_bytes()).hexdigest() == expected
@@ -59,10 +63,12 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         r = subprocess.run([str(script), '--' + component], env=isolated, capture_output=True, text=True)
         assert r.returncode == 0, (r.stdout, r.stderr)
         assert (home / '.local/bin/ferroseek').exists()
+        assert (home / '.local/bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
         assert (home / '.local/share/krunner/dbusplugins/ferroseek.desktop').exists() == (component in ['krunner', 'full'])
         assert (home / '.local/bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         assert (home / '.local/share/noctalia/plugins/ferroseek/plugin.toml').exists() == (component in ['noctalia', 'full'])
         if component == 'core':
+            assert subprocess.run([str(script), '--launcher'], env=isolated, capture_output=True).returncode != 0
             assert subprocess.run([str(script), '--mcp'], env=isolated, capture_output=True).returncode != 0
             assert subprocess.run([str(script), '--noctalia'], env=isolated, capture_output=True).returncode != 0
             duplicate = root / 'repeat'
@@ -78,4 +84,5 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         r = subprocess.run([str(payload / 'scripts/uninstall.sh')], env=isolated, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert not (home / '.local/bin/ferroseek').exists()
-print('PASS: five native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')
+        assert not (home / '.local/bin/ferroseek-launcher').exists()
+print('PASS: six native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')
