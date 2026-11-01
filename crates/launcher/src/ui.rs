@@ -9,7 +9,7 @@ use iced::futures::channel::mpsc::UnboundedReceiver;
 use iced::futures::stream::{self, BoxStream, StreamExt};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, ScrollDelta};
-use iced::widget::{self, Id, column, container, image, mouse_area, row, space, stack, svg, text, text_input};
+use iced::widget::{self, Id, button, column, container, image, mouse_area, row, space, stack, svg, text, text_input};
 use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
@@ -132,7 +132,9 @@ pub enum Message {
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
-    Clicked(usize),
+    Selected(Target),
+    Clicked(Target),
+    ContextMenu(Target),
     PanelClicked(usize),
     Opened(Result<(), String>),
     Ui(UiEvent),
@@ -403,17 +405,30 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::Clicked(i) => {
+        Message::Selected(target) => {
             if s.panel.is_some() {
                 s.panel = None;
                 return widget::operation::focus(search_id());
             }
-            s.cursor.select(i, s.items.len());
+            s.cursor.select_target(&target, &s.items);
+            widget::operation::focus(search_id())
+        }
+        Message::Clicked(target) => {
+            if !s.cursor.select_target(&target, &s.items) {
+                return Task::none();
+            }
             s.panel = None;
             match s.primary() {
                 Some(a) => s.perform(a),
                 None => Task::none(),
             }
+        }
+        Message::ContextMenu(target) => {
+            if !s.cursor.select_target(&target, &s.items) {
+                return Task::none();
+            }
+            s.panel = s.selected().map(Panel::new);
+            widget::operation::focus(actions_id())
         }
         Message::PanelClicked(i) => {
             let a = s.panel.as_ref().and_then(|p| p.filtered_actions().get(i).copied());
@@ -478,7 +493,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
         }
         Command::CopyPath => return s.perform(Action::CopyPath),
-        Command::ToggleActions => {
+        Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
                 s.panel = Some(Panel::new(item));
                 return widget::operation::focus(actions_id());
@@ -602,7 +617,12 @@ fn result_row(s: &Launcher, i: usize) -> Element<'_, Message> {
             ..Default::default()
         },
     );
-    mouse_area(row).on_press(Message::Clicked(i)).interaction(mouse::Interaction::Pointer).into()
+    mouse_area(row)
+        .on_press(Message::Selected(item.target.clone()))
+        .on_double_click(Message::Clicked(item.target.clone()))
+        .on_right_press(Message::ContextMenu(item.target.clone()))
+        .interaction(mouse::Interaction::Pointer)
+        .into()
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
@@ -625,7 +645,16 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         if acts.contains(&Action::Reveal) {
             hints = hints.push(hint("Ctrl+Enter", Action::Reveal.label()));
         }
-        hints = hints.push(hint("Ctrl+K", "Actions"));
+        hints = hints.push(
+            button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
+                |_, status| button::Style {
+                    background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                        .then_some(Background::Color(palette::FAINT)),
+                    text_color: palette::TEXT,
+                    ..Default::default()
+                },
+            ),
+        );
     } else {
         hints = hints.push(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" }));
     }

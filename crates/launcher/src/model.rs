@@ -261,6 +261,14 @@ impl Cursor {
         }
     }
 
+    /// Resolves the clicked target against the current list, which may
+    /// have changed since the row was drawn.
+    pub fn select_target(&mut self, target: &Target, items: &[Item]) -> bool {
+        let Some(index) = items.iter().position(|item| item.target == *target) else { return false };
+        self.select(index, items.len());
+        true
+    }
+
     /// Selects the first row of the adjacent group, without wrapping.
     pub fn move_section(&mut self, forward: bool, items: &[Item]) {
         let Some(current) = items.get(self.selected) else {
@@ -311,6 +319,7 @@ pub enum Command {
     /// Secondary action (Ctrl+Enter).
     Secondary,
     ToggleActions,
+    OpenActions,
     CopyPath,
     /// Close the panel, else clear the query, else hide.
     Back,
@@ -334,6 +343,8 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::Enter) if ctrl => Some(Command::Secondary),
         Key::Named(Named::Enter) => Some(Command::Activate),
         Key::Named(Named::Escape) => Some(Command::Back),
+        Key::Named(Named::ContextMenu) => Some(Command::OpenActions),
+        Key::Named(Named::F10) if mods.shift() => Some(Command::OpenActions),
         Key::Character(c) if ctrl => match c.as_str() {
             "k" | "K" => Some(Command::ToggleActions),
             "n" | "N" | "j" | "J" => Some(Command::Down),
@@ -534,6 +545,36 @@ mod tests {
         assert_eq!((c.selected, c.window(2)), (1, 0..2));
         c.select(7, 2);
         assert_eq!(c.selected, 1, "out of range is ignored");
+    }
+
+    #[test]
+    fn pointer_selection_follows_target_identity_after_results_change() {
+        let a = apps();
+        let files = [file("notes.txt", false), file("report.txt", false)];
+        let mut items = build_items(&a, &[], &files);
+        let target = items[1].target.clone();
+        let mut cursor = Cursor::new(2);
+
+        // A late result can move the row between drawing it and handling
+        // its click. Resolve the original target, not its old row index.
+        items.insert(0, calc_item("2+2").unwrap());
+        assert!(cursor.select_target(&target, &items));
+        assert_eq!(cursor.selected, 2);
+        assert_eq!(items[cursor.selected].title, "report.txt");
+        assert!(cursor.window(items.len()).contains(&cursor.selected));
+
+        items.pop();
+        cursor.select(0, items.len());
+        assert!(!cursor.select_target(&target, &items), "removed targets cannot activate a different row");
+        assert_eq!(cursor.selected, 0);
+        assert!(!cursor.select_target(&target, &[]));
+    }
+
+    #[test]
+    fn context_menu_keys_open_actions_without_toggling_them() {
+        assert_eq!(command_for(&Key::Named(Named::ContextMenu), Modifiers::empty()), Some(Command::OpenActions));
+        assert_eq!(command_for(&Key::Named(Named::F10), Modifiers::SHIFT), Some(Command::OpenActions));
+        assert_eq!(command_for(&Key::Named(Named::F10), Modifiers::empty()), None);
     }
 
     #[test]
