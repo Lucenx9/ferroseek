@@ -78,7 +78,10 @@ noctalia msg plugins enable lucenx9/ferroseek
 The managed local-data copy takes precedence over a path/git source with the
 same ID. When switching from a development source, keep existing settings;
 you can remove that source explicitly with `noctalia msg plugins source remove
-ferroseek`. The installer never removes user-defined sources automatically.
+ferroseek`. Removing a source can also disable its plugin ID, even when the
+managed local copy overrides it. Re-enable the managed copy afterwards with
+`noctalia msg plugins enable lucenx9/ferroseek`. The installer never removes
+user-defined sources automatically.
 FerroSeek is not in Noctalia's community catalog.
 
 Open the launcher with your existing keybinding (for example Super+Space on
