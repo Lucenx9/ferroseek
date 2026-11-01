@@ -268,6 +268,29 @@ impl Action {
         }
     }
 
+    /// Scores normalized query tokens against the title and a small set of
+    /// related terms. Titles carry more weight than aliases.
+    pub fn search_score(self, tokens: &[String]) -> Option<u32> {
+        if tokens.is_empty() {
+            return None;
+        }
+        let title = self.label().to_lowercase();
+        if tokens.iter().map(String::as_str).eq(title.split_whitespace()) {
+            return Some(matcher::EXACT);
+        }
+        let aliases: &[&str] = match self {
+            Self::Reveal => &["reveal", "directory", "parent"],
+            Self::CopyName => &["filename", "title"],
+            Self::CopyPath => &["location"],
+            Self::CopyResult => &["answer"],
+            Self::UseResult => &["continue"],
+            Self::Launch | Self::Open | Self::ResetRanking => &[],
+        };
+        let labels: Vec<_> =
+            std::iter::once((title.as_str(), 100)).chain(aliases.iter().map(|alias| (*alias, 70))).collect();
+        matcher::score(tokens, &labels)
+    }
+
     pub fn shortcut(self) -> &'static str {
         match self {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
@@ -936,6 +959,58 @@ mod tests {
         assert_eq!(secondary_action(&calculator), Some(Action::UseResult));
         assert_eq!(secondary_action(&f), Some(Action::Reveal));
         assert_eq!(secondary_action(&actions_for(&Target::App(0))), None);
+    }
+
+    #[test]
+    fn action_search_accepts_abbreviations_and_requires_every_token() {
+        for query in ["copnm", "cpn", "name copy"] {
+            assert!(Action::CopyName.search_score(&matcher::tokens(query)).is_some(), "{query}");
+        }
+        assert!(Action::CopyName.search_score(&matcher::tokens("copy unknown")).is_none());
+        assert!(Action::CopyName.search_score(&matcher::tokens("cpn unknown")).is_none());
+        assert!(Action::Reveal.search_score(&matcher::tokens("reveal nonexistent")).is_none());
+    }
+
+    #[test]
+    fn action_search_supports_only_declared_related_terms() {
+        for (action, query) in [
+            (Action::Reveal, "reveal directory"),
+            (Action::Reveal, "parent"),
+            (Action::CopyName, "filename"),
+            (Action::CopyName, "title"),
+            (Action::CopyPath, "location"),
+            (Action::CopyResult, "answer"),
+            (Action::UseResult, "continue"),
+        ] {
+            assert_eq!(action.search_score(&matcher::tokens(query)), Some(700), "{action:?}: {query}");
+        }
+        assert!(Action::CopyPath.search_score(&matcher::tokens("filename")).is_none());
+        assert!(Action::ResetRanking.search_score(&matcher::tokens("history")).is_none());
+        assert!(Action::UseResult.search_score(&matcher::tokens("resume")).is_none());
+    }
+
+    #[test]
+    fn action_search_prefers_visible_titles_to_aliases() {
+        for action in [
+            Action::Launch,
+            Action::Open,
+            Action::Reveal,
+            Action::CopyPath,
+            Action::CopyName,
+            Action::CopyResult,
+            Action::UseResult,
+            Action::ResetRanking,
+        ] {
+            assert_eq!(action.search_score(&matcher::tokens(action.label())), Some(matcher::EXACT));
+            assert_eq!(action.search_score(&[]), None);
+        }
+        let title = Action::Reveal.search_score(&matcher::tokens("folder")).unwrap();
+        let alias = Action::Reveal.search_score(&matcher::tokens("directory")).unwrap();
+        assert!(title > alias);
+        assert!(
+            Action::CopyName.search_score(&matcher::tokens("copy name"))
+                > Action::CopyName.search_score(&matcher::tokens("name copy"))
+        );
     }
 
     #[test]
