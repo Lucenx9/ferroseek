@@ -431,11 +431,11 @@ impl Launcher {
 
     fn panel_for(&self, item: &Item) -> Panel {
         let mut panel = Panel::new(item, self.is_favorite(&item.target));
-        if let Target::App(i) = item.target {
-            if let Some(app) = self.apps.get(i) {
-                panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
-                panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
-            }
+        if let Target::App(i) = item.target
+            && let Some(app) = self.apps.get(i)
+        {
+            panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
+            panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
         }
         panel
     }
