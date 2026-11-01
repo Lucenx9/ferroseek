@@ -9,14 +9,16 @@ use iced::futures::channel::mpsc::UnboundedReceiver;
 use iced::futures::stream::{self, BoxStream, StreamExt};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, ScrollDelta};
-use iced::widget::{self, Id, button, column, container, image, mouse_area, row, space, stack, svg, text, text_input};
+use iced::widget::{
+    self, Id, button, column, container, image, mouse_area, row, scrollable, space, stack, svg, text, text_input,
+};
 use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
 use crate::apps::App;
-use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
+use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, SearchStatus, UiEvent};
 use crate::calc;
 use crate::favorites::Favorites;
 use crate::icons::{Icon, Icons};
@@ -72,6 +74,13 @@ enum Status {
     Searching,
     Error(String),
     Notice(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum SearchStatusPanel {
+    Loading,
+    Ready(SearchStatus),
+    Error(String),
 }
 
 struct Panel {
@@ -167,6 +176,8 @@ pub struct Launcher {
     cursor: Cursor,
     clicks: ClickTracker,
     panel: Option<Panel>,
+    search_status: Option<SearchStatusPanel>,
+    status_generation: u64,
     generation: u64,
     status: Status,
     compact: bool,
@@ -178,6 +189,10 @@ pub enum Message {
     Query(String),
     Scope(Scope),
     ActionQuery(String),
+    ShowSearchStatus,
+    RefreshSearchStatus,
+    CloseSearchStatus,
+    SearchStatusLoaded { generation: u64, result: Result<SearchStatus, String> },
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
@@ -195,6 +210,10 @@ fn search_id() -> Id {
 
 fn actions_id() -> Id {
     Id::new("action-search")
+}
+
+fn status_scroll_id() -> Id {
+    Id::new("search-status-scroll")
 }
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
@@ -247,6 +266,8 @@ fn boot() -> (Launcher, Task<Message>) {
         cursor: Cursor::new(VISIBLE_ROWS),
         clicks: ClickTracker::default(),
         panel: None,
+        search_status: None,
+        status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
@@ -282,6 +303,13 @@ fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> 
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
+    if mods == Modifiers::CTRL {
+        match key.as_ref() {
+            Key::Character("i" | "I") => return Some(Message::ShowSearchStatus),
+            Key::Character("r" | "R") => return Some(Message::RefreshSearchStatus),
+            _ => {}
+        }
+    }
     model::command_for(key, mods).map(Message::Cmd)
 }
 
@@ -348,6 +376,7 @@ impl Launcher {
         // Not while searching: rows would collapse and reappear per key.
         let compact = self.query.trim().is_empty()
             && self.items.is_empty()
+            && self.search_status.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -512,10 +541,62 @@ impl Launcher {
     fn primary(&self) -> Option<Action> {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
+
+    fn refresh_search_status(&mut self) -> Task<Message> {
+        if matches!(self.search_status, Some(SearchStatusPanel::Loading)) {
+            return Task::none();
+        }
+        self.search_status = Some(SearchStatusPanel::Loading);
+        self.status_generation += 1;
+        let generation = self.status_generation;
+        Task::perform(self.backend.clone().status(), move |result| Message::SearchStatusLoaded { generation, result })
+    }
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    // Queued input from the search view must not act through the status view.
+    if s.search_status.is_some()
+        && matches!(
+            message,
+            Message::Query(_)
+                | Message::Scope(_)
+                | Message::ActionQuery(_)
+                | Message::Selected(_)
+                | Message::Clicked(_)
+                | Message::ContextMenu(_)
+                | Message::PanelClicked { .. }
+        )
+    {
+        return Task::none();
+    }
     match message {
+        Message::ShowSearchStatus => {
+            if s.search_status.is_some() {
+                return update(s, Message::CloseSearchStatus);
+            }
+            if s.opening.is_some() {
+                return Task::none();
+            }
+            s.clicks = ClickTracker::default();
+            s.panel = None;
+            let load = s.refresh_search_status();
+            Task::batch([load, s.resize()])
+        }
+        Message::RefreshSearchStatus if s.search_status.is_some() => s.refresh_search_status(),
+        Message::RefreshSearchStatus => Task::none(),
+        Message::CloseSearchStatus => {
+            s.search_status = None;
+            Task::batch([s.resize(), widget::operation::focus(search_id())])
+        }
+        Message::SearchStatusLoaded { generation, result } => {
+            if generation == s.status_generation && s.search_status.is_some() {
+                s.search_status = Some(match result {
+                    Ok(status) => SearchStatusPanel::Ready(status),
+                    Err(error) => SearchStatusPanel::Error(error),
+                });
+            }
+            Task::none()
+        }
         Message::Query(q) => {
             s.clicks = ClickTracker::default();
             // Editing the main field leaves the action panel and starts a new search.
@@ -591,6 +672,9 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
+            if s.search_status.is_some() {
+                return Task::none(); // the status scrollable handles its own wheel events
+            }
             let delta = if dy > 0.0 { -1 } else { 1 };
             if let Some(panel) = &mut s.panel {
                 panel.cursor.move_by(delta, panel.filtered_actions().len());
@@ -661,6 +745,19 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if s.search_status.is_some() {
+        use widget::operation::{AbsoluteOffset, RelativeOffset};
+        return match cmd {
+            Command::Back => update(s, Message::CloseSearchStatus),
+            Command::Up => widget::operation::scroll_by(status_scroll_id(), AbsoluteOffset { x: 0.0, y: -48.0 }),
+            Command::Down => widget::operation::scroll_by(status_scroll_id(), AbsoluteOffset { x: 0.0, y: 48.0 }),
+            Command::PageUp => widget::operation::scroll_by(status_scroll_id(), AbsoluteOffset { x: 0.0, y: -240.0 }),
+            Command::PageDown => widget::operation::scroll_by(status_scroll_id(), AbsoluteOffset { x: 0.0, y: 240.0 }),
+            Command::First => widget::operation::snap_to(status_scroll_id(), RelativeOffset::START),
+            Command::Last => widget::operation::snap_to(status_scroll_id(), RelativeOffset::END),
+            _ => Task::none(),
+        };
+    }
     if matches!(cmd, Command::NextScope | Command::PreviousScope) {
         let scope = s.scope.cycle(cmd == Command::NextScope);
         return update(s, Message::Scope(scope));
@@ -735,6 +832,9 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(status) = &s.search_status {
+        return search_status_view(status);
+    }
     let placeholder = match s.scope {
         Scope::All => "Search applications and files…",
         Scope::Applications => "Search applications…",
@@ -768,7 +868,11 @@ fn view(s: &Launcher) -> Element<'_, Message> {
             },
         ))
     });
-    let header = container(row![input, scopes].align_y(Vertical::Center))
+    let index_status = button(text("Index status").size(11))
+        .on_press(Message::ShowSearchStatus)
+        .padding([6, 8])
+        .style(status_button_style);
+    let header = container(row![input, scopes, index_status].spacing(4).align_y(Vertical::Center))
         .padding([0, 8])
         .height(INPUT_HEIGHT)
         .align_y(Vertical::Center);
@@ -803,6 +907,124 @@ fn divider<'a>() -> Element<'a, Message> {
         .into()
 }
 
+fn index_summary(status: &SearchStatus) -> (&'static str, &'static str) {
+    match status.state.as_str() {
+        "starting" => ("Starting file search", "The search service is preparing the index."),
+        "scanning" => ("Indexing files", "Some files may not appear until indexing finishes."),
+        "idle" => ("Watching for changes", "Search uses the indexed folders listed below."),
+        "paused" => ("Indexing paused", "File changes are not indexed while the service is paused."),
+        "stopping" => ("File search is stopping", "Return to search and retry when the service is available."),
+        _ => ("Unrecognized search status", "Update the launcher and search service together, then refresh."),
+    }
+}
+
+fn status_button_style(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+            .then_some(Background::Color(palette::FAINT)),
+        text_color: palette::DIM,
+        border: Border { radius: 5.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+fn status_metric(value: u64, label: &'static str) -> Element<'static, Message> {
+    container(column![text(value.to_string()).size(22), text(label).size(12).color(palette::DIM)].spacing(3))
+        .padding(12)
+        .width(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(palette::FAINT)),
+            border: Border { radius: 8.0.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
+    let loading = matches!(status, SearchStatusPanel::Loading);
+    let mut refresh = button(hint("Ctrl+R", "Refresh")).padding([6, 8]).style(status_button_style);
+    if !loading {
+        refresh = refresh.on_press(Message::RefreshSearchStatus);
+    }
+    let header =
+        container(row![text("File search status").size(20), space::horizontal(), refresh].align_y(Vertical::Center))
+            .height(INPUT_HEIGHT)
+            .padding([0, 16])
+            .align_y(Vertical::Center);
+    let mut content = column![].spacing(12).padding(16);
+    match status {
+        SearchStatusPanel::Loading => {
+            content = content.push(text("Checking file search…").size(18));
+            content = content.push(text("Connecting to the search service.").size(13).color(palette::DIM));
+        }
+        SearchStatusPanel::Error(error) => {
+            content = content.push(text("Search status unavailable").size(18).color(palette::ERROR));
+            content = content.push(
+                text("Refresh to try again. If this persists, update the launcher and search service together.")
+                    .size(13),
+            );
+            content = content.push(text(error).size(12).color(palette::DIM));
+        }
+        SearchStatusPanel::Ready(info) => {
+            let (title, help) = index_summary(info);
+            content = content.push(text(title).size(18));
+            content = content.push(text(help).size(13).color(palette::DIM));
+            content = content.push(
+                row![
+                    status_metric(info.files, "Indexed files"),
+                    status_metric(info.dirs, "Indexed folders"),
+                    status_metric(info.queued_dirs, "Queued folders")
+                ]
+                .spacing(8),
+            );
+            if info.watch_limit_hit {
+                content = content.push(
+                    text("Folder watch limit reached. Some changes may not be detected promptly.")
+                        .size(13)
+                        .color(palette::ERROR),
+                );
+            }
+            if info.errors > 0 {
+                content = content.push(text(format!("{} indexing errors reported during this service session. Check folder access and the service log for details.", info.errors)).size(13).color(palette::ERROR));
+            }
+            content = content.push(text("Indexed locations").size(14));
+            if info.roots.is_empty() {
+                content = content.push(text("No indexed locations yet. Check the indexing configuration; locations may also be unavailable while the first scan starts.").size(13).color(palette::DIM));
+            } else {
+                for root in &info.roots {
+                    content = content.push(text(root).size(13).wrapping(text::Wrapping::WordOrGlyph));
+                }
+            }
+        }
+    }
+    let detail = scrollable(content).id(status_scroll_id()).height(Length::Fill);
+    let footer = container(
+        row![
+            text("Snapshot · Refresh to check for changes").size(12).color(palette::DIM),
+            space::horizontal(),
+            button(hint("Esc", "Back to search"))
+                .on_press(Message::CloseSearchStatus)
+                .padding([4, 8])
+                .style(status_button_style),
+        ]
+        .align_y(Vertical::Center),
+    )
+    .height(FOOTER_HEIGHT)
+    .padding([0, 10])
+    .align_y(Vertical::Center);
+    container(column![header, divider(), detail, divider(), footer])
+        .padding(PAD)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_| container::Style {
+            background: Some(Background::Color(palette::SURFACE)),
+            border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
+            text_color: Some(palette::TEXT),
+            ..Default::default()
+        })
+        .into()
+}
+
 fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
         let (msg, help) = match &s.status {
@@ -822,11 +1044,16 @@ fn results(s: &Launcher) -> Element<'_, Message> {
             }
             _ => ("No results", "Try a shorter name or a different keyword."),
         };
-        return container(
-            column![text(msg).size(18), text(help).size(13).color(palette::DIM)].spacing(8).align_x(Horizontal::Center),
-        )
-        .center(Length::Fill)
-        .into();
+        let mut empty =
+            column![text(msg).size(18), text(help).size(13).color(palette::DIM)].spacing(8).align_x(Horizontal::Center);
+        if s.scope.file_query(&s.query) && !matches!(s.status, Status::Searching) {
+            empty = empty.push(
+                button(text("Check file search status").size(13))
+                    .on_press(Message::ShowSearchStatus)
+                    .style(status_button_style),
+            );
+        }
+        return container(empty).center(Length::Fill).into();
     }
     let mut col = column![];
     for (slot, i) in s.cursor.window(s.items.len()).enumerate() {
@@ -1060,6 +1287,8 @@ mod tests {
             cursor: Cursor::new(VISIBLE_ROWS),
             clicks: ClickTracker::default(),
             panel: None,
+            search_status: None,
+            status_generation: 0,
             generation: 0,
             status: Status::Idle,
             compact: true,
@@ -1446,6 +1675,137 @@ mod tests {
         panel.filter("use".into());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::UseResult));
         assert_eq!(Action::UseResult.shortcut(), "Ctrl+Enter");
+    }
+
+    fn search_info(state: &str) -> SearchStatus {
+        SearchStatus {
+            state: state.into(),
+            files: 42,
+            dirs: 7,
+            queued_dirs: 3,
+            watch_limit_hit: false,
+            errors: 0,
+            roots: vec!["/synthetic/Projects:2026".into()],
+        }
+    }
+
+    #[test]
+    fn search_status_refresh_ignores_old_replies_and_preserves_the_search() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let query_generation = s.generation;
+        let selected = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(s.panel.is_none());
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        let first = s.status_generation;
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.status_generation, first, "only one status request may be in flight");
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation: first, result: Ok(search_info("scanning")) });
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Ready(search_info("scanning"))));
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let second = s.status_generation;
+        assert!(second > first);
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation: first, result: Err("old failure".into()) });
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        let _ = command(&mut s, Command::Back);
+        assert!(s.search_status.is_none());
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation: second, result: Ok(search_info("idle")) });
+        assert!(s.search_status.is_none());
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        let third = s.status_generation;
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation: second, result: Ok(search_info("paused")) });
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation: third, result: Ok(search_info("idle")) });
+        let _ = update(&mut s, Message::CloseSearchStatus);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.generation, query_generation);
+        assert_eq!(s.selected().unwrap().target, selected);
+    }
+
+    #[test]
+    fn search_status_blocks_queued_result_actions_and_scope_navigation() {
+        let mut s = search_state();
+        // A misrouted activation must never spawn an external program in this test.
+        s.apps[0].exec.clear();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let target = s.selected().unwrap().target.clone();
+        let generation = s.generation;
+        let search_status = s.status.clone();
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        for message in [
+            Message::Query("changed".into()),
+            Message::Scope(Scope::Files),
+            Message::Selected(target.clone()),
+            Message::Clicked(target.clone()),
+            Message::ContextMenu(target.clone()),
+            Message::PanelClicked { target, action: Action::Launch },
+            Message::Wheel(-1.0),
+        ] {
+            let _ = update(&mut s, message);
+        }
+        for cmd in [
+            Command::Activate,
+            Command::ActivateVisible(0),
+            Command::Secondary,
+            Command::NextScope,
+            Command::PreviousScope,
+            Command::CopyPath,
+            Command::OpenActions,
+        ] {
+            let _ = command(&mut s, cmd);
+        }
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.cursor.selected, 0);
+        assert!(s.panel.is_none());
+        assert!(s.opening.is_none());
+        assert_eq!(s.status, search_status);
+        // A current file reply can finish without replacing the status view.
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        assert_eq!(s.files.len(), 2);
+    }
+
+    #[test]
+    fn search_status_errors_can_retry_and_empty_search_restores_its_size() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.status_generation, 0, "refresh outside the view must not activate the daemon");
+        s.opening = Some(("file:///synthetic/report.txt".into(), String::new()));
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(s.search_status.is_none(), "an ongoing file open must finish before opening status");
+        assert_eq!(s.status_generation, 0);
+        s.opening = None;
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(!s.compact);
+        let generation = s.status_generation;
+        let _ = update(&mut s, Message::SearchStatusLoaded { generation, result: Err("service unavailable".into()) });
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Error("service unavailable".into())));
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(s.search_status.is_none(), "the status shortcut also closes the view");
+        assert!(s.compact);
+        assert_eq!(
+            key_message(&Key::Character("I".into()), Modifiers::CTRL).map(|m| matches!(m, Message::ShowSearchStatus)),
+            Some(true)
+        );
+        assert_eq!(
+            key_message(&Key::Character("r".into()), Modifiers::CTRL)
+                .map(|m| matches!(m, Message::RefreshSearchStatus)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn search_status_describes_paused_and_unknown_states_without_claiming_readiness() {
+        assert_eq!(index_summary(&search_info("scanning")).0, "Indexing files");
+        assert_eq!(index_summary(&search_info("paused")).0, "Indexing paused");
+        assert_eq!(index_summary(&search_info("idle")).0, "Watching for changes");
+        assert_eq!(index_summary(&search_info("future-state")).0, "Unrecognized search status");
     }
 
     fn application_actions(names: &[&str]) -> Launcher {

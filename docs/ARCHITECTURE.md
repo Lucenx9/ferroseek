@@ -157,7 +157,7 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   10 s idle.
   - Reader connections live in a small pool (at most 4) cleared by the
     `Release` method.
-  - `Status` uses a short-lived reader.
+  - `Status` and `FileSearchStatus` use short-lived readers.
 - **Idle release.** After 5 s without work, the engine:
   - checkpoints and truncates the WAL
   - frees the writer's page cache (`PRAGMA shrink_memory`)
@@ -223,6 +223,15 @@ The daemon exposes `io.github.ferroseek.Search1` at
   D-Bus errors. Openers use argument arrays and a separate systemd scope where
   available. Reveal uses `org.freedesktop.FileManager1.ShowItems`.
 - `Release()` clears the reader pool and trims unused heap pages.
+
+The control interface `io.github.ferroseek.FerroSeek1` at
+`/io/github/ferroseek/FerroSeek` also exposes read-only `FileSearchStatus()`.
+It returns engine state, live file and directory counts, queued directories,
+the watch-limit flag, error count and indexed roots as a string array. Roots
+containing colons remain separate paths. The index reader runs on a blocking
+worker and closes after the request; unavailable index data returns a D-Bus
+error. This method does not pause, resume or reconcile the engine. The existing
+string-map `Status()` response is unchanged.
 
 D-Bus activation uses `io.github.ferroseek.FerroSeek.service`, optionally backed
 by `ferroseek.service`. The installer reloads bus registrations without

@@ -22,6 +22,8 @@ iced_layershell = { version = "0.19", default-features = false }
 # (NativeKeyCode became non-exhaustive); keep the beta.2 it was written for.
 winit-core = "=0.31.0-beta.2"
 zbus.workspace = true
+# Bound diagnostic calls with the runtime already driving the bus thread.
+zruntime = { version = "0.2", default-features = false, features = ["helper"] }
 freedesktop-icons = "0.4"
 log.workspace = true
 
