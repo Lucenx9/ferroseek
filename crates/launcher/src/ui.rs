@@ -18,7 +18,7 @@ use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
 use crate::apps::App;
-use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, SearchStatus, UiEvent};
+use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
 use crate::favorites::Favorites;
 use crate::icons::{Icon, Icons};
@@ -34,6 +34,7 @@ const PAD: f32 = 8.0;
 const ICON_SIZE: f32 = 28.0;
 /// Below this, file search is not run (the daemon needs two characters).
 const MIN_FILE_QUERY: usize = 2;
+const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
 
 fn compact_height() -> u32 {
     (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32
@@ -164,6 +165,8 @@ pub struct Launcher {
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
+    /// A dispatched action lost its confirmation; never duplicate it in this session.
+    unconfirmed_open: bool,
     icons: Icons,
     query: String,
     scope: Scope,
@@ -200,7 +203,7 @@ pub enum Message {
     Clicked(Target),
     ContextMenu(Target),
     PanelClicked { target: Target, action: Action },
-    Opened(Result<(), String>),
+    Opened(Result<(), RunError>),
     Ui(UiEvent),
 }
 
@@ -256,6 +259,7 @@ fn boot() -> (Launcher, Task<Message>) {
         usage,
         favorites,
         opening: None,
+        unconfirmed_open: false,
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
         scope: Scope::All,
@@ -396,6 +400,10 @@ impl Launcher {
         let opens = matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal);
         if opens && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
+        }
+        if opens && self.unconfirmed_open {
+            self.status = Status::Error(UNCONFIRMED_OPEN.into());
+            return self.resize();
         }
         match (action, &item.target) {
             (Action::Launch | Action::Desktop(_), Target::App(i)) => {
@@ -728,12 +736,21 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Opened(Ok(())) => {
             if let Some((id, query)) = s.opening.take() {
                 s.usage.record(Kind::File, &id, &query, usage::now());
+                return iced::exit();
             }
-            iced::exit()
+            Task::none()
         }
         Message::Opened(Err(e)) => {
-            s.opening = None;
-            s.status = Status::Error(format!("Cannot open: {e}"));
+            if s.opening.take().is_none() {
+                return Task::none();
+            }
+            s.status = match e {
+                RunError::Failed(message) => Status::Error(format!("Cannot open: {message}")),
+                RunError::Unconfirmed(_) => {
+                    s.unconfirmed_open = true;
+                    Status::Error(UNCONFIRMED_OPEN.into())
+                }
+            };
             s.resize()
         }
         Message::Ui(UiEvent::Toggle) => iced::exit(),
@@ -1111,6 +1128,14 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
+    if s.unconfirmed_open {
+        return container(text(UNCONFIRMED_OPEN).size(12).color(palette::ERROR))
+            .width(Length::Fill)
+            .height(FOOTER_HEIGHT)
+            .padding([0, 10])
+            .align_y(Vertical::Center)
+            .into();
+    }
     let (msg, color) = match &s.status {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
@@ -1277,6 +1302,7 @@ mod tests {
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
             opening: None,
+            unconfirmed_open: false,
             icons: Icons::disabled(),
             query: String::new(),
             scope: Scope::All,
@@ -1806,6 +1832,84 @@ mod tests {
         assert_eq!(index_summary(&search_info("paused")).0, "Indexing paused");
         assert_eq!(index_summary(&search_info("idle")).0, "Watching for changes");
         assert_eq!(index_summary(&search_info("future-state")).0, "Unrecognized search status");
+    }
+
+    #[test]
+    fn unconfirmed_open_blocks_duplicates_but_preserves_search_and_copy() {
+        let mut s = search_state();
+        s.apps[0].exec.clear(); // a regression must not spawn a program in this test
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        s.cursor.select(1, s.items.len());
+        let _ = command(&mut s, Command::Activate);
+        let (id, query) = s.opening.clone().unwrap();
+        let _ = update(&mut s, Message::Opened(Err(RunError::Unconfirmed("timed out".into()))));
+        assert!(s.unconfirmed_open);
+        assert!(s.opening.is_none());
+        assert_eq!(s.usage.boost(Kind::File, &id, &query, usage::now()), 0);
+        for cmd in [Command::Activate, Command::Secondary, Command::ActivateVisible(2)] {
+            let _ = command(&mut s, cmd);
+            assert!(s.opening.is_none());
+            assert_eq!(s.status, Status::Error(UNCONFIRMED_OPEN.into()));
+        }
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert_eq!(
+            s.usage.boost(Kind::File, &id, &query, usage::now()),
+            0,
+            "late confirmation must not record use or exit"
+        );
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.status, Status::Error(UNCONFIRMED_OPEN.into()), "app launches are blocked too");
+        let _ = s.perform(Action::CopyName);
+        assert_eq!(s.status, Status::Notice("Copied name".into()));
+        assert!(s.unconfirmed_open, "copying must not unlock another open");
+        let _ = update(&mut s, Message::Query("= 2+3".into()));
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.status, Status::Notice("Copied result".into()));
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
+        let _ = command(&mut s, Command::Back);
+        assert!(s.unconfirmed_open);
+    }
+
+    #[test]
+    fn rejected_open_can_be_corrected_and_only_success_records_usage() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        s.cursor.select(1, s.items.len());
+        let _ = command(&mut s, Command::Activate);
+        let (id, query) = s.opening.clone().unwrap();
+        let _ = update(&mut s, Message::Opened(Err(RunError::Failed("path is not indexed".into()))));
+        assert!(!s.unconfirmed_open);
+        assert!(s.opening.is_none());
+        assert_eq!(s.usage.boost(Kind::File, &id, &query, usage::now()), 0);
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_some(), "a rejected request permits an explicit corrected attempt");
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert!(s.opening.is_none());
+        assert!(s.usage.boost(Kind::File, &id, &query, usage::now()) > 0);
+        let now = usage::now();
+        let before = s.usage.boost(Kind::File, &id, &query, now);
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert_eq!(s.usage.boost(Kind::File, &id, &query, now), before);
+    }
+
+    #[test]
+    fn stale_search_failure_does_not_replace_a_newer_success() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("old report".into()));
+        let old = s.generation;
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let items = s.items.clone();
+        let _ = update(&mut s, Message::Files { generation: old, result: Err("timed out".into()) });
+        assert_eq!(s.status, Status::Idle);
+        assert_eq!(s.items, items);
     }
 
     fn application_actions(names: &[&str]) -> Launcher {
