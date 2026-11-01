@@ -190,6 +190,12 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    #[cfg(test)]
+    pub fn disconnected() -> Self {
+        let (tx, _rx) = mpsc::unbounded();
+        Self { tx }
+    }
+
     /// File results for `query`; `Err` if the daemon is unreachable. A
     /// superseded search resolves to `Ok(None)`.
     pub async fn search(self, query: String) -> Result<Option<Vec<FileHit>>, String> {

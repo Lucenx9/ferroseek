@@ -17,6 +17,52 @@ use crate::{calc, matcher, uri};
 /// Visible rows addressable by Ctrl+1 through Ctrl+8.
 pub const NUMBERED_SLOTS: usize = 8;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Scope {
+    #[default]
+    All,
+    Applications,
+    Files,
+}
+
+impl Scope {
+    pub const ALL: [Self; 3] = [Self::All, Self::Applications, Self::Files];
+
+    pub fn cycle(self, forward: bool) -> Self {
+        match (self, forward) {
+            (Self::All, true) | (Self::Files, false) => Self::Applications,
+            (Self::Applications, true) | (Self::All, false) => Self::Files,
+            (Self::Files, true) | (Self::Applications, false) => Self::All,
+        }
+    }
+
+    pub fn includes_apps(self) -> bool {
+        matches!(self, Self::All | Self::Applications)
+    }
+
+    pub fn includes_files(self) -> bool {
+        matches!(self, Self::All | Self::Files)
+    }
+
+    pub fn shows_calculator(self, query: &str) -> bool {
+        self == Self::All || calc::is_explicit(query)
+    }
+
+    pub fn file_query(self, query: &str) -> bool {
+        self.includes_files() && !calc::is_explicit(query) && query.trim().chars().count() >= 2
+    }
+}
+
+impl std::fmt::Display for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::All => "All",
+            Self::Applications => "Applications",
+            Self::Files => "Files",
+        })
+    }
+}
+
 /// Applications shown when there are no file results.
 const MAX_APPS_ALONE: usize = 9;
 /// With file results: strong application matches go above files, weak
@@ -122,43 +168,52 @@ pub fn calc_item(query: &str) -> Option<Item> {
 
 /// Valid history rows, resolved lazily so a full home needs no further
 /// filesystem checks.
-fn recent_items<'a>(apps: &'a [App], recent: &'a [(Kind, String)]) -> impl Iterator<Item = Item> + 'a {
-    recent.iter().filter_map(|(kind, key)| match kind {
-        Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
-        Kind::File => {
-            let path = uri::path_from_file_url(key)?;
-            let meta = std::fs::symlink_metadata(&path).ok()?;
-            let name = path.file_name()?.to_string_lossy().into_owned();
-            let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-            let is_dir = meta.is_dir();
-            Some(file_item(&FileHit {
-                id: key.clone(),
-                icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
-                subtext: home_relative(&parent),
-                name,
-                path: Some(path),
-                is_dir,
-            }))
-        }
-    })
+fn recent_items<'a>(apps: &'a [App], recent: &'a [(Kind, String)], scope: Scope) -> impl Iterator<Item = Item> + 'a {
+    recent
+        .iter()
+        .filter(move |(kind, _)| match kind {
+            Kind::App => scope.includes_apps(),
+            Kind::File => scope.includes_files(),
+        })
+        .filter_map(|(kind, key)| match kind {
+            Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
+            Kind::File => {
+                let path = uri::path_from_file_url(key)?;
+                let meta = std::fs::symlink_metadata(&path).ok()?;
+                let name = path.file_name()?.to_string_lossy().into_owned();
+                let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+                let is_dir = meta.is_dir();
+                Some(file_item(&FileHit {
+                    id: key.clone(),
+                    icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
+                    subtext: home_relative(&parent),
+                    name,
+                    path: Some(path),
+                    is_dir,
+                }))
+            }
+        })
 }
 
-/// Valid history rows first, then available applications in catalog order.
-pub fn home_items(apps: &[App], recent: &[(Kind, String)], limit: usize) -> Vec<Item> {
+/// Valid history rows in scope first, then available applications in catalog
+/// order when that scope includes them.
+pub fn home_items(apps: &[App], recent: &[(Kind, String)], scope: Scope, limit: usize) -> Vec<Item> {
     let mut seen_apps = vec![false; apps.len()];
-    let mut items: Vec<_> = recent_items(apps, recent)
+    let mut items: Vec<_> = recent_items(apps, recent, scope)
         .filter(|item| match item.target {
             Target::App(i) => !std::mem::replace(&mut seen_apps[i], true),
             _ => true,
         })
         .take(limit)
         .collect();
-    for (i, seen) in seen_apps.into_iter().enumerate() {
-        if items.len() == limit {
-            break;
-        }
-        if !seen {
-            items.push(app_item(apps, i));
+    if scope.includes_apps() {
+        for (i, seen) in seen_apps.into_iter().enumerate() {
+            if items.len() == limit {
+                break;
+            }
+            if !seen {
+                items.push(app_item(apps, i));
+            }
         }
     }
     items
@@ -359,6 +414,8 @@ pub enum Command {
     Down,
     PreviousSection,
     NextSection,
+    PreviousScope,
+    NextScope,
     PageUp,
     PageDown,
     First,
@@ -417,6 +474,8 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::ArrowDown) if ctrl => Some(Command::NextSection),
         Key::Named(Named::ArrowUp) => Some(Command::Up),
         Key::Named(Named::ArrowDown) => Some(Command::Down),
+        Key::Named(Named::Tab) if mods == Modifiers::CTRL => Some(Command::NextScope),
+        Key::Named(Named::Tab) if mods == (Modifiers::CTRL | Modifiers::SHIFT) => Some(Command::PreviousScope),
         Key::Named(Named::Tab) if mods.shift() => Some(Command::Up),
         Key::Named(Named::Tab) => Some(Command::Down),
         Key::Named(Named::PageUp) => Some(Command::PageUp),
@@ -589,7 +648,7 @@ mod tests {
             (Kind::App, "gone.desktop".to_string()),
             (Kind::File, "file:///nonexistent/ferroseek-test".to_string()),
         ];
-        let items: Vec<_> = recent_items(&a, &recent).collect();
+        let items: Vec<_> = recent_items(&a, &recent, Scope::All).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);
     }
@@ -606,7 +665,7 @@ mod tests {
             (Kind::App, "Kate.desktop".to_string()),
             (Kind::File, format!("file://{}", f.display())),
         ];
-        let items = home_items(&a, &recent, 2);
+        let items = home_items(&a, &recent, Scope::All, 2);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "valid.txt"]);
     }
@@ -614,21 +673,98 @@ mod tests {
     #[test]
     fn home_without_history_suggests_available_apps_in_catalog_order() {
         let a = apps();
-        let items = home_items(&a, &[], 3);
+        let items = home_items(&a, &[], Scope::All, 3);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Firefox", "Files", "Fonts"]);
-        assert_eq!(home_items(&a, &[], usize::MAX).len(), a.len());
-        assert!(home_items(&[], &[], 3).is_empty());
+        assert_eq!(home_items(&a, &[], Scope::All, usize::MAX).len(), a.len());
+        assert!(home_items(&[], &[], Scope::All, 3).is_empty());
     }
 
     #[test]
     fn home_suggestions_do_not_duplicate_recent_apps_and_respect_zero_limit() {
         let a = apps();
         let recent = [(Kind::App, "Files.desktop".to_string()), (Kind::App, "Files.desktop".to_string())];
-        let items = home_items(&a, &recent, 4);
+        let items = home_items(&a, &recent, Scope::All, 4);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Files", "Firefox", "Fonts", "Calculator"]);
-        assert!(home_items(&a, &recent, 0).is_empty());
+        assert!(home_items(&a, &recent, Scope::All, 0).is_empty());
+    }
+
+    #[test]
+    fn home_scopes_filter_history_before_the_limit_and_fill_only_with_allowed_apps() {
+        let a = apps();
+        let dir = tempfile::tempdir().unwrap();
+        let one = dir.path().join("one.txt");
+        let two = dir.path().join("two.txt");
+        std::fs::write(&one, "").unwrap();
+        std::fs::write(&two, "").unwrap();
+        let recent = [
+            (Kind::App, "Kate.desktop".into()),
+            (Kind::File, format!("file://{}/missing.txt", dir.path().display())),
+            (Kind::App, "Files.desktop".into()),
+            (Kind::File, format!("file://{}", one.display())),
+            (Kind::App, "Fonts.desktop".into()),
+            (Kind::File, format!("file://{}", two.display())),
+        ];
+        let files = home_items(&a, &recent, Scope::Files, 2);
+        assert_eq!(files.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["one.txt", "two.txt"]);
+        assert!(files.iter().all(|i| i.section == Section::Files));
+        let applications = home_items(&a, &recent, Scope::Applications, 4);
+        assert_eq!(
+            applications.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+            ["Kate", "Files", "Fonts", "Firefox"]
+        );
+        assert!(applications.iter().all(|i| i.section == Section::Applications));
+        assert!(home_items(&a, &[], Scope::Files, 8).is_empty());
+        for scope in Scope::ALL {
+            assert!(home_items(&a, &recent, scope, 0).is_empty());
+        }
+    }
+
+    #[test]
+    fn scope_cycle_wraps_in_both_directions() {
+        assert_eq!(Scope::default(), Scope::All);
+        let mut scope = Scope::All;
+        for expected in [Scope::Applications, Scope::Files, Scope::All] {
+            scope = scope.cycle(true);
+            assert_eq!(scope, expected);
+        }
+        for expected in [Scope::Files, Scope::Applications, Scope::All] {
+            scope = scope.cycle(false);
+            assert_eq!(scope, expected);
+        }
+        assert_eq!(Scope::ALL.map(|s| s.to_string()), ["All", "Applications", "Files"]);
+    }
+
+    #[test]
+    fn scope_query_policy_keeps_explicit_calculation_available_and_counts_characters() {
+        assert!(Scope::All.includes_apps() && Scope::All.includes_files());
+        assert!(Scope::Applications.includes_apps() && !Scope::Applications.includes_files());
+        assert!(!Scope::Files.includes_apps() && Scope::Files.includes_files());
+        for scope in Scope::ALL {
+            assert_eq!(scope.shows_calculator("2+3"), scope == Scope::All);
+            for explicit in ["=", " = 42", "= 1+"] {
+                assert!(scope.shows_calculator(explicit));
+                assert!(!scope.file_query(explicit));
+            }
+            for short in ["", "  ", " x ", " 日 ", " 🦀 "] {
+                assert!(!scope.file_query(short), "{scope}: {short:?}");
+            }
+            for query in ["xy", " 日本 ", " 🦀x "] {
+                assert_eq!(scope.file_query(query), scope.includes_files(), "{scope}: {query:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn scope_shortcuts_require_exact_control_modifiers_and_preserve_tab_navigation() {
+        let tab = Key::Named(Named::Tab);
+        assert_eq!(command_for(&tab, Modifiers::CTRL), Some(Command::NextScope));
+        assert_eq!(command_for(&tab, Modifiers::CTRL | Modifiers::SHIFT), Some(Command::PreviousScope));
+        assert_eq!(command_for(&tab, Modifiers::empty()), Some(Command::Down));
+        assert_eq!(command_for(&tab, Modifiers::SHIFT), Some(Command::Up));
+        assert_eq!(command_for(&tab, Modifiers::CTRL | Modifiers::ALT), Some(Command::Down));
+        assert_eq!(command_for(&tab, Modifiers::CTRL | Modifiers::SHIFT | Modifiers::LOGO), Some(Command::Up));
     }
 
     #[test]
