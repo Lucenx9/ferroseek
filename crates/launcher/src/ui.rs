@@ -9,7 +9,7 @@ use iced::futures::channel::mpsc::UnboundedReceiver;
 use iced::futures::stream::{self, BoxStream, StreamExt};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, ScrollDelta};
-use iced::widget::{self, Id, column, container, image, mouse_area, row, space, stack, svg, text, text_input};
+use iced::widget::{self, Id, button, column, container, image, mouse_area, row, space, stack, svg, text, text_input};
 use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
@@ -18,7 +18,7 @@ use iced_layershell::to_layer_message;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
 use crate::icons::{Icon, Icons};
-use crate::model::{self, Action, Command, Cursor, Item, Target};
+use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Target};
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -113,11 +113,13 @@ pub struct Launcher {
     icons: Icons,
     query: String,
     app_hits: Vec<(usize, u32)>,
+    /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
     items: Vec<Item>,
     /// Resolved icon per item, filled when the list is rebuilt.
     item_icons: Vec<Option<Icon>>,
     cursor: Cursor,
+    clicks: ClickTracker,
     panel: Option<Panel>,
     generation: u64,
     status: Status,
@@ -132,7 +134,9 @@ pub enum Message {
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
-    Clicked(usize),
+    Selected(Target),
+    Clicked(Target),
+    ContextMenu(Target),
     PanelClicked(usize),
     Opened(Result<(), String>),
     Ui(UiEvent),
@@ -192,6 +196,7 @@ fn boot() -> (Launcher, Task<Message>) {
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
+        clicks: ClickTracker::default(),
         panel: None,
         generation: 0,
         status: Status::Idle,
@@ -248,7 +253,10 @@ impl Launcher {
             model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), VISIBLE_ROWS)
         } else {
             let mut items: Vec<Item> = model::calc_item(&self.query).into_iter().collect();
-            items.extend(model::build_items(&self.apps, &self.app_hits, &self.files));
+            let mut files = self.files.clone();
+            let now = usage::now();
+            model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
+            items.extend(model::build_items(&self.apps, &self.app_hits, &files));
             items
         };
         let icons = &mut self.icons;
@@ -293,6 +301,7 @@ impl Launcher {
     }
 
     fn perform(&mut self, action: Action) -> Task<Message> {
+        self.clicks = ClickTracker::default();
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens = matches!(action, Action::Launch | Action::Open | Action::Reveal);
         if opens && self.opening.is_some() {
@@ -320,8 +329,32 @@ impl Launcher {
             },
             (Action::CopyName, _) => self.copy(item.title.clone(), "name"),
             (Action::CopyResult, Target::Calc(v)) => self.copy(v.clone(), "result"),
+            (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
+    }
+
+    fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
+        let (kind, key) = match target {
+            Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
+            Target::File(f) => (Kind::File, f.id.as_str()),
+            Target::Calc(_) => return Task::none(),
+        };
+        self.panel = None;
+        self.status = match self.usage.reset(kind, key) {
+            Ok(()) => {
+                let (usage, now) = (&self.usage, usage::now());
+                let q = self.query.as_str();
+                self.app_hits = model::match_apps(&self.apps, q, |a| usage.boost(Kind::App, &a.id, q, now));
+                self.rebuild(true);
+                Status::Notice("Ranking reset".into())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Status::Error("History is busy. Try reset again.".into())
+            }
+            Err(e) => Status::Error(format!("Cannot reset ranking: {e}")),
+        };
+        Task::batch([self.resize(), widget::operation::focus(search_id())])
     }
 
     /// Copies and stays open: on Wayland the clipboard is served by its
@@ -341,6 +374,7 @@ impl Launcher {
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     match message {
         Message::Query(q) => {
+            s.clicks = ClickTracker::default();
             if s.panel.is_some() {
                 return widget::operation::focus(actions_id());
             }
@@ -377,12 +411,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                 return Task::none(); // a newer query is in flight
             }
             match result {
-                Ok(Some(mut files)) => {
-                    let (usage, now) = (&s.usage, usage::now());
-                    let q = s.query.as_str();
-                    model::order_files(&mut files, |f| usage.boost(Kind::File, &f.id, q, now));
+                Ok(Some(files)) => {
                     s.files = files;
-                    s.status = Status::Idle;
+                    if matches!(s.status, Status::Searching | Status::Idle) {
+                        s.status = Status::Idle;
+                    }
                 }
                 Ok(None) => return Task::none(),
                 Err(e) => {
@@ -398,22 +431,42 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
+            s.clicks = ClickTracker::default();
             if s.panel.is_none() {
                 s.cursor.move_by(if dy > 0.0 { -1 } else { 1 }, s.items.len());
             }
             Task::none()
         }
-        Message::Clicked(i) => {
+        Message::Selected(target) => {
             if s.panel.is_some() {
+                s.clicks = ClickTracker::default();
                 s.panel = None;
                 return widget::operation::focus(search_id());
             }
-            s.cursor.select(i, s.items.len());
+            if s.cursor.select_target(&target, &s.items) {
+                s.clicks.press(&target);
+            } else {
+                s.clicks = ClickTracker::default();
+            }
+            widget::operation::focus(search_id())
+        }
+        Message::Clicked(target) => {
+            if !s.clicks.double_click(&target) || !s.cursor.select_target(&target, &s.items) {
+                return Task::none();
+            }
             s.panel = None;
             match s.primary() {
                 Some(a) => s.perform(a),
                 None => Task::none(),
             }
+        }
+        Message::ContextMenu(target) => {
+            s.clicks = ClickTracker::default();
+            if !s.cursor.select_target(&target, &s.items) {
+                return Task::none();
+            }
+            s.panel = s.selected().map(Panel::new);
+            widget::operation::focus(actions_id())
         }
         Message::PanelClicked(i) => {
             let a = s.panel.as_ref().and_then(|p| p.filtered_actions().get(i).copied());
@@ -438,6 +491,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
+    s.clicks = ClickTracker::default();
     let len = s.items.len();
     if let Some(p) = &mut s.panel {
         if let Some(action) = p.action_for_command(cmd) {
@@ -478,7 +532,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
         }
         Command::CopyPath => return s.perform(Action::CopyPath),
-        Command::ToggleActions => {
+        Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
                 s.panel = Some(Panel::new(item));
                 return widget::operation::focus(actions_id());
@@ -602,7 +656,12 @@ fn result_row(s: &Launcher, i: usize) -> Element<'_, Message> {
             ..Default::default()
         },
     );
-    mouse_area(row).on_press(Message::Clicked(i)).interaction(mouse::Interaction::Pointer).into()
+    mouse_area(row)
+        .on_press(Message::Selected(item.target.clone()))
+        .on_double_click(Message::Clicked(item.target.clone()))
+        .on_right_press(Message::ContextMenu(item.target.clone()))
+        .interaction(mouse::Interaction::Pointer)
+        .into()
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
@@ -625,7 +684,16 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         if acts.contains(&Action::Reveal) {
             hints = hints.push(hint("Ctrl+Enter", Action::Reveal.label()));
         }
-        hints = hints.push(hint("Ctrl+K", "Actions"));
+        hints = hints.push(
+            button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
+                |_, status| button::Style {
+                    background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                        .then_some(Background::Color(palette::FAINT)),
+                    text_color: palette::TEXT,
+                    ..Default::default()
+                },
+            ),
+        );
     } else {
         hints = hints.push(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" }));
     }
@@ -780,12 +848,16 @@ mod tests {
         // Direct shortcuts retain their meaning even when filtered out.
         assert_eq!(panel.action_for_command(Command::Secondary), Some(Action::Reveal));
 
+        panel.filter("RESET rank".into());
+        assert_eq!(panel.filtered_actions(), [Action::ResetRanking]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::ResetRanking));
+
         panel.filter("does not match".into());
         assert!(panel.filtered_actions().is_empty());
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 4);
+        assert_eq!(panel.actions.len(), 5);
     }
 
     #[test]

@@ -189,6 +189,7 @@ pub enum Action {
     CopyPath,
     CopyName,
     CopyResult,
+    ResetRanking,
 }
 
 impl Action {
@@ -200,6 +201,7 @@ impl Action {
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
             Action::CopyResult => "Copy result",
+            Action::ResetRanking => "Reset ranking",
         }
     }
 
@@ -208,7 +210,7 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::CopyName => "",
+            Action::CopyName | Action::ResetRanking => "",
         }
     }
 }
@@ -216,9 +218,11 @@ impl Action {
 /// Actions for an item; the first is the primary (Enter) action.
 pub fn actions_for(t: &Target) -> Vec<Action> {
     match t {
-        Target::App(_) => vec![Action::Launch, Action::CopyName],
-        Target::File(f) if f.path.is_some() => vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
-        Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName],
+        Target::App(_) => vec![Action::Launch, Action::CopyName, Action::ResetRanking],
+        Target::File(f) if f.path.is_some() => {
+            vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]
+        }
+        Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult],
     }
 }
@@ -230,6 +234,27 @@ pub struct Cursor {
     pub selected: usize,
     pub first: usize,
     pub visible: usize,
+}
+
+/// Confirms that both presses of a widget-reported double click refer to
+/// the same result, even when rows were reused after an asynchronous update.
+#[derive(Default)]
+pub struct ClickTracker {
+    previous: Option<Target>,
+    repeated: bool,
+}
+
+impl ClickTracker {
+    pub fn press(&mut self, target: &Target) {
+        self.repeated = self.previous.as_ref() == Some(target);
+        self.previous = Some(target.clone());
+    }
+
+    pub fn double_click(&mut self, target: &Target) -> bool {
+        let same_target = self.repeated && self.previous.as_ref() == Some(target);
+        *self = Self::default();
+        same_target
+    }
 }
 
 impl Cursor {
@@ -259,6 +284,14 @@ impl Cursor {
             self.selected = index;
             self.scroll_into_view(len);
         }
+    }
+
+    /// Resolves the clicked target against the current list, which may
+    /// have changed since the row was drawn.
+    pub fn select_target(&mut self, target: &Target, items: &[Item]) -> bool {
+        let Some(index) = items.iter().position(|item| item.target == *target) else { return false };
+        self.select(index, items.len());
+        true
     }
 
     /// Selects the first row of the adjacent group, without wrapping.
@@ -311,6 +344,7 @@ pub enum Command {
     /// Secondary action (Ctrl+Enter).
     Secondary,
     ToggleActions,
+    OpenActions,
     CopyPath,
     /// Close the panel, else clear the query, else hide.
     Back,
@@ -334,6 +368,8 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::Enter) if ctrl => Some(Command::Secondary),
         Key::Named(Named::Enter) => Some(Command::Activate),
         Key::Named(Named::Escape) => Some(Command::Back),
+        Key::Named(Named::ContextMenu) => Some(Command::OpenActions),
+        Key::Named(Named::F10) if mods.shift() => Some(Command::OpenActions),
         Key::Character(c) if ctrl => match c.as_str() {
             "k" | "K" => Some(Command::ToggleActions),
             "n" | "N" | "j" | "J" => Some(Command::Down),
@@ -424,6 +460,27 @@ mod tests {
         order_files(&mut files, |f| if f.name == "c" { 30 } else { 0 });
         let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn resetting_history_restores_app_and_file_order() {
+        let a = apps();
+        let mut usage = crate::usage::Usage::disabled();
+        usage.record(Kind::App, "Fonts.desktop", "f", 100);
+        assert_eq!(a[match_apps(&a, "f", |app| usage.boost(Kind::App, &app.id, "f", 100))[0].0].name, "Fonts");
+        usage.reset(Kind::App, "Fonts.desktop").unwrap();
+        assert_eq!(a[match_apps(&a, "f", |app| usage.boost(Kind::App, &app.id, "f", 100))[0].0].name, "Files");
+
+        let original: Vec<_> = ["a", "b", "c"].iter().map(|n| file(n, false)).collect();
+        usage.record(Kind::File, &original[2].id, "f", 100);
+        let mut ranked = original.clone();
+        order_files(&mut ranked, |f| usage.boost(Kind::File, &f.id, "f", 100));
+        assert_eq!(ranked[0].name, "c");
+        usage.reset(Kind::File, &original[2].id).unwrap();
+        let mut ranked = original.clone();
+        order_files(&mut ranked, |f| usage.boost(Kind::File, &f.id, "f", 100));
+        assert_eq!(ranked, original);
+        assert!(usage.recent(100, 8).is_empty());
     }
 
     #[test]
@@ -537,13 +594,63 @@ mod tests {
     }
 
     #[test]
+    fn pointer_selection_follows_target_identity_after_results_change() {
+        let a = apps();
+        let files = [file("notes.txt", false), file("report.txt", false)];
+        let mut items = build_items(&a, &[], &files);
+        let target = items[1].target.clone();
+        let mut cursor = Cursor::new(2);
+
+        // A late result can move the row between drawing it and handling
+        // its click. Resolve the original target, not its old row index.
+        items.insert(0, calc_item("2+2").unwrap());
+        assert!(cursor.select_target(&target, &items));
+        assert_eq!(cursor.selected, 2);
+        assert_eq!(items[cursor.selected].title, "report.txt");
+        assert!(cursor.window(items.len()).contains(&cursor.selected));
+
+        items.pop();
+        cursor.select(0, items.len());
+        assert!(!cursor.select_target(&target, &items), "removed targets cannot activate a different row");
+        assert_eq!(cursor.selected, 0);
+        assert!(!cursor.select_target(&target, &[]));
+    }
+
+    #[test]
+    fn double_click_rejects_a_row_reused_for_another_result() {
+        let first = Target::File(file("first.txt", false));
+        let second = Target::File(file("second.txt", false));
+        let mut clicks = ClickTracker::default();
+        clicks.press(&first);
+        // The second press hits the same widget position after rows move.
+        clicks.press(&second);
+        assert!(!clicks.double_click(&second));
+
+        clicks.press(&second);
+        clicks.press(&second);
+        assert!(clicks.double_click(&second));
+        assert!(!clicks.double_click(&second), "one gesture activates at most once");
+
+        clicks.press(&first);
+        assert!(!clicks.double_click(&first), "a single press is not an activation");
+    }
+
+    #[test]
+    fn context_menu_keys_open_actions_without_toggling_them() {
+        assert_eq!(command_for(&Key::Named(Named::ContextMenu), Modifiers::empty()), Some(Command::OpenActions));
+        assert_eq!(command_for(&Key::Named(Named::F10), Modifiers::SHIFT), Some(Command::OpenActions));
+        assert_eq!(command_for(&Key::Named(Named::F10), Modifiers::empty()), None);
+    }
+
+    #[test]
     fn actions_put_primary_first() {
-        assert_eq!(actions_for(&Target::App(0))[0], Action::Launch);
+        assert_eq!(actions_for(&Target::App(0)), [Action::Launch, Action::CopyName, Action::ResetRanking]);
         let f = actions_for(&Target::File(file("a", false)));
-        assert_eq!(f, [Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName]);
+        assert_eq!(f, [Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]);
         let mut odd = file("a", false);
         odd.path = None;
         assert!(!actions_for(&Target::File(odd)).contains(&Action::CopyPath));
+        assert_eq!(actions_for(&Target::Calc("2".into())), [Action::CopyResult]);
     }
 
     #[test]
