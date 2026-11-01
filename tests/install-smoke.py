@@ -36,9 +36,9 @@ case "$*" in
 esac
 exit 0
 '''
-    for name in ['systemctl', 'busctl', 'gdbus', 'claude', 'codex', 'cargo']:
+    for name in ['systemctl', 'busctl', 'gdbus', 'claude', 'codex', 'cargo', 'noctalia']:
         p = commands / name
-        p.write_text(stub)
+        p.write_text('#!/bin/sh\nexit 1\n' if name == 'noctalia' else stub)
         p.chmod(0o755)
     def environment(name='home'):
         home = root / name

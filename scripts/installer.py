@@ -18,12 +18,27 @@ import tomllib
 from install_transaction import InstallError, Transaction, digest, read, safe_path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'], 'mcp': ['mcp'], 'krunner': ['runner']}
+NOCTALIA_ID = 'lucenx9/ferroseek'
+NOCTALIA_FILES = {
+    'noctalia_manifest': 'integrations/noctalia/ferroseek/plugin.toml',
+    'noctalia_launcher': 'integrations/noctalia/ferroseek/launcher.luau',
+    'noctalia_readme': 'integrations/noctalia/ferroseek/README.md',
+    'noctalia_en': 'integrations/noctalia/ferroseek/translations/en.json',
+    'noctalia_it': 'integrations/noctalia/ferroseek/translations/it.json',
+    'noctalia_guide': 'docs/NOCTALIA.md',
+}
+COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'], 'mcp': ['mcp'], 'krunner': ['runner'],
+                   'noctalia': list(NOCTALIA_FILES)}
 BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'mcp': 'ferroseek-mcp'}
 PACKAGES = {'daemon': 'ferroseek-daemon', 'cli': 'ferroseek-cli', 'mcp': 'ferroseek-mcp'}
 ARCHIVE_FILES = ['LICENSE', 'README.md', 'docs/INSTALLATION.md', 'docs/MCP.md',
                  'scripts/install.sh', 'scripts/uninstall.sh', 'scripts/installer.py', 'scripts/install_transaction.py',
                  'data/ferroseek.service', 'data/io.github.ferroseek.FerroSeek.service', 'data/ferroseek-krunner.desktop']
+
+
+def archive_files(components):
+    """Exact source payload needed by a component archive, also used for verification."""
+    return ARCHIVE_FILES + (list(NOCTALIA_FILES.values()) if 'noctalia' in components else [])
 
 
 def command(args):
@@ -58,6 +73,10 @@ def paths():
                    runner=data / 'krunner/dbusplugins/ferroseek.desktop', config=config / 'ferroseek/config.toml',
                    policy=config / 'ferroseek/mcp.toml', manifest=state / 'manifest.json',
                    agent_codex=codex, agent_claude=claude)
+    plugin = data / 'noctalia/plugins/ferroseek'
+    for key, source in NOCTALIA_FILES.items():
+        relative = source.removeprefix('integrations/noctalia/ferroseek/') if key != 'noctalia_guide' else 'NOCTALIA.md'
+        targets[key] = plugin / relative
     return home, data, config, state, targets
 
 
@@ -71,8 +90,12 @@ def detect():
     has_bus_address = bool(os.environ.get('DBUS_SESSION_BUS_ADDRESS')) or (Path(os.environ.get('XDG_RUNTIME_DIR', '/nonexistent')) / 'bus').is_socket()
     bus = has_bus_address and (succeeds(['busctl', '--user', 'status']) if shutil.which('busctl') else succeeds(['gdbus', 'call', '--session', '--dest', 'org.freedesktop.DBus', '--object-path', '/org/freedesktop/DBus', '--method', 'org.freedesktop.DBus.GetId']))
     manager = succeeds(['systemctl', '--user', 'show-environment'])
+    version = command(['noctalia', '--version']) if shutil.which('noctalia') else None
+    match = re.search(r'\bv(\d+)\.(\d+)\.(\d+)([^\s]*)', version.stdout) if version and version.returncode == 0 else None
+    noctalia = bool(match and int(match[1]) >= 5 and not match[4])
     return dict(distro=distro, arch=platform.machine(), desktop=desktop, kde=kde, bus=bus, manager=manager,
-                claude=bool(shutil.which('claude')), codex=bool(shutil.which('codex')))
+                claude=bool(shutil.which('claude')), codex=bool(shutil.which('codex')),
+                noctalia=noctalia, gio=bool(shutil.which('gio')))
 
 
 def systemd_quote(value):
@@ -99,6 +122,31 @@ def render(targets, home, data, config, manager, version):
     return dict(unit=unit.encode(), bus=bus.encode(), runner=runner.encode())
 
 
+def noctalia_content(targets):
+    """Copy the plugin with a PATH-independent default and an installed local guide."""
+    content = {key: (ROOT / source).read_bytes() for key, source in NOCTALIA_FILES.items()}
+    manifest = content['noctalia_manifest'].decode().replace(
+        'default = "ferroseek"', 'default = ' + json.dumps(str(targets['cli']), ensure_ascii=False))
+    content['noctalia_manifest'] = manifest.encode()
+    content['noctalia_readme'] = content['noctalia_readme'].replace(b'../../../docs/NOCTALIA.md', b'NOCTALIA.md')
+    return content
+
+
+def refresh_noctalia(env, *, enable=False, dry_run=False):
+    """Reload installed files; explicit --enable opts into native plugin activation."""
+    commands = [['noctalia', 'msg', 'config-reload']]
+    if enable:
+        commands.append(['noctalia', 'msg', 'plugins', 'enable', NOCTALIA_ID])
+    for cmd in commands:
+        if dry_run:
+            print('Would run: ' + shlex.join(cmd))
+        elif env.get('noctalia') and not succeeds(cmd):
+            if enable:
+                raise InstallError('files installed, but Noctalia activation failed; retry: ' + shlex.join(cmd))
+            print('Noctalia is not reachable; load the installed plugin at next startup.', file=sys.stderr)
+            break
+
+
 def load_manifest(targets):
     raw = read(targets['manifest'])
     if raw is None:
@@ -123,7 +171,7 @@ def archive_info():
     components = set(package['components'])
     if package.get('format') != 1 or 'core' not in components or not components <= set(COMPONENT_FILES):
         raise InstallError('unsupported archive manifest')
-    expected = set(ARCHIVE_FILES) | {'bin/ferroseek', 'bin/ferroseekd'}
+    expected = set(archive_files(components)) | {'bin/ferroseek', 'bin/ferroseekd'}
     if 'mcp' in components:
         expected.add('bin/ferroseek-mcp')
     if set(package['sha256']) != expected:
@@ -141,26 +189,30 @@ def archive_info():
 
 
 def choose(args, env, package):
-    selected = {name for name in COMPONENT_FILES if getattr(args, name)}
+    selected = {name for name in COMPONENT_FILES if getattr(args, name, False)}
     if args.full:
         selected |= {'core', 'mcp'}
         if env['kde']:
             selected.add('krunner')
         else:
-            print('No KDE detected: --full skips KRunner; no GNOME/Hyprland graphical integration exists.')
+            print('No KDE detected: --full skips KRunner.')
+        if env.get('noctalia') and env.get('gio'):
+            selected.add('noctalia')
     if args.register_claude or args.register_codex:
         selected.add('mcp')
     if not selected:
         recommended = {'core'} | ({'krunner'} if env['kde'] else set()) | ({'mcp'} if env['claude'] or env['codex'] else set())
+        if env.get('noctalia') and env.get('gio'):
+            recommended.add('noctalia')
         if package:
             recommended &= set(package['components'])
         print('Recommended components: ' + ', '.join(sorted(recommended)))
         if args.dry_run:
             selected = recommended
         elif not sys.stdin.isatty():
-            raise InstallError('non-interactive input: choose --core, --mcp, --krunner or --full (or --dry-run)')
+            raise InstallError('non-interactive input: choose --core, --mcp, --krunner, --noctalia or --full (or --dry-run)')
         else:
-            reply = input('Components [Enter = recommended; core mcp krunner; q = cancel]: ').strip()
+            reply = input('Components [Enter = recommended; core mcp krunner noctalia; q = cancel]: ').strip()
             if reply == 'q':
                 raise InstallError('installation cancelled')
             selected = set(reply.replace(',', ' ').split()) if reply else recommended
@@ -185,6 +237,8 @@ def choose(args, env, package):
     selected.add('core')
     if 'krunner' in selected and not env['kde']:
         raise InstallError('KRunner requires KDE Plasma; use --core or --mcp on this desktop')
+    if 'noctalia' in selected and not (env.get('noctalia') and env.get('gio')):
+        raise InstallError('Noctalia integration requires stable Noctalia v5+ and GLib gio on PATH')
     if package and not selected <= set(package['components']):
         raise InstallError('this archive lacks the requested component; obtain the matching or full archive')
     return selected
@@ -327,12 +381,14 @@ def install(args, env, layout):
     selected = choose(args, env, package)
     if args.enable and not (env['manager'] and env['bus']):
         raise InstallError('--enable requires an available systemd user manager and session D-Bus')
+    if 'noctalia' in selected and args.enable and not succeeds(['noctalia', 'msg', 'config-get', 'plugins.enabled']):
+        raise InstallError('--noctalia --enable requires a running Noctalia instance; install without --enable for offline setup')
     version = package['version'] if package else tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
     print('Install: ' + ', '.join(sorted(selected)))
     print('Existing configuration: ' + ('preserved' if targets['config'].exists() else 'none (engine defaults apply)'))
     print('Running daemons are never restarted automatically.')
-    if not env['kde']:
-        print('CLI and MCP work without graphical integration on this desktop.')
+    if not env['kde'] and 'noctalia' not in selected:
+        print('No graphical adapter selected; CLI and MCP work on this desktop.')
     if not env['bus']:
         print('No session D-Bus: foreground CLI indexing/search remains available.')
     keys = [k for component in sorted(selected) for k in COMPONENT_FILES[component]]
@@ -357,6 +413,8 @@ def install(args, env, layout):
         agent_changes(args, targets, data, env)
         if args.enable:
             print('Would enable and start ferroseek.service (explicit --enable).')
+        if 'noctalia' in selected:
+            refresh_noctalia(env, enable=args.enable, dry_run=True)
         refresh(env, dry_run=True)
         print('Dry run: nothing changed.')
         return
@@ -370,6 +428,8 @@ def install(args, env, layout):
                 cmd += ['-p', PACKAGES[key]]
         subprocess.run(cmd, cwd=ROOT, check=True)
     content = render(targets, home, data, config, env['manager'], version)
+    if 'noctalia' in selected:
+        content.update(noctalia_content(targets))
     for key in keys:
         if key in BINARIES:
             p = source / BINARIES[key]
@@ -401,6 +461,10 @@ def install(args, env, layout):
     refresh(env)
     if args.enable and not succeeds(['systemctl', '--user', 'enable', '--now', 'ferroseek.service']):
         raise InstallError('files installed, but enabling the service failed; retry systemctl --user enable --now ferroseek.service')
+    if 'noctalia' in selected:
+        refresh_noctalia(env, enable=args.enable)
+        if not args.enable:
+            print('Activate the installed plugin: noctalia msg plugins enable ' + NOCTALIA_ID)
     print('Installed. Configuration and indexes preserved. No service restart performed.')
     print('Add ' + shlex.quote(str(home / '.local/bin')) + ' to PATH if necessary.')
     print('Choose indexing roots with ferroseek config before starting; engine defaults index your home.')
@@ -460,20 +524,32 @@ def uninstall(args, env, layout):
         check_service()
         if args.stop and 'core' in selected and env['manager']:
             print('Would explicitly stop and disable ferroseek.service.')
+        if 'noctalia' in selected and 'noctalia' in manifest['components']:
+            print('Would disable ' + NOCTALIA_ID + ' if Noctalia is running; offline settings are retained.')
+            refresh_noctalia(env, dry_run=True)
         refresh(env, dry_run=True)
         print('Dry run: nothing changed.')
         return
     transaction = Transaction(state, targets)
     with transaction.locked():
+        removing_noctalia = 'noctalia' in selected and 'noctalia' in load_manifest(targets)['components']
         changes = plan()
         check_service()
         for key in changes:
             print('Remove/update: ' + str(targets[key]))
+        if removing_noctalia:
+            if shutil.which('noctalia') and succeeds(['noctalia', 'msg', 'config-get', 'plugins.enabled']):
+                if not succeeds(['noctalia', 'msg', 'plugins', 'disable', NOCTALIA_ID]):
+                    raise InstallError('could not disable the Noctalia plugin; no files removed')
+            else:
+                print('Noctalia is offline; its saved enabled list is preserved. Disable ' + NOCTALIA_ID + ' in Settings if needed.')
         if args.stop and 'core' in selected and env['manager']:
             if not succeeds(['systemctl', '--user', 'disable', '--now', 'ferroseek.service']):
                 raise InstallError('could not stop/disable the service; no files removed')
         transaction.apply(changes)
     refresh(env)
+    if removing_noctalia:
+        refresh_noctalia(env)
     print('Uninstalled selected components. Indexes, configuration and agent registrations preserved.')
     if 'mcp' in selected:
         print('Remove an agent registration separately if desired: claude mcp remove --scope user ferroseek; codex mcp remove ferroseek')
@@ -481,7 +557,7 @@ def uninstall(args, env, layout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for flag in ['full', 'core', 'mcp', 'krunner', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
+    for flag in ['full', 'core', 'mcp', 'krunner', 'noctalia', 'dry-run', 'no-build', 'enable', 'register-claude', 'register-codex', 'stop']:
         parser.add_argument('--' + flag, action='store_true')
     parser.add_argument('--mcp-access', choices=['restricted', 'home', 'all_indexed'], default=None, help='agent authorization; default all_indexed for new registrations, with typed confirmation; --allow implies restricted')
     parser.add_argument('--config', help='initial engine TOML; never replace an existing config')

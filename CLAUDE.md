@@ -31,6 +31,9 @@ claims tied to their measured workloads. Do not imply Baloo feature parity.
 - `data/`: KRunner `.desktop` file, D-Bus `.service` file, systemd unit
   templates. `scripts/installer.py`: component planning and registration;
   `install_transaction.py`: ownership-safe durable rollback; `package.py`: local archives.
+- `integrations/noctalia/ferroseek`: optional launcher provider. `--noctalia`
+  copies it into the local Noctalia data directory; `--enable` activates it.
+  Installer tests stub all Noctalia IPC and use isolated HOME/XDG roots.
 - `prototype/backend-bench`: the throwaway backend comparison. Not in the
   workspace; keep it as evidence.
 
