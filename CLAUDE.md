@@ -23,17 +23,19 @@ is in `docs/RESEARCH.md`.
 - Keep this file below 200 lines, with current constraints and links to existing
   guides. Replace obsolete guidance instead of appending per-task checkpoints.
 
-## README direction
+## Product, UX and README direction
 
-Keep the README centered on FerroSeek as a Linux launcher. Preserve the current
-user journey: a short product description and real screenshot, implemented
-tasks, requirements and installation, starting and binding a shortcut, keyboard
-controls, current limits and next steps, then optional engine/CLI/MCP tools.
-Use concise English and concrete actions. Keep available features distinct from
-planned work, and update the screenshot when visible changes make it inaccurate.
-Link architecture, benchmarks and historical research from the detailed guides.
-Code/dependency changes update relevant setup instructions and limits while
-retaining this structure and the launcher as the main product.
+- Build a fast, keyboard-first launcher with contextual actions and composable commands. Keep common tasks direct and reveal advanced choices when needed.
+- Prioritize reliable focus/activation, measured opening-to-results latency, clear initial setup and complete daily workflows before adding more tools or an extension platform; follow `docs/ROADMAP.md`.
+- Keep Enter, Escape, navigation, filtering and numbered actions consistent across views. Preserve the selected target and action identities through asynchronous updates; make essential actions keyboard-accessible.
+- Help users distinguish similar results with readable names, paths and relevant details. Add previews or extra controls only when they help choose or act on a result.
+- Preserve FerroSeek's restrained visual language: clear typography and spacing, neutral surfaces, a limited accent and legible selection/focus states. Extend existing components and tokens before inventing another style.
+- Show loading, empty, success and error states with plain language and a useful next step. Make settings discoverable in the relevant flow; keep implementation details out of normal interactions.
+- For interaction changes, verify the complete affected flow, keyboard and pointer behavior, focus, long labels and asynchronous/error cases. Inspect real rendered UI for layout changes; distinguish virtual compositor checks from real desktop validation and measure latency before making speed claims.
+- Use original implementations and platform conventions. Keep competitor names, comparisons, reverse-engineering artifacts and proprietary code/assets out of product changes, documentation, commits and PR descriptions.
+
+Keep the README centered on the Linux launcher: short description and real screenshot, implemented tasks, requirements/install, starting and binding a shortcut, keys, current limits/next steps, then optional engine/CLI/MCP tools.
+Write concise English and concrete actions; separate available features from plans. Update inaccurate screenshots and affected setup/limits after code or dependency changes; link architecture, benchmarks and historical research from detailed guides.
 
 ## Map
 
