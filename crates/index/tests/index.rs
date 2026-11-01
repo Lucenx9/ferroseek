@@ -71,6 +71,24 @@ fn foreign_sqlite_database_is_not_used() {
     assert!(matches!(o, OpenOutcome::Recovered { .. }));
 }
 
+#[test]
+fn legacy_matching_keys_require_a_fresh_index() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    tx.upsert(root, "ΟΣ".as_bytes(), file(2)).unwrap();
+    tx.commit().unwrap();
+    w.close().unwrap();
+    rusqlite_conn(&db).execute_batch("PRAGMA user_version=1;").unwrap();
+
+    assert!(matches!(Reader::open(&db), Err(ferroseek_index::Error::Incompatible(_))));
+    let (w, outcome) = Writer::open(&db).unwrap();
+    let OpenOutcome::Recovered { moved_to, .. } = outcome else { panic!("expected legacy index recovery") };
+    assert!(moved_to.exists());
+    assert_eq!(Reader::open(w.path()).unwrap().stats().unwrap().files, 0);
+}
+
 fn rusqlite_conn(p: &Path) -> rusqlite_shim::Connection {
     rusqlite_shim::Connection::open(p).unwrap()
 }
@@ -207,10 +225,24 @@ fn unicode_case_insensitive() {
     let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
     tx.upsert(root, "ÜBERSICHT-Straße.PDF".as_bytes(), file(2)).unwrap();
     tx.upsert(root, "日本語のファイル.txt".as_bytes(), file(3)).unwrap();
+    for (i, name) in ["ΟΣ.txt", "ΟΣΑ.txt", "ος.txt", "ΟΣ"].iter().enumerate() {
+        tx.upsert(root, name.as_bytes(), file(10 + i as u64)).unwrap();
+    }
+    let (greek_dir, _) = tx.upsert(root, "ΚΟΣ".as_bytes(), dir(20)).unwrap();
+    tx.upsert(greek_dir, b"report.txt", file(21)).unwrap();
     tx.commit().unwrap();
     assert_eq!(search(&db, "übersicht").len(), 1);
     assert_eq!(search(&db, "straße.pdf").len(), 1);
     assert_eq!(search(&db, "のファイ").len(), 1);
+    for q in ["ΟΣ", "οσ", "ος"] {
+        let mut found = names(&search(&db, q));
+        found.sort();
+        let mut expected = vec!["ΟΣ", "ΟΣ.txt", "ΟΣΑ.txt", "ος.txt"];
+        expected.sort();
+        assert_eq!(found, expected, "literal prefix {q:?}");
+    }
+    assert_eq!(search(&db, "ΟΣ.txt").len(), 2, "trigram candidates use the same sigma mapping");
+    assert_eq!(names(&search(&db, "ΚΟΣ/report")), ["report.txt"], "path scopes use the same mapping");
 }
 
 fn ranked_fixture() -> (tempfile::TempDir, PathBuf) {

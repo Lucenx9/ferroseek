@@ -11,7 +11,8 @@ use crate::{Error, Result};
 
 /// Bump on any incompatible schema change. Older/newer databases are moved
 /// aside and rebuilt (the index is a cache of the filesystem).
-pub const SCHEMA_VERSION: i64 = 1;
+// v2 uses context-independent matching keys and canonical Greek sigma.
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// `PRAGMA application_id`, "FSK1": identifies FerroSeek databases.
 const APPLICATION_ID: i64 = 0x4653_4B31;

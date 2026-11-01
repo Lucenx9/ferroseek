@@ -138,7 +138,13 @@ heuristic guesses that a conflicting file is safe to overwrite.
 Component flags are additive: `--core` updates core while retaining previously
 installed launcher/MCP components. No active daemon is automatically restarted;
 it continues using its original executable until the user restarts it later.
-Configuration and index data are never replaced during an upgrade.
+Installation itself retains configuration and index data.
+
+The matching-key format is now version 2. On its next start, the new daemon
+moves a version-1 index to `index.sqlite.broken` and rebuilds it from configured
+roots. This prevents older Unicode keys from silently missing results. Files,
+configuration and launch history are retained; results fill in during the scan.
+Older binaries cannot read the version-2 index and likewise need a rebuild.
 
 Files are atomically replaced under a per-installation lock. A durable undo
 journal stores originals before mutation. Errors roll back changed files;

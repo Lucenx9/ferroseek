@@ -24,9 +24,15 @@ pub enum Change {
     Unchanged,
 }
 
-/// Lowercased, lossily-decoded name used for matching.
+/// Context-independent lowercase matching key, with Greek sigma forms unified.
 pub(crate) fn fold(name: &[u8]) -> String {
-    String::from_utf8_lossy(name).to_lowercase()
+    let name = String::from_utf8_lossy(name);
+    if name.is_ascii() {
+        return name.to_ascii_lowercase();
+    }
+    // Whole-string lowercase makes Σ depend on the suffix: ΟΣ becomes ος,
+    // but ΟΣ.txt becomes οσ.txt. A typed prefix must keep the same key.
+    name.chars().flat_map(char::to_lowercase).map(|c| if c == 'ς' { 'σ' } else { c }).collect()
 }
 
 fn row_meta(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<Meta> {

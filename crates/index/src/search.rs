@@ -39,7 +39,7 @@ impl Query {
         }
         let mut out = Query::default();
         for t in q.split_whitespace() {
-            let t = t.to_lowercase();
+            let t = fold(t.as_bytes());
             if t.contains('/') {
                 out.path_tokens.push(t);
             } else {

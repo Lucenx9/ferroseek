@@ -67,7 +67,9 @@ meta(key, value)             -- schema version, clean-shutdown flag, etc.
   so changes in Btrfs device numbering invalidate its index (see
   RESEARCH.md). FerroSeek's identity survives them.
 - **Names are raw bytes (`BLOB`).** Non-UTF-8 names round-trip exactly.
-  `key` is the lowercased, lossily decoded form used for matching.
+  `key` uses lossily decoded, context-independent character lowercase, with
+  Greek `ς` and `σ` unified. Queries and full-path filters share that mapping.
+  This does not add accent normalization or full Unicode case folding.
 - **WAL with `synchronous=NORMAL`.** A process crash can never corrupt the
   index or lose a committed transaction. Power loss can drop the last few
   transactions, and startup reconciliation repairs that. `synchronous=FULL`
@@ -172,7 +174,8 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 
 ## Search semantics and ranking
 
-- The query is split on whitespace and lowercased. Every token must match:
+- The query is split on whitespace and mapped with the same matching key as
+  indexed names. Every token must match:
   - A token of three or more characters is a substring of the name, using
     the FTS5 trigram index.
   - A token of one or two characters is a prefix of the name (`key` index)
