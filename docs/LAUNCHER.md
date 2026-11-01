@@ -46,12 +46,21 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
 | Enter | launch the application, open the file, copy a calculator result |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
 | Esc | clear the action filter, close actions, clear the query, then close |
+
+Choose **All**, **Applications** or **Files** beside the search field to narrow
+results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
+cycles backward. The choice lasts for this launcher session. Applications mode
+makes no file-search requests; Files shows indexed files and recent file
+suggestions. Calculator expressions without `=` appear only in All; an explicit
+`=` query works in every mode. Switching modes closes actions and resets the
+selection; replies from earlier searches are ignored.
 
 Type in the action panel to filter its commands without changing the search
 query or selected result. Enter runs the highlighted matching action. Ctrl+1…8
@@ -60,7 +69,8 @@ and the matching actions after filtering. The top number-row positions also
 work on layouts such as AZERTY, where typing digits normally requires Shift.
 Missing numbers do nothing. File
 shortcuts remain available while filtering. After copying, the launcher stays
-open and returns focus to the main search field.
+open and returns focus to the main search field. Clicking the main field and
+typing closes actions and starts the new search.
 
 Click a result once to select it; double-click or press Enter to open it.
 Right-click a result to select it and open its actions, or click **Actions**

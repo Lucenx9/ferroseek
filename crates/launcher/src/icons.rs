@@ -23,9 +23,18 @@ impl Icons {
         Icons { theme: current_theme(), size, cache: HashMap::new() }
     }
 
+    #[cfg(test)]
+    pub fn disabled() -> Self {
+        Self { theme: String::new(), size: 0, cache: HashMap::new() }
+    }
+
     /// Icon for a theme name or an absolute file path, trying `fallbacks`
     /// in order when the name is missing from the theme.
     pub fn get(&mut self, name: &str, fallbacks: &[&str]) -> Option<Icon> {
+        #[cfg(test)]
+        if self.size == 0 {
+            return None;
+        }
         for n in std::iter::once(name).chain(fallbacks.iter().copied()) {
             if n.is_empty() {
                 continue;

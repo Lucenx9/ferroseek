@@ -19,7 +19,7 @@ use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
 use crate::calc;
 use crate::icons::{Icon, Icons};
-use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Target};
+use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -116,6 +116,7 @@ pub struct Launcher {
     opening: Option<(String, String)>,
     icons: Icons,
     query: String,
+    scope: Scope,
     app_hits: Vec<(usize, u32)>,
     /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
@@ -134,6 +135,7 @@ pub struct Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     Query(String),
+    Scope(Scope),
     ActionQuery(String),
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
@@ -195,6 +197,7 @@ fn boot() -> (Launcher, Task<Message>) {
         opening: None,
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
+        scope: Scope::All,
         app_hits: Vec::new(),
         files: Vec::new(),
         items: Vec::new(),
@@ -254,9 +257,13 @@ impl Launcher {
     fn rebuild(&mut self, keep_selection: bool) {
         let previous = keep_selection.then(|| self.selected().map(|i| i.target.clone())).flatten();
         self.items = if self.query.trim().is_empty() {
-            model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), VISIBLE_ROWS)
+            model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), self.scope, VISIBLE_ROWS)
         } else {
-            let mut items: Vec<Item> = model::calc_item(&self.query).into_iter().collect();
+            let mut items: Vec<Item> = if self.scope.shows_calculator(&self.query) {
+                model::calc_item(&self.query).into_iter().collect()
+            } else {
+                Vec::new()
+            };
             if !calc::is_explicit(&self.query) {
                 let mut files = self.files.clone();
                 let now = usage::now();
@@ -363,7 +370,11 @@ impl Launcher {
             Ok(()) => {
                 let (usage, now) = (&self.usage, usage::now());
                 let q = self.query.as_str();
-                self.app_hits = model::match_apps(&self.apps, q, |a| usage.boost(Kind::App, &a.id, q, now));
+                self.app_hits = if self.scope.includes_apps() {
+                    model::match_apps(&self.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
+                } else {
+                    Vec::new()
+                };
                 self.rebuild(true);
                 Status::Notice("Ranking reset".into())
             }
@@ -393,21 +404,20 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     match message {
         Message::Query(q) => {
             s.clicks = ClickTracker::default();
-            if s.panel.is_some() {
-                return widget::operation::focus(actions_id());
-            }
+            // Editing the main field leaves the action panel and starts a new search.
+            s.panel = None;
             s.query = q;
             s.generation += 1;
             let (usage, now) = (&s.usage, usage::now());
             let q = s.query.as_str();
             // An explicit calculator query stays in that mode while incomplete.
             let calculator = calc::is_explicit(q);
-            s.app_hits = if calculator {
+            s.app_hits = if calculator || !s.scope.includes_apps() {
                 Vec::new()
             } else {
                 model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
             };
-            let file_query = !calculator && s.query.trim().chars().count() >= MIN_FILE_QUERY;
+            let file_query = s.scope.file_query(q);
             // Results of the previous query must not stay actionable while
             // this one is searched.
             s.files.clear();
@@ -423,6 +433,17 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                 Task::none()
             };
             Task::batch([search, s.resize()])
+        }
+        Message::Scope(scope) => {
+            s.panel = None;
+            let search = if s.scope == scope {
+                Task::none()
+            } else {
+                s.scope = scope;
+                let query = s.query.clone();
+                update(s, Message::Query(query))
+            };
+            Task::batch([search, widget::operation::focus(search_id())])
         }
         Message::ActionQuery(q) => {
             if let Some(panel) = &mut s.panel {
@@ -516,6 +537,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if matches!(cmd, Command::NextScope | Command::PreviousScope) {
+        let scope = s.scope.cycle(cmd == Command::NextScope);
+        return update(s, Message::Scope(scope));
+    }
     let len = s.items.len();
     if let Some(p) = &mut s.panel {
         if let Some(action) = p.action_for_command(cmd) {
@@ -561,6 +586,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
         }
         Command::CopyPath => return s.perform(Action::CopyPath),
+        Command::NextScope | Command::PreviousScope => unreachable!("handled before the action panel"),
         Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
                 s.panel = Some(Panel::new(item));
@@ -581,20 +607,43 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
-    let input = text_input("Search applications and files…", &s.query)
-        .id(search_id())
-        .on_input(Message::Query)
-        .size(20)
-        .padding([14, 12])
-        .style(|_, _| text_input::Style {
-            background: Background::Color(Color::TRANSPARENT),
-            border: Border::default(),
-            icon: palette::DIM,
-            placeholder: palette::DIM,
-            value: palette::TEXT,
-            selection: palette::SELECTED,
-        });
-    let header = container(input).height(INPUT_HEIGHT).align_y(Vertical::Center);
+    let placeholder = match s.scope {
+        Scope::All => "Search applications and files…",
+        Scope::Applications => "Search applications…",
+        Scope::Files => "Search indexed files…",
+    };
+    let input =
+        text_input(placeholder, &s.query).id(search_id()).on_input(Message::Query).size(20).padding([14, 12]).style(
+            |_, _| text_input::Style {
+                background: Background::Color(Color::TRANSPARENT),
+                border: Border::default(),
+                icon: palette::DIM,
+                placeholder: palette::DIM,
+                value: palette::TEXT,
+                selection: palette::SELECTED,
+            },
+        );
+    let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
+        let selected = s.scope == scope;
+        choices.push(button(text(scope.to_string()).size(11)).on_press(Message::Scope(scope)).padding([6, 8]).style(
+            move |_, status| button::Style {
+                background: if selected {
+                    Some(Background::Color(palette::SELECTED))
+                } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                    Some(Background::Color(palette::FAINT))
+                } else {
+                    None
+                },
+                text_color: if selected { palette::TEXT } else { palette::DIM },
+                border: Border { radius: 5.0.into(), ..Default::default() },
+                ..Default::default()
+            },
+        ))
+    });
+    let header = container(row![input, scopes].align_y(Vertical::Center))
+        .padding([0, 8])
+        .height(INPUT_HEIGHT)
+        .align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {
@@ -630,8 +679,15 @@ fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
         let (msg, help) = match &s.status {
             Status::Searching => ("Searching…", ""),
+            Status::Error(_) if s.scope == Scope::Files => {
+                ("File search unavailable", "Switch to Applications to search installed apps.")
+            }
             Status::Error(_) => ("File search unavailable", "You can still search applications or calculate a result."),
             _ if calc::is_explicit(&s.query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
+            _ if s.scope == Scope::Files && s.query.trim().chars().count() < MIN_FILE_QUERY => {
+                ("Search indexed files", "Type at least 2 characters to search files.")
+            }
+            _ if s.scope == Scope::Applications => ("No matching applications", "Try a different application name."),
             _ if s.query.trim().is_empty() => ("Start typing to search", "Find an application, a file, or try 2 + 3."),
             _ if s.query.trim().chars().count() < MIN_FILE_QUERY => {
                 ("No matching applications", "Type at least 2 characters to search files.")
@@ -833,6 +889,132 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn search_state() -> Launcher {
+        let app = crate::apps::parse(
+            "report.desktop",
+            std::path::Path::new("/synthetic"),
+            "[Desktop Entry]\nType=Application\nName=Report Viewer\nExec=viewer\n",
+            &[],
+            &[],
+        )
+        .unwrap();
+        Launcher {
+            backend: Backend::disconnected(),
+            apps: vec![app],
+            usage: Usage::disabled(),
+            opening: None,
+            icons: Icons::disabled(),
+            query: String::new(),
+            scope: Scope::All,
+            app_hits: Vec::new(),
+            files: Vec::new(),
+            items: Vec::new(),
+            item_icons: Vec::new(),
+            cursor: Cursor::new(VISIBLE_ROWS),
+            clicks: ClickTracker::default(),
+            panel: None,
+            generation: 0,
+            status: Status::Idle,
+            compact: true,
+        }
+    }
+
+    fn file_hits() -> Vec<FileHit> {
+        ["report.txt", "report.pdf"]
+            .into_iter()
+            .map(|name| FileHit {
+                id: format!("file:///synthetic/{name}"),
+                name: name.into(),
+                path: Some(std::path::Path::new("/synthetic").join(name)),
+                icon: String::new(),
+                subtext: "/synthetic".into(),
+                is_dir: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scope_changes_replace_results_and_reject_late_replies() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let old_generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation: old_generation, result: Ok(Some(file_hits())) });
+        assert_eq!(s.items.len(), 3);
+        s.cursor.select(2, s.items.len());
+        let _ = command(&mut s, Command::OpenActions);
+        assert!(s.panel.is_some());
+
+        let _ = command(&mut s, Command::NextScope);
+        assert_eq!(s.scope, Scope::Applications);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.generation, old_generation + 1);
+        assert_eq!(s.status, Status::Idle);
+        assert!(s.panel.is_none());
+        assert!(s.files.is_empty());
+        assert_eq!(s.cursor.selected, 0);
+        assert_eq!(s.items.len(), 1);
+        assert!(matches!(s.items[0].target, Target::App(_)));
+        let _ = update(&mut s, Message::Files { generation: old_generation, result: Ok(Some(file_hits())) });
+        let _ = update(&mut s, Message::Files { generation: old_generation, result: Err("old error".into()) });
+        assert_eq!(s.items.len(), 1);
+        assert_eq!(s.status, Status::Idle);
+
+        let _ = command(&mut s, Command::NextScope);
+        assert_eq!(s.scope, Scope::Files);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.status, Status::Searching);
+        assert!(s.app_hits.is_empty());
+        assert!(s.items.is_empty());
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        assert_eq!(s.items.len(), 2);
+        assert!(s.items.iter().all(|i| matches!(i.target, Target::File(_))));
+        let target = s.items[0].target.clone();
+        let _ = s.reset_ranking(&target);
+        assert!(s.app_hits.is_empty());
+        assert_eq!(s.items.len(), 2);
+        let _ = command(&mut s, Command::ActivateVisible(1));
+        assert_eq!(s.opening.as_ref().unwrap().0, "file:///synthetic/report.pdf");
+    }
+
+    #[test]
+    fn explicit_calculator_overrides_scope_but_implicit_calculations_obey_it() {
+        let mut s = search_state();
+        for scope in Scope::ALL {
+            let _ = update(&mut s, Message::Scope(scope));
+            let _ = update(&mut s, Message::Query("= 40 + 2".into()));
+            assert_eq!(s.items.len(), 1);
+            assert_eq!(s.items[0].target, Target::Calc("42".into()));
+            assert_eq!(s.status, Status::Idle);
+            assert!(s.app_hits.is_empty());
+            let _ = update(&mut s, Message::Query("= (".into()));
+            assert!(s.items.is_empty());
+            assert_eq!(s.status, Status::Idle);
+        }
+        for scope in [Scope::Applications, Scope::Files] {
+            let _ = update(&mut s, Message::Scope(scope));
+            let _ = update(&mut s, Message::Query("40 + 2".into()));
+            assert!(s.items.is_empty());
+            assert_eq!(s.status, if scope == Scope::Files { Status::Searching } else { Status::Idle });
+        }
+    }
+
+    #[test]
+    fn editing_main_query_leaves_actions_while_action_filter_keeps_the_query() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _ = command(&mut s, Command::OpenActions);
+        let generation = s.generation;
+        let _ = update(&mut s, Message::ActionQuery("copy".into()));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.generation, generation);
+        assert_eq!(s.panel.as_ref().unwrap().query, "copy");
+        let _ = update(&mut s, Message::Query("report2".into()));
+        assert_eq!(s.query, "report2");
+        assert_eq!(s.generation, generation + 1);
+        assert!(s.panel.is_none());
+    }
 
     #[test]
     fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {

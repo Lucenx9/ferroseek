@@ -69,6 +69,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
 | Ctrl+Shift+C | Copy a file path |
