@@ -266,6 +266,8 @@ pub enum Action {
     ResetRanking,
     AddFavorite,
     RemoveFavorite,
+    /// Index of an action in the selected application's immutable catalog entry.
+    Desktop(usize),
 }
 
 impl Action {
@@ -281,13 +283,15 @@ impl Action {
             Action::ResetRanking => "Reset ranking",
             Action::AddFavorite => "Add to favorites",
             Action::RemoveFavorite => "Remove from favorites",
+            Action::Desktop(_) => "Run application action",
         }
     }
 
     /// Scores normalized query tokens against the title and a small set of
     /// related terms. Titles carry more weight than aliases.
     pub fn search_score(self, tokens: &[String]) -> Option<u32> {
-        if tokens.is_empty() {
+        if tokens.is_empty() || matches!(self, Self::Desktop(_)) {
+            // The panel resolves application actions using their localized names.
             return None;
         }
         let title = self.label().to_lowercase();
@@ -302,7 +306,7 @@ impl Action {
             Self::UseResult => &["continue"],
             Self::AddFavorite => &["pin"],
             Self::RemoveFavorite => &["unpin"],
-            Self::Launch | Self::Open | Self::ResetRanking => &[],
+            Self::Launch | Self::Open | Self::ResetRanking | Self::Desktop(_) => &[],
         };
         let labels: Vec<_> =
             std::iter::once((title.as_str(), 100)).chain(aliases.iter().map(|alias| (*alias, 70))).collect();
@@ -314,7 +318,11 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::CopyName | Action::ResetRanking | Action::AddFavorite | Action::RemoveFavorite => "",
+            Action::CopyName
+            | Action::ResetRanking
+            | Action::AddFavorite
+            | Action::RemoveFavorite
+            | Action::Desktop(_) => "",
         }
     }
 }
@@ -1058,6 +1066,18 @@ mod tests {
             assert_eq!(remove.last(), Some(&Action::RemoveFavorite));
             assert_eq!(&add[..add.len() - 1], &remove[..remove.len() - 1]);
         }
+    }
+
+    #[test]
+    fn desktop_actions_require_panel_names_and_do_not_take_the_secondary_shortcut() {
+        let custom = Action::Desktop(0);
+        assert_eq!(custom.search_score(&matcher::tokens(custom.label())), None);
+        assert_eq!(custom.search_score(&matcher::tokens("new window")), None);
+        assert_eq!(custom.shortcut(), "");
+        assert_eq!(secondary_action(&[custom]), None);
+        assert_eq!(secondary_action(&[custom, Action::Reveal]), Some(Action::Reveal));
+        assert_eq!(secondary_action(&[custom, Action::UseResult]), Some(Action::UseResult));
+        assert!(!actions_for(&Target::App(0), false).contains(&custom));
     }
 
     #[test]

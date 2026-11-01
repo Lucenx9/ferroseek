@@ -77,8 +77,9 @@ enum Status {
 struct Panel {
     title: String,
     actions: Vec<Action>,
+    desktop_labels: Vec<String>,
     query: String,
-    selected: usize,
+    cursor: Cursor,
 }
 
 impl Panel {
@@ -86,8 +87,16 @@ impl Panel {
         Self {
             title: item.title.clone(),
             actions: model::actions_for(&item.target, favorite),
+            desktop_labels: Vec::new(),
             query: String::new(),
-            selected: 0,
+            cursor: Cursor::new(VISIBLE_ROWS),
+        }
+    }
+
+    fn label(&self, action: Action) -> &str {
+        match action {
+            Action::Desktop(i) => self.desktop_labels.get(i).map_or(action.label(), String::as_str),
+            _ => action.label(),
         }
     }
 
@@ -100,7 +109,19 @@ impl Panel {
             .actions
             .iter()
             .copied()
-            .filter_map(|action| action.search_score(&tokens).map(|score| (action, score)))
+            .filter_map(|action| {
+                let score = if matches!(action, Action::Desktop(_)) {
+                    let label = self.label(action).to_lowercase();
+                    if tokens.iter().map(String::as_str).eq(label.split_whitespace()) {
+                        Some(crate::matcher::EXACT)
+                    } else {
+                        crate::matcher::score(&tokens, &[(label.as_str(), 100)])
+                    }
+                } else {
+                    action.search_score(&tokens)
+                };
+                score.map(|score| (action, score))
+            })
             .collect();
         // Stable ties preserve the familiar order of equally matching actions.
         matches.sort_by_key(|&(_, score)| std::cmp::Reverse(score));
@@ -109,14 +130,15 @@ impl Panel {
 
     fn filter(&mut self, query: String) {
         self.query = query;
-        self.selected = 0;
+        self.cursor.reset();
     }
 
     fn action_for_command(&self, cmd: Command) -> Option<Action> {
         match cmd {
-            Command::Activate => self.filtered_actions().get(self.selected).copied(),
+            Command::Activate => self.filtered_actions().get(self.cursor.selected).copied(),
             Command::ActivateVisible(slot) if slot < model::NUMBERED_SLOTS => {
-                self.filtered_actions().get(slot).copied()
+                let actions = self.filtered_actions();
+                self.cursor.window(actions.len()).nth(slot).map(|i| actions[i])
             }
             Command::Secondary => model::secondary_action(&self.actions),
             Command::CopyPath => self.actions.contains(&Action::CopyPath).then_some(Action::CopyPath),
@@ -342,21 +364,28 @@ impl Launcher {
     fn perform(&mut self, action: Action) -> Task<Message> {
         self.clicks = ClickTracker::default();
         let Some(item) = self.selected().cloned() else { return Task::none() };
-        let opens = matches!(action, Action::Launch | Action::Open | Action::Reveal);
+        let opens = matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal);
         if opens && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
         }
         match (action, &item.target) {
-            (Action::Launch, Target::App(i)) => match crate::launch::launch(&self.apps[*i]) {
-                Ok(()) => {
-                    self.usage.record(Kind::App, &self.apps[*i].id, &self.query, usage::now());
-                    iced::exit()
+            (Action::Launch | Action::Desktop(_), Target::App(i)) => {
+                let app = &self.apps[*i];
+                let launched = match action {
+                    Action::Desktop(index) => crate::launch::launch_action(app, index),
+                    _ => crate::launch::launch(app),
+                };
+                match launched {
+                    Ok(()) => {
+                        self.usage.record(Kind::App, &app.id, &self.query, usage::now());
+                        iced::exit()
+                    }
+                    Err(e) => {
+                        self.status = Status::Error(format!("Cannot launch {}: {e}", item.title));
+                        self.resize()
+                    }
                 }
-                Err(e) => {
-                    self.status = Status::Error(format!("Cannot launch {}: {e}", item.title));
-                    self.resize()
-                }
-            },
+            }
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
@@ -398,6 +427,17 @@ impl Launcher {
 
     fn actions_for(&self, target: &Target) -> Vec<Action> {
         model::actions_for(target, self.is_favorite(target))
+    }
+
+    fn panel_for(&self, item: &Item) -> Panel {
+        let mut panel = Panel::new(item, self.is_favorite(&item.target));
+        if let Target::App(i) = item.target {
+            if let Some(app) = self.apps.get(i) {
+                panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
+                panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
+            }
+        }
+        panel
     }
 
     fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
@@ -551,8 +591,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
-            if s.panel.is_none() {
-                s.cursor.move_by(if dy > 0.0 { -1 } else { 1 }, s.items.len());
+            let delta = if dy > 0.0 { -1 } else { 1 };
+            if let Some(panel) = &mut s.panel {
+                panel.cursor.move_by(delta, panel.filtered_actions().len());
+            } else {
+                s.cursor.move_by(delta, s.items.len());
             }
             Task::none()
         }
@@ -584,7 +627,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             if !s.cursor.select_target(&target, &s.items) {
                 return Task::none();
             }
-            s.panel = s.selected().map(|item| Panel::new(item, s.is_favorite(&item.target)));
+            s.panel = s.selected().map(|item| s.panel_for(item));
             widget::operation::focus(actions_id())
         }
         Message::PanelClicked { target, action } => {
@@ -627,11 +670,15 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         if let Some(action) = p.action_for_command(cmd) {
             return s.perform(action);
         }
+        let action_count = p.filtered_actions().len();
+        let page = VISIBLE_ROWS as isize - 1;
         match cmd {
-            Command::Up => p.selected = p.selected.saturating_sub(1),
-            Command::Down => p.selected = (p.selected + 1).min(p.filtered_actions().len().saturating_sub(1)),
-            Command::First | Command::PageUp => p.selected = 0,
-            Command::Last | Command::PageDown => p.selected = p.filtered_actions().len().saturating_sub(1),
+            Command::Up => p.cursor.move_by(-1, action_count),
+            Command::Down => p.cursor.move_by(1, action_count),
+            Command::PageUp => p.cursor.move_by(-page, action_count),
+            Command::PageDown => p.cursor.move_by(page, action_count),
+            Command::First => p.cursor.move_by(-(action_count as isize), action_count),
+            Command::Last => p.cursor.move_by(action_count as isize, action_count),
             Command::Back if !p.query.is_empty() => {
                 p.filter(String::new());
                 return widget::operation::focus(actions_id());
@@ -670,7 +717,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::NextScope | Command::PreviousScope => unreachable!("handled before the action panel"),
         Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
-                s.panel = Some(Panel::new(item, s.is_favorite(&item.target)));
+                s.panel = Some(s.panel_for(item));
                 return widget::operation::focus(actions_id());
             }
         }
@@ -907,14 +954,15 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     if actions.is_empty() {
         col = col.push(container(text("No matching actions").size(13).color(palette::DIM)).padding(10));
     }
-    for (i, a) in actions.iter().enumerate() {
-        let selected = i == p.selected;
+    for (slot, i) in p.cursor.window(actions.len()).enumerate() {
+        let a = actions[i];
+        let selected = i == p.cursor.selected;
         let r = container(
             row![
-                text(a.label()).size(14),
+                text(ellipsize_end(p.label(a), 32)).size(14),
                 space::horizontal(),
                 text(a.shortcut()).size(11).color(palette::DIM),
-                numbered_hint(i),
+                numbered_hint(slot),
             ]
             .spacing(10)
             .align_y(Vertical::Center)
@@ -930,12 +978,20 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         });
         col = col.push(
             mouse_area(r)
-                .on_press(Message::PanelClicked { target: target.clone(), action: *a })
+                .on_press(Message::PanelClicked { target: target.clone(), action: a })
                 .interaction(mouse::Interaction::Pointer),
         );
     }
-    col = col.push(hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" }));
-    let panel = container(col).width(280).padding(8).style(|_| container::Style {
+    let mut footer =
+        row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })].align_y(Vertical::Center);
+    if actions.len() > VISIBLE_ROWS {
+        let window = p.cursor.window(actions.len());
+        footer = footer.push(space::horizontal()).push(
+            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len())).size(11).color(palette::DIM),
+        );
+    }
+    col = col.push(footer);
+    let panel = container(col).width(360).padding(8).style(|_| container::Style {
         background: Some(Background::Color(Color::from_rgb8(0x22, 0x23, 0x29))),
         border: Border { color: palette::BORDER, width: 1.0, radius: 10.0.into() },
         text_color: Some(palette::TEXT),
@@ -1214,7 +1270,8 @@ mod tests {
             title: "notes.txt".into(),
             actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
             query: String::new(),
-            selected: 3,
+            desktop_labels: Vec::new(),
+            cursor: Cursor { selected: 3, ..Cursor::new(VISIBLE_ROWS) },
         };
         let key = |key, mods| model::command_for(&key, mods).unwrap();
         assert_eq!(
@@ -1233,7 +1290,8 @@ mod tests {
             title: "Files".into(),
             actions: vec![Action::Launch, Action::CopyName],
             query: String::new(),
-            selected: 0,
+            desktop_labels: Vec::new(),
+            cursor: Cursor { selected: 0, ..Cursor::new(VISIBLE_ROWS) },
         };
         assert_eq!(app.action_for_command(Command::Secondary), None);
         assert_eq!(app.action_for_command(Command::CopyPath), None);
@@ -1259,10 +1317,10 @@ mod tests {
             },
             false,
         );
-        panel.selected = 3;
+        panel.cursor.selected = 3;
         panel.filter("  PATH  copy ".into());
         assert_eq!(panel.title, "notes.txt");
-        assert_eq!(panel.selected, 0);
+        assert_eq!(panel.cursor.selected, 0);
         assert_eq!(panel.filtered_actions(), [Action::CopyPath]);
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyPath));
         // Direct shortcuts retain their meaning even when filtered out.
@@ -1286,17 +1344,18 @@ mod tests {
             title: "notes.txt".into(),
             actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
             query: String::new(),
-            selected: 4,
+            desktop_labels: Vec::new(),
+            cursor: Cursor { selected: 4, ..Cursor::new(VISIBLE_ROWS) },
         };
         assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Open));
         panel.filter("copy".into());
-        panel.selected = 1;
+        panel.cursor.selected = 1;
         assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::CopyPath));
         assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), Some(Action::CopyName));
         assert_eq!(panel.action_for_command(Command::ActivateVisible(2)), None);
         assert_eq!(panel.action_for_command(Command::ActivateVisible(8)), None);
         assert_eq!(panel.action_for_command(Command::ActivateVisible(usize::MAX)), None);
-        assert_eq!(panel.selected, 1);
+        assert_eq!(panel.cursor.selected, 1);
         assert_eq!(panel.query, "copy");
         panel.filter("missing".into());
         assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), None);
@@ -1308,7 +1367,8 @@ mod tests {
             title: "notes.txt".into(),
             actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
             query: String::new(),
-            selected: 0,
+            desktop_labels: Vec::new(),
+            cursor: Cursor { selected: 0, ..Cursor::new(VISIBLE_ROWS) },
         };
         let original = panel.actions.clone();
         for query in ["", "  "] {
@@ -1386,6 +1446,100 @@ mod tests {
         panel.filter("use".into());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::UseResult));
         assert_eq!(Action::UseResult.shortcut(), "Ctrl+Enter");
+    }
+
+    fn application_actions(names: &[&str]) -> Launcher {
+        let mut s = search_state();
+        s.apps[0].actions = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| crate::apps::DesktopAction {
+                id: format!("action-{i}"),
+                name: (*name).into(),
+                exec: format!("synthetic-viewer --action-{i}"),
+            })
+            .collect();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _ = command(&mut s, Command::OpenActions);
+        s
+    }
+
+    #[test]
+    fn application_action_names_are_searchable_and_keep_distinct_identities() {
+        let mut s = application_actions(&["Nuova finestra privata", "New window", "New window"]);
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.label(Action::Desktop(0)), "Nuova finestra privata");
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Launch));
+        assert_eq!(panel.action_for_command(Command::Secondary), None);
+        let _ = update(&mut s, Message::ActionQuery("privata nuova".into()));
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.filtered_actions(), [Action::Desktop(0)]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Desktop(0)));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(0)));
+        assert_eq!(s.query, "report");
+        let _ = update(&mut s, Message::ActionQuery("  NEW  window ".into()));
+        assert_eq!(s.panel.as_ref().unwrap().filtered_actions(), [Action::Desktop(1), Action::Desktop(2)]);
+        let _ = update(&mut s, Message::ActionQuery("nwwin".into()));
+        assert_eq!(s.panel.as_ref().unwrap().filtered_actions(), [Action::Desktop(1), Action::Desktop(2)]);
+    }
+
+    #[test]
+    fn long_action_menus_scroll_page_and_number_the_visible_window() {
+        let names: Vec<_> = (0..12).map(|i| format!("Window {i}")).collect();
+        let mut s = application_actions(&names.iter().map(String::as_str).collect::<Vec<_>>());
+        let _ = command(&mut s, Command::PageDown);
+        assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 7);
+        let _ = command(&mut s, Command::PageDown);
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.cursor.selected, 14);
+        assert_eq!(panel.cursor.window(16), 7..15);
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(3)));
+        let _ = command(&mut s, Command::Last);
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.cursor.window(16), 8..16);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Desktop(11)));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(4)));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(7)), Some(Action::Desktop(11)));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(8)), None);
+        let _ = update(&mut s, Message::Wheel(1.0));
+        assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 14);
+        assert_eq!(s.cursor.selected, 0, "menu scrolling must leave the result selected");
+        let _ = update(&mut s, Message::ActionQuery("Window 11".into()));
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.cursor.first, 0);
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(11)));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), None);
+        let _ = command(&mut s, Command::Back);
+        let panel = s.panel.as_ref().unwrap();
+        assert_eq!(panel.cursor.window(16), 0..8);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Launch));
+        let _ = command(&mut s, Command::Last);
+        let _ = command(&mut s, Command::PageUp);
+        assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 8);
+        let _ = command(&mut s, Command::First);
+        assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 0);
+    }
+
+    #[test]
+    fn invalid_application_action_keeps_the_menu_usable_and_does_not_record_usage() {
+        let mut s = application_actions(&["New window"]);
+        let invalid = Action::Desktop(usize::MAX);
+        s.panel.as_mut().unwrap().actions.push(invalid);
+        let target = s.selected().unwrap().target.clone();
+        // While a file open is pending, application actions obey the same gate.
+        s.opening = Some(("file:///synthetic/report.txt".into(), "report".into()));
+        let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: invalid });
+        assert!(!matches!(s.status, Status::Error(_)));
+        s.opening = None;
+        let _ = update(&mut s, Message::PanelClicked { target, action: invalid });
+        assert!(matches!(s.status, Status::Error(_)));
+        assert!(s.panel.is_some());
+        assert_eq!(s.usage.boost(Kind::App, &s.apps[0].id, "report", usage::now()), 0);
+        let _ = update(&mut s, Message::ActionQuery("missing".into()));
+        let status = s.status.clone();
+        let target = s.selected().unwrap().target.clone();
+        let _ = update(&mut s, Message::PanelClicked { target, action: invalid });
+        assert_eq!(s.status, status, "a filtered-out action cannot run from a queued click");
     }
 
     #[test]

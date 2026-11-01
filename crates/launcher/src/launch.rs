@@ -10,11 +10,34 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::apps::App;
+use crate::apps::{App, ExecError};
 
 /// Full argv for `app`, including the terminal wrapper and scope.
 pub fn command_line(app: &App, scoped: bool, terminal: Option<&[String]>) -> io::Result<Vec<String>> {
-    let mut argv = app.argv().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+    wrap_command(app, app.argv().map_err(exec_error)?, scoped, terminal)
+}
+
+#[cfg(test)]
+fn command_line_for_action(
+    app: &App,
+    index: usize,
+    scoped: bool,
+    terminal: Option<&[String]>,
+) -> io::Result<Vec<String>> {
+    wrap_command(app, app.action_argv(index).map_err(exec_error)?, scoped, terminal)
+}
+
+fn exec_error(error: ExecError) -> io::Error {
+    let kind = if error == ExecError::MissingAction { io::ErrorKind::InvalidInput } else { io::ErrorKind::InvalidData };
+    io::Error::new(kind, error.to_string())
+}
+
+fn wrap_command(
+    app: &App,
+    mut argv: Vec<String>,
+    scoped: bool,
+    terminal: Option<&[String]>,
+) -> io::Result<Vec<String>> {
     if app.terminal {
         let Some(term) = terminal else {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no terminal emulator found"));
@@ -45,6 +68,16 @@ fn unit_safe(id: &str) -> String {
 
 pub fn launch(app: &App) -> io::Result<()> {
     let argv = command_line(app, systemd_run_available(), terminal_command().as_deref())?;
+    spawn(app, argv)
+}
+
+pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
+    let argv = app.action_argv(index).map_err(exec_error)?;
+    let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
+    spawn(app, argv)
+}
+
+fn spawn(app: &App, argv: Vec<String>) -> io::Result<()> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // Its own process group: a signal to the launcher's group (e.g. ^C in
@@ -114,5 +147,27 @@ mod tests {
         let term = vec!["konsole".to_string(), "-e".to_string()];
         assert_eq!(command_line(&t, false, Some(&term)).unwrap(), ["konsole", "-e", "prog", "--x"]);
         assert_eq!(command_line(&t, false, None).unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn action_command_lines_share_terminal_and_scope_wrappers() {
+        let a = app("Terminal=true\nActions=new;\n[Desktop Action new]\nName=New\nExec=other --new %c %U\n");
+        let term = vec!["konsole".to_string(), "-e".to_string()];
+        assert_eq!(
+            command_line_for_action(&a, 0, false, Some(&term)).unwrap(),
+            ["konsole", "-e", "other", "--new", "T"]
+        );
+        let scoped = command_line_for_action(&a, 0, true, Some(&term)).unwrap();
+        assert_eq!(&scoped[..6], ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--slice=app.slice"]);
+        assert!(scoped[6].starts_with("--unit=app-ferroseek-org.ex.T_1-"));
+        assert_eq!(&scoped[7..], ["--", "konsole", "-e", "other", "--new", "T"]);
+        assert_eq!(command_line_for_action(&a, 0, false, None).unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn invalid_action_is_rejected_before_terminal_or_launch_setup() {
+        let a = app("Terminal=true");
+        assert_eq!(command_line_for_action(&a, 0, true, None).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(launch_action(&a, usize::MAX).unwrap_err().kind(), io::ErrorKind::InvalidInput);
     }
 }
