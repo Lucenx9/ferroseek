@@ -45,7 +45,9 @@ already built `target/release` executables. A matching binary archive uses its
 ## Configuration and starting
 
 The default engine configuration indexes your home with its normal exclusions.
-Choose roots with `ferroseek config` before starting if you want a smaller scope.
+When configuration is missing, the launcher opens **Search folders** for review
+and **Save & apply** before sending file queries. Use **Folders** or Ctrl+, later.
+For CLI/service-only use, choose roots with `ferroseek config` before starting.
 `--config /absolute/path/config.toml` installs initial engine configuration only
 when no configuration exists; subsequent installs never replace it or an index.
 

@@ -302,7 +302,7 @@ impl Panel {
             }
             _ => {}
         }
-        if matches!(self.phase, Phase::Saving | Phase::Applying) || self.message.is_some() {
+        if self.pending.is_none() && (matches!(self.phase, Phase::Saving | Phase::Applying) || self.message.is_some()) {
             task =
                 Task::batch([task, widget::operation::snap_to(scroll_id(), widget::operation::RelativeOffset::START)]);
         }

@@ -33,7 +33,11 @@ impl Document {
     /// Save only roots, refusing a stale snapshot or a symbolic-link file.
     /// Existing unavailable roots can be retained, e.g. an unplugged disk.
     pub fn save(&self, roots: Vec<String>) -> Result<Self, String> {
-        let previous = if self.is_new() { Vec::new() } else { self.config.root_paths() };
+        let previous: Vec<PathBuf> = if self.is_new() {
+            Vec::new()
+        } else {
+            self.config.roots.iter().map(|root| normalize(&expand(root))).collect()
+        };
         for root in &roots {
             let path = validate_path(root)?;
             if !previous.contains(&path) {
@@ -142,7 +146,9 @@ mod tests {
         assert_eq!(saved.config.max_cpu_percent, 17);
         assert!(saved.config.index_hidden);
         assert_eq!(saved.config.exclude_names, ["private*"]);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("# My settings"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# My settings"));
+        assert!(text.contains("# folders"));
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         assert!(doc.save(vec![]).unwrap_err().contains("changed on disk"));
         assert_eq!(Config::load(&path).unwrap(), saved.config);
@@ -164,6 +170,10 @@ mod tests {
         assert!(!saved.is_new());
         std::fs::remove_dir(&folder).unwrap();
         assert!(saved.save(saved.config.roots.clone()).is_ok(), "offline roots can be retained");
+        std::fs::write(&path, format!("roots = [{:?}, {:?}]", temp.path().to_str().unwrap(), folder.to_str().unwrap()))
+            .unwrap();
+        let nested = Document::load(path).unwrap();
+        assert!(nested.save(nested.config.roots.clone()).is_ok(), "retained nested offline roots also remain valid");
         assert!(validate_folder("relative").is_err());
         let file = temp.path().join("file");
         std::fs::write(&file, "x").unwrap();
