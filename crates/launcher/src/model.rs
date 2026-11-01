@@ -189,6 +189,7 @@ pub enum Action {
     CopyPath,
     CopyName,
     CopyResult,
+    ResetRanking,
 }
 
 impl Action {
@@ -200,6 +201,7 @@ impl Action {
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
             Action::CopyResult => "Copy result",
+            Action::ResetRanking => "Reset ranking",
         }
     }
 
@@ -208,7 +210,7 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::CopyName => "",
+            Action::CopyName | Action::ResetRanking => "",
         }
     }
 }
@@ -216,9 +218,11 @@ impl Action {
 /// Actions for an item; the first is the primary (Enter) action.
 pub fn actions_for(t: &Target) -> Vec<Action> {
     match t {
-        Target::App(_) => vec![Action::Launch, Action::CopyName],
-        Target::File(f) if f.path.is_some() => vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
-        Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName],
+        Target::App(_) => vec![Action::Launch, Action::CopyName, Action::ResetRanking],
+        Target::File(f) if f.path.is_some() => {
+            vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]
+        }
+        Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult],
     }
 }
@@ -438,6 +442,27 @@ mod tests {
     }
 
     #[test]
+    fn resetting_history_restores_app_and_file_order() {
+        let a = apps();
+        let mut usage = crate::usage::Usage::disabled();
+        usage.record(Kind::App, "Fonts.desktop", "f", 100);
+        assert_eq!(a[match_apps(&a, "f", |app| usage.boost(Kind::App, &app.id, "f", 100))[0].0].name, "Fonts");
+        usage.reset(Kind::App, "Fonts.desktop").unwrap();
+        assert_eq!(a[match_apps(&a, "f", |app| usage.boost(Kind::App, &app.id, "f", 100))[0].0].name, "Files");
+
+        let original: Vec<_> = ["a", "b", "c"].iter().map(|n| file(n, false)).collect();
+        usage.record(Kind::File, &original[2].id, "f", 100);
+        let mut ranked = original.clone();
+        order_files(&mut ranked, |f| usage.boost(Kind::File, &f.id, "f", 100));
+        assert_eq!(ranked[0].name, "c");
+        usage.reset(Kind::File, &original[2].id).unwrap();
+        let mut ranked = original.clone();
+        order_files(&mut ranked, |f| usage.boost(Kind::File, &f.id, "f", 100));
+        assert_eq!(ranked, original);
+        assert!(usage.recent(100, 8).is_empty());
+    }
+
+    #[test]
     fn history_never_crosses_match_classes() {
         let mk = |n: &str, comment: &str| {
             let t = format!("[Desktop Entry]\nType=Application\nName={n}\nComment={comment}\nExec=x\n");
@@ -579,12 +604,13 @@ mod tests {
 
     #[test]
     fn actions_put_primary_first() {
-        assert_eq!(actions_for(&Target::App(0))[0], Action::Launch);
+        assert_eq!(actions_for(&Target::App(0)), [Action::Launch, Action::CopyName, Action::ResetRanking]);
         let f = actions_for(&Target::File(file("a", false)));
-        assert_eq!(f, [Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName]);
+        assert_eq!(f, [Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking]);
         let mut odd = file("a", false);
         odd.path = None;
         assert!(!actions_for(&Target::File(odd)).contains(&Action::CopyPath));
+        assert_eq!(actions_for(&Target::Calc("2".into())), [Action::CopyResult]);
     }
 
     #[test]

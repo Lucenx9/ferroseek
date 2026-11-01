@@ -99,6 +99,12 @@ every 14 days. It is used only to order results:
 - Updates are a locked read-modify-write, so several instances and
   `--forget-history` do not overwrite each other.
 
+Use **Reset ranking** in an application or file's action panel to remove that
+item's overall and query-specific history. Other items keep their history, and
+the results update immediately. The application or file remains searchable;
+opening it again starts a new history. In a `--private` session, reset changes
+only the session's in-memory history. A failed reset is shown in the launcher.
+
 ## Design
 
 ```text

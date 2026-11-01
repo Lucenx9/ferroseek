@@ -113,6 +113,7 @@ pub struct Launcher {
     icons: Icons,
     query: String,
     app_hits: Vec<(usize, u32)>,
+    /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
     items: Vec<Item>,
     /// Resolved icon per item, filled when the list is rebuilt.
@@ -250,7 +251,10 @@ impl Launcher {
             model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), VISIBLE_ROWS)
         } else {
             let mut items: Vec<Item> = model::calc_item(&self.query).into_iter().collect();
-            items.extend(model::build_items(&self.apps, &self.app_hits, &self.files));
+            let mut files = self.files.clone();
+            let now = usage::now();
+            model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
+            items.extend(model::build_items(&self.apps, &self.app_hits, &files));
             items
         };
         let icons = &mut self.icons;
@@ -322,8 +326,29 @@ impl Launcher {
             },
             (Action::CopyName, _) => self.copy(item.title.clone(), "name"),
             (Action::CopyResult, Target::Calc(v)) => self.copy(v.clone(), "result"),
+            (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
+    }
+
+    fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
+        let (kind, key) = match target {
+            Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
+            Target::File(f) => (Kind::File, f.id.as_str()),
+            Target::Calc(_) => return Task::none(),
+        };
+        self.panel = None;
+        self.status = match self.usage.reset(kind, key) {
+            Ok(()) => {
+                let (usage, now) = (&self.usage, usage::now());
+                let q = self.query.as_str();
+                self.app_hits = model::match_apps(&self.apps, q, |a| usage.boost(Kind::App, &a.id, q, now));
+                self.rebuild(true);
+                Status::Notice("Ranking reset".into())
+            }
+            Err(e) => Status::Error(format!("Cannot reset ranking: {e}")),
+        };
+        Task::batch([self.resize(), widget::operation::focus(search_id())])
     }
 
     /// Copies and stays open: on Wayland the clipboard is served by its
@@ -379,12 +404,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                 return Task::none(); // a newer query is in flight
             }
             match result {
-                Ok(Some(mut files)) => {
-                    let (usage, now) = (&s.usage, usage::now());
-                    let q = s.query.as_str();
-                    model::order_files(&mut files, |f| usage.boost(Kind::File, &f.id, q, now));
+                Ok(Some(files)) => {
                     s.files = files;
-                    s.status = Status::Idle;
+                    if matches!(s.status, Status::Searching | Status::Idle) {
+                        s.status = Status::Idle;
+                    }
                 }
                 Ok(None) => return Task::none(),
                 Err(e) => {
@@ -809,12 +833,16 @@ mod tests {
         // Direct shortcuts retain their meaning even when filtered out.
         assert_eq!(panel.action_for_command(Command::Secondary), Some(Action::Reveal));
 
+        panel.filter("RESET rank".into());
+        assert_eq!(panel.filtered_actions(), [Action::ResetRanking]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::ResetRanking));
+
         panel.filter("does not match".into());
         assert!(panel.filtered_actions().is_empty());
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 4);
+        assert_eq!(panel.actions.len(), 5);
     }
 
     #[test]
