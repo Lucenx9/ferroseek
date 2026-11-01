@@ -151,6 +151,16 @@ mod tests {
                     let mut shell = Shell::new(&mut messages);
                     widget.update(
                         &mut tree,
+                        &Event::Keyboard(keyboard::Event::ModifiersChanged(mods)),
+                        layout,
+                        mouse::Cursor::Unavailable,
+                        &(),
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &Rectangle::with_size(Size::new(400.0, 60.0)),
+                    );
+                    widget.update(
+                        &mut tree,
                         &event,
                         layout,
                         mouse::Cursor::Unavailable,
@@ -169,7 +179,7 @@ mod tests {
                     }
                     None => match &messages[0] {
                         Message::Query(text) | Message::ActionQuery(text) => {
-                            assert_eq!(text, &format!("{symbol}{value}"));
+                            assert_eq!(text, &format!("{value}{symbol}"));
                         }
                         other => panic!("expected ordinary text input, got {other:?}"),
                     },
