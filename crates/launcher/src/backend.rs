@@ -215,13 +215,8 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            let request = conn.call_method(
-                Some(DAEMON_BUS_NAME),
-                SEARCH_PATH,
-                Some(SEARCH_IFACE),
-                "Open",
-                &(id.as_str(), action.as_str(), ""),
-            );
+            let body = (id.as_str(), action.as_str(), "");
+            let request = conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Open", &body);
             let r = match zruntime::SharedRuntime::current() {
                 Ok(runtime) => match runtime.timeout(timeouts.open, request).await {
                     Ok(result) => result.map(|_| ()).map_err(open_error),
