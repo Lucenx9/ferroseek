@@ -1,146 +1,113 @@
 # FerroSeek
 
-**A keyboard-first launcher for Linux, with its own file search engine.** FerroSeek opens applications, finds files and folders, evaluates calculations and ranks results using local launch history. The launcher is the main product; its Rust indexing engine also supports standalone CLI use and optional KRunner, Noctalia and MCP integrations.
+[![CI](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml)
 
-> **Status: 0.1 development.** The standalone launcher is experimental and requires Wayland with `wlr-layer-shell` and session D-Bus. Graphical validation so far uses nested virtual KWin, not a broad desktop compatibility matrix. There is **no published binary release yet**. See [launcher setup and limits](docs/LAUNCHER.md).
+**A keyboard-first Linux launcher for applications, files and calculations.**
 
-## Features
+Type an application name, find a file in your indexed folders, or calculate a
+result. Open it with Enter. FerroSeek combines a Wayland launcher with its own
+Rust file search engine and keeps launch history locally.
 
-- **Launch applications from the keyboard**, with localized desktop entries, icons and fuzzy matching.
-- **Calculate and copy results**, revisit frequently opened items and use file actions without leaving the launcher.
-- **Find files and directories by name or path**, with case-insensitive substring matching and ranked results.
-- **Keep an index up to date** using inotify, incremental reconciliation and crash recovery.
-- **Low background overhead** through bounded queues, throttled scans and cache release while idle.
-- **One shared SQLite FTS5 index** used by the CLI, KRunner and read-only MCP server.
-- **Desktop-independent core**: one-shot indexing and search work on headless Linux without KDE, root privileges or telemetry.
+![FerroSeek showing application, file and folder results](docs/assets/launcher.png)
 
-FerroSeek stores filenames, paths and basic filesystem metadata (type, size, modification time). **It does not search file contents**; `rg` remains useful for content/regex searches.
+Screenshot from a nested test session with sample files.
 
-## Quick start
+**Status: experimental, 0.1 development.** Requires Wayland with
+`wlr-layer-shell` and session D-Bus. Graphical testing currently uses nested
+virtual KWin; other compositors have not been verified. No binary release has
+been published yet.
 
-Clone the source repository and use the user-scoped installer:
+## What you can do
+
+- Launch installed applications using names, keywords and fuzzy matching.
+- Find files and folders by name or path in configured indexing roots.
+- Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
+- Open a file, reveal it in its folder or copy its path through keyboard actions.
+- Revisit frequently opened applications and files with local, decaying history.
+  Use `--private` to avoid recording a session.
+
+File results come from an index updated with inotify. Search covers filenames
+and paths, not file contents. FerroSeek has no telemetry or remote search service.
+
+## Install
+
+Source installation requires Python 3.11+, Rust 1.89+ with Cargo, a C
+compiler/linker and libxkbcommon development files. On Debian/Ubuntu the latter
+package is `libxkbcommon-dev`; on Arch it is `libxkbcommon`.
 
 ```sh
 git clone https://github.com/Lucenx9/ferroseek.git
 cd ferroseek
-./scripts/install.sh --launcher    # launcher + indexing daemon + CLI
+./scripts/install.sh --launcher
 ```
 
-The source installer needs **Python 3.11+** and **Rust 1.89+** with Cargo and a C linker. Launcher builds also need libxkbcommon development files. The installer runs without sudo and does not download remote scripts. Prebuilt local archive packaging exists, but release binaries have not been published.
-
-Bind `ferroseek-launcher` to a keyboard shortcut after installation. See the [launcher guide](docs/LAUNCHER.md) for runtime requirements.
-
-For scripted or selective installation:
+This installs `ferroseek-launcher`, the indexing daemon and the CLI under your
+user account, without sudo. Existing configuration and indexes are preserved;
+installation does not start or restart indexing. Review your roots before the
+first file query, which can activate the daemon. The engine defaults to your
+home directory with exclusions.
 
 ```sh
-./scripts/install.sh               # guided setup; recommends launcher on Wayland
-./scripts/install.sh --core        # engine + CLI only, including headless Linux
-./scripts/install.sh --noctalia    # core + managed Noctalia v5 launcher plugin
-./scripts/install.sh --krunner     # core + KDE Plasma integration
-./scripts/install.sh --mcp         # core + optional MCP executable
-./scripts/install.sh --full        # all implemented, compatible components
-./scripts/install.sh --dry-run     # inspect planned changes without writing
+ferroseek config --default              # inspect the default configuration
+# Set roots in ~/.config/ferroseek/config.toml before searching for files.
+ferroseek-launcher
 ```
 
-Flags may be combined. Installation preserves existing indexes and configurations, does not enable indexing automatically, and does not restart an existing service. Review your indexing roots before starting; the engine defaults to your home with exclusions. To start indexing explicitly on systems with a user systemd manager and session bus:
+Bind `ferroseek-launcher` to a shortcut in your desktop or compositor settings.
+Running the command again closes the open launcher. The installer does not
+register a global shortcut or change desktop settings.
+
+Use `./scripts/install.sh` for guided setup, or `--dry-run` to inspect its plan.
+See [installation and upgrades](docs/INSTALLATION.md) for XDG paths, indexing
+configuration, optional service enablement, archives and uninstall.
+
+## Keyboard controls
+
+| Key | Action |
+|---|---|
+| Up/Down, Tab/Shift+Tab | Select a result |
+| Enter | Launch, open or copy a calculation |
+| Ctrl+K | Show actions for the selected result |
+| Ctrl+Enter | Reveal a file in its folder |
+| Ctrl+Shift+C | Copy a file path |
+| Esc | Close actions, clear the query, then close the launcher |
+
+More navigation keys and history settings are in the [launcher guide](docs/LAUNCHER.md).
+
+## Current limits and next steps
+
+The window currently has a fixed size and position and one dark appearance.
+Themes and layout configuration are planned. Application focus depends on the
+compositor because the UI cannot yet supply an XDG activation token.
+
+The next priorities are real desktop validation, reliable activation, clear
+first-run indexing setup and appearance settings. Window switching, clipboard
+history, web search and a plugin API are not implemented. See the [roadmap](docs/ROADMAP.md).
+
+## Engine and optional tools
+
+The engine and CLI also work without the graphical launcher:
 
 ```sh
-./scripts/install.sh --core --enable
+./scripts/install.sh --core
+ferroseek index                         # foreground indexing without a daemon
+ferroseek search report
+ferroseek search --in ~/Documents cv
 ferroseek status
 ```
 
-For headless use, `ferroseek index` and `ferroseek search` work without a running daemon. See the [installation guide](docs/INSTALLATION.md) for XDG paths, upgrades, archive verification, rollback and uninstall.
+An optional [MCP server](docs/MCP.md) exposes read-only filename/path search to
+AI clients. Install it with `--mcp`; registration is separate. Desktop launcher adapters are not included.
 
-## Ways to search
+## Documentation and development
 
-| Interface | Functionality | Status |
-|---|---|---|
-| **Launcher** (`ferroseek-launcher`) | Applications, files, calculator, history and keyboard actions | Main product, experimental; [setup and limits](docs/LAUNCHER.md) |
-| **CLI** (`ferroseek`) | Search, index, status and maintenance commands | Core, available |
-| **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
-| **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
-| **Noctalia v5** | Optional `/ferro` launcher plugin | Managed install with `--noctalia`; [setup and validation limits](docs/NOCTALIA.md) |
-| **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Deferred, **not available** |
-
-### Standalone launcher
-
-Run `ferroseek-launcher` to open it; run it again to close it. Type an application name, a filename or an arithmetic expression. Enter opens the selected result or copies a calculation; Ctrl+K shows its actions. The launcher uses the shared index for files.
-
-The main development priority is making this launcher reliable for daily use. Existing KRunner and Noctalia adapters remain supported optional ways to use the engine; MCP remains optional. New desktop adapters are deferred.
-
-### Command line
-
-```sh
-ferroseek index                       # reconcile an index without a daemon
-ferroseek search report               # find names containing "report"
-ferroseek search --in ~/Documents cv  # restrict search to a directory
-ferroseek search src/ main.rs          # path fragment and filename
-ferroseek search -n 50 --long report  # metadata and ranking
-ferroseek search --json report        # ranked machine-readable results
-ferroseek status                      # daemon and index statistics
-ferroseek config --default            # show default configuration
-```
-
-The engine config is at `$XDG_CONFIG_HOME/ferroseek/config.toml` (normally `~/.config/ferroseek/config.toml`); index data is at `$XDG_DATA_HOME/ferroseek`. Roots, exclusions, scan limits and reconciliation intervals are configurable. See [installation](docs/INSTALLATION.md).
-
-### KDE Plasma
-
-Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. Results can open a file or show its containing directory. This adapter does not replace KRunner or modify KDE/Baloo configuration. If the existing KDE file-search runner also returns matches, you can disable that runner manually in **System Settings → Search → Plasma Search**.
-
-### Noctalia v5
-
-The optional `lucenx9/ferroseek` plugin adds `/ferro` file search to Noctalia's
-launcher, including on Niri. It reuses the CLI and existing index, with no
-second background service. `./scripts/install.sh --noctalia` installs a managed
-copy independent of the source checkout; add `--enable` for plugin activation
-and live indexing. See the [Noctalia guide](docs/NOCTALIA.md) for setup,
-requirements and validation limits.
-
-### AI agents (optional MCP)
-
-The separate `ferroseek-mcp` program uses local stdio, reads the existing index and exits when its client disconnects. It exposes three read-only tools: `search_files`, `get_file_info`, and `index_status`. No second indexer is started.
-
-Installing MCP does **not** register an agent or change its configuration.
-However, an unconfigured MCP executable now defaults to `all_indexed` when
-started, so review existing manual registrations without an access mode during
-an upgrade:
-
-```sh
-# Authorize one project for Claude Code
-./scripts/install.sh --mcp --register-claude --allow "$HOME/Projects/example"
-
-# Explicitly authorize discovery across all already indexed roots for Codex
-./scripts/install.sh --mcp --register-codex --mcp-access all_indexed
-```
-
-Access modes are `all_indexed` (**new default**), `home`, and `restricted` (explicit allowlists). Guided global registration requires typed confirmation. Legacy `--allow` registrations and old TOML policy files without an explicit mode remain restricted; a previously unconfigured MCP server will gain indexed-path access after upgrading. Hidden and sensitive-looking names remain filtered according to MCP policy. Search permissions do not change the indexer's roots. MCP tools are *available* to agents, but [independent selection tests](docs/MCP_DISCOVERY.md) show that agents often prefer their built-in search tools.
-
-Read the [MCP guide](docs/MCP.md) for configuration and security.
-
-## Measured performance and limitations
-
-On one Ryzen 7 5800X, NVMe and Btrfs machine, an index containing approximately **953,595 files** measured **10.1 MiB idle daemon RSS after restart**. A selective million-file path-query fixture improved from approximately **530 ms to 2.03 ms** in paired measurements. These numbers apply to the described workload; they are **not** universal memory, latency or throughput guarantees. See the [benchmark methodology and raw evidence](docs/BENCHMARKS.md).
-
-The current engine does not implement file-content indexing, advanced tags, KIO/Baloo APIs, or a Dolphin search provider. Broad queries can have approximate rankings and longer latency tails. inotify typically requires a watch per directory, and some mounts are excluded by default.
-
-**No controlled equivalent-feature comparison with Baloo has been run.** FerroSeek does not claim to be faster than, or a complete replacement for, Baloo. See [comparison context](docs/COMPARISONS.md) and [historical Baloo source research](docs/RESEARCH.md).
-
-## Documentation
-
-| Document | Purpose |
-|---|---|
-| [Installation](docs/INSTALLATION.md) | Components, setup, upgrade, rollback and archive details |
-| [MCP](docs/MCP.md) | Agent tools, access modes and configuration |
-| [Noctalia](docs/NOCTALIA.md) | Optional launcher plugin and CLI JSON contract |
-| [Launcher](docs/LAUNCHER.md) | Main launcher: installation, keyboard actions and current limits |
-| [Architecture](docs/ARCHITECTURE.md) | Core, index, watcher and optional adapters |
-| [Benchmarks](docs/BENCHMARKS.md) | Reproducible performance results and caveats |
-| [Comparisons](docs/COMPARISONS.md) | Where FerroSeek, Baloo, fd, rg and plocate fit |
-| [Roadmap](docs/ROADMAP.md) | Implemented and planned capabilities |
-| [Baloo research](docs/RESEARCH.md) | Original source analysis and references |
-| [MCP discovery](docs/MCP_DISCOVERY.md) | Real-client tool-selection evaluation |
-
-## Development
+- [Launcher](docs/LAUNCHER.md): requirements, controls, history and limits.
+- [Installation](docs/INSTALLATION.md): components, upgrades and removal.
+- [Architecture](docs/ARCHITECTURE.md): launcher, daemon, search and index.
+- [Roadmap](docs/ROADMAP.md): implemented features and priorities.
+- [Other Linux launchers](docs/LINUX_LAUNCHERS.md): repository research and presentation choices.
+- [Benchmarks](docs/BENCHMARKS.md): engine measurements and their limits.
+- [Search tools](docs/COMPARISONS.md): background on indexed and live filesystem search.
 
 ```sh
 cargo build --release --locked --workspace
@@ -149,4 +116,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-See [CLAUDE.md](CLAUDE.md) for repository conventions. FerroSeek is licensed under **GPL-3.0-or-later** ([LICENSE](LICENSE)). It includes no KDE source code; external KDE interfaces and Baloo research are credited in [the research notes](docs/RESEARCH.md). The current implementation has no telemetry or network indexing.
+Repository conventions are in [CLAUDE.md](CLAUDE.md).
+Licensed under [GPL-3.0-or-later](LICENSE).

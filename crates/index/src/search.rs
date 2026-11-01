@@ -13,7 +13,7 @@ use crate::{Id, Kind, Result};
 
 /// Lower bound on FTS candidates per query; the effective cap is
 /// `max(FTS_CANDIDATES, 4 * limit)`. Bounds latency on unselective queries
-/// for small limits (KRunner asks for 15) while large limits (CLI scripting)
+/// for small limits (the launcher asks for 15) while large limits (CLI scripting)
 /// retain more matches. Filters run before these budgets; selective filters
 /// may read many rows. Exact and prefix candidates are fetched separately.
 const FTS_CANDIDATES: usize = 2000;
@@ -98,7 +98,7 @@ pub struct Hit {
 }
 
 impl Hit {
-    /// Score mapped into (0, 1), e.g. for KRunner.
+    /// Score mapped into (0, 1), e.g. for the launcher.
     pub fn relevance(&self) -> f64 {
         let s = self.score.max(0.0) as f64;
         (s / (s + 60.0)).clamp(0.01, 0.99)

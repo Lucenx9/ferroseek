@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A small pool of read-only index connections.
 //!
-//! Readers are reused within a KRunner session (warm SQLite page cache) and
-//! dropped on `Teardown`, so an idle daemon holds no reader connections.
+//! Readers are reused between launcher queries (warm SQLite page cache) and
+//! dropped when `Release` clears the pool.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
@@ -68,7 +68,7 @@ impl Pool {
 mod tests {
     use super::*;
     #[test]
-    fn teardown_does_not_recapture_inflight_reader() {
+    fn release_does_not_recapture_inflight_reader() {
         let t = tempfile::tempdir().unwrap();
         let db = t.path().join("index");
         let (w, _) = ferroseek_index::Writer::open(&db).unwrap();

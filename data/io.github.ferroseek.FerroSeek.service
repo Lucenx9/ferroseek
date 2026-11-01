@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# D-Bus session activation: KRunner's first Match call starts the daemon
+# D-Bus session activation: the launcher's first Search call starts the daemon
 # (through systemd) if it is not running yet.
 [D-BUS Service]
 Name=io.github.ferroseek.FerroSeek

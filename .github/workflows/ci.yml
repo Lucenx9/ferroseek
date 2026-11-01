@@ -18,17 +18,12 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install test dependencies (D-Bus for the smoke test; xkbcommon for the launcher build)
-        run: sudo apt-get update && sudo apt-get install -y dbus libglib2.0-bin lua5.4 libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y dbus libglib2.0-bin libxkbcommon-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      - name: Noctalia launcher provider (mock host, no desktop access)
-        run: lua5.4 tests/noctalia-provider.lua
-      - name: Noctalia application handoff (isolated GIO associations)
-        run: python3 tests/noctalia-open-smoke.py
       - run: cargo build --release --locked --workspace
       - run: python3 tests/install-smoke.py
-      - run: python3 tests/noctalia-install-smoke.py
       - run: python3 tests/package-smoke.py
       - run: python3 tests/benchmark-smoke.py
       - run: python3 tests/verify-index-smoke.py

@@ -11,12 +11,12 @@ decisions and historical measurements are retained with their evidence.
 - **Goal:** lightweight, desktop-independent filename and path discovery
   over configured Linux directories, kept current with inotify, without
   root privileges or mandatory graphical dependencies.
-- **Goal:** one persistent search index powering the main launcher, CLI and optional
-  integrations: KRunner for KDE Plasma, Noctalia's launcher and MCP for agents.
+- **Goal:** one persistent search index powering the main launcher, CLI and
+  optional read-only MCP access for agents.
 - **Future option:** bounded, opt-in text-content search measured separately.
 - **Non-goal for the MVP:** replacing the Baloo framework API (`Baloo::Query`,
-  KIO `baloosearch:/`, tags or Dolphin search integration). GNOME, Rofi and
-  other launchers beyond Noctalia are deferred adapters, not currently implemented.
+  KIO `baloosearch:/`, tags or Dolphin search integration). Desktop launcher
+  adapters are outside the current product scope.
 
 ## Workspace layout
 
@@ -24,7 +24,7 @@ decisions and historical measurements are retained with their evidence.
 |---|---|---|
 | `crates/index` (`ferroseek-index`) | lib | SQLite store: schema, versioning and recovery, the tree mutation transaction, search and ranking |
 | `crates/engine` (`ferroseek-engine`) | lib | config/XDG/exclusions, mount policy, scanner (reconciliation), inotify watcher, indexing pipeline (batching, pause, throttle, status) |
-| `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control interface, KRunner runner |
+| `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control, file search and opening |
 | `crates/cli` (`ferroseek`) | bin | `search`, `status`, `pause`, `resume`, `index`, `rebuild`, `config` |
 | `crates/mcp` (`ferroseek-mcp`) | bin | optional read-only stdio MCP adapter and access policy, independent of KDE |
 | `crates/launcher` (`ferroseek-launcher`) | bin | main Wayland launcher: applications, daemon file results, calculator; never opens the index |
@@ -39,8 +39,6 @@ responsibilities were consolidated before adding the optional MCP adapter:
   the filesystem. They share the exclusion rules, the tree lookups and the
   same state-based "re-examine (dir, name)" primitive. Separating them would
   duplicate that logic.
-- **krunner → module in the daemon.** It has a single adapter (zbus), it runs
-  in the daemon process, and its logic is search plus result encoding.
 - **core → engine.** Config is consumed only by the engine, the daemon and
   the CLI.
 
@@ -132,7 +130,7 @@ inotify reader thread ──(sync_channel, 64 batches)──▶ indexer thread �
         ▲ kernel queue (16384 events)                   ▲ commands (pause/resume/reconcile/stop)
                                                         │
 D-Bus (zbus zruntime helper thread) ── control iface ───┘
-        └── KRunner Match ──▶ zruntime::unblock pool ──▶ SQLite (reader conns, WAL)
+        └── Launcher Search ──▶ zruntime::unblock pool ──▶ SQLite (reader conns, WAL)
 ```
 
 - **Backpressure is end to end.**
@@ -153,10 +151,10 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   on 1M files: 57 % fewer bytes written than 100 ms transactions, at no
   memory cost (`docs/BENCHMARKS.md` §4). Events that arrive during a slice
   wait at most 1 s.
-- KRunner queries run on `zruntime::unblock` pool threads, which exit after
+- Launcher queries run on `zruntime::unblock` pool threads, which exit after
   10 s idle.
-  - Reader connections live in a small pool (at most 4) that KRunner's
-    `Teardown` empties at the end of every session.
+  - Reader connections live in a small pool (at most 4) cleared by the
+    `Release` method.
   - `Status` uses a short-lived reader.
 - **Idle release.** After 5 s without work, the engine:
   - checkpoints and truncates the WAL
@@ -194,58 +192,39 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   word-boundary match (`_ - . space`, camelCase) > inner substring, plus a
   coverage bonus and a penalty for dotfiles.
 - **Score**, stage 2 (top 3×limit, with paths): a depth penalty, a penalty
-  for hidden ancestors, and a recency bonus. The KRunner relevance is the
-  score mapped into (0, 1).
+  for hidden ancestors, and a recency bonus.
 
-## Adapter boundaries
+## Launcher and engine boundaries
 
-The indexer and read-only `Reader` work without a desktop environment.
-KRunner is a D-Bus adapter served by the daemon; MCP is an independent
-stdio process which opens the *same* SQLite index read-only. Neither
-creates or maintains a second index.
+The UI is a separate Wayland layer-shell client. It parses desktop entries for
+applications and stores local launch history. File queries and opens use the
+daemon on the session bus. CLI and optional MCP use the same index; neither
+maintains another index.
 
 ```text
-CLI ────────────┐
-KRunner (KDE) ──┼──> shared FerroSeek index <── inotify indexing engine
-MCP (agents) ───┘
-Noctalia ──> CLI (search --json) ──> same index
-ferroseek-launcher ──> daemon D-Bus runner (Match/Run) ──> same index
+launcher -> daemon Search1 -> shared index <- indexing engine
+CLI -----------------------> same index
+MCP (read-only) ------------> same index
 ```
 
-The main `ferroseek-launcher` is a separate layer-shell client. It gets
-file results from the daemon's runner over D-Bus, parses desktop entries for
-applications itself and keeps its own launch history. See
-[LAUNCHER.md](LAUNCHER.md).
+The daemon exposes `io.github.ferroseek.Search1` at
+`/io/github/ferroseek/Search`:
 
-The optional Noctalia v5 adapter lives in `integrations/noctalia/ferroseek`.
-It uses argument-array subprocesses, coalesces input while a query is in flight,
-and opens results through `xdg-open`. See [setup and validation limits](NOCTALIA.md).
-New GNOME, Rofi and other desktop adapters are deferred while the standalone launcher is hardened.
+- `Search(query)` returns up to 15 file results as URL, name, icon, parent
+  display path and directory flag. Queries run on blocking workers. Concurrent
+  clients receive independent replies; the UI drops its own outdated results.
+- `Open(url, action, token)` validates the percent-encoded file URL and index
+  membership before opening or revealing a path. Actions are empty for opening
+  or `open-parent` for reveal. An empty activation token means unavailable.
+  Invalid URLs, unindexed paths, unknown actions and opener failures return
+  D-Bus errors. Openers use argument arrays and a separate systemd scope where
+  available. Reveal uses `org.freedesktop.FileManager1.ShowItems`.
+- `Release()` clears the reader pool and trims unused heap pages.
 
-## KRunner integration
-
-- `~/.local/share/krunner/dbusplugins/ferroseek.desktop`: `X-Plasma-API=DBus`,
-  service `io.github.ferroseek.FerroSeek`, path `/runner`.
-- D-Bus activation goes through
-  `~/.local/share/dbus-1/services/io.github.ferroseek.FerroSeek.service`, with
-  `SystemdService=ferroseek.service`. KRunner can start the daemon on
-  demand, and systemd manages its lifecycle.
-- The match id is a percent-encoded `file://` URL, valid UTF-8 even for
-  non-UTF-8 paths. `Run` decodes it, checks that the path is in the index,
-  and opens it with `xdg-open <path>` as a single argv entry (no shell).
-  The opener runs inside `systemd-run --user --scope` when a user manager
-  is available, so applications never become part of `ferroseek.service`
-  and its limits, restarts or `KillMode` cannot touch them. Verified live:
-  Gwenview ran in its own `app-…service`. `XDG_ACTIVATION_TOKEN` comes from
-  `SetActivationToken`. The "Open containing folder" action uses
-  `org.freedesktop.FileManager1.ShowItems`.
-- `X-Plasma-API=DBus` rather than `DBus2`: with `DBus2`, KRunner suspends
-  matching until `Config` replies, and FerroSeek has no runtime config to
-  report.
-- **Installation note found in live testing.** dbus-broker (Arch's session
-  bus) does not watch service directories, so the installer calls
-  `org.freedesktop.DBus.ReloadConfig`. Without it, KRunner gets "name is not
-  activatable".
+D-Bus activation uses `io.github.ferroseek.FerroSeek.service`, optionally backed
+by `ferroseek.service`. The installer reloads bus registrations without
+restarting the running daemon. The former KRunner interface is not served.
+See [launcher setup](LAUNCHER.md) and [installation](INSTALLATION.md).
 
 ## Security and privacy
 

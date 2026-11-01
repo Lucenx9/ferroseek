@@ -5,12 +5,12 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::runner::file_url;
+use crate::search::file_url;
 
 /// Opens `path` with its default application via `xdg-open`, which defers
 /// to the desktop (`kde-open` on Plasma, which uses KIO's application
 /// association). The path is passed as a single argv element: no shell, no
-/// interpolation. `token` is the XDG activation token from KRunner so
+/// interpolation. `token` is the XDG activation token from the launcher so
 /// the opened window may take focus on Wayland.
 ///
 /// When systemd is available the opener runs in its own transient user

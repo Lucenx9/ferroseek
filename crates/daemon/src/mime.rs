@@ -117,27 +117,6 @@ impl MimeDb {
             None => "unknown".to_string(),
         }
     }
-
-    /// Coarse category used to group KRunner results.
-    pub fn category_for(&self, name: &str) -> &'static str {
-        let Some(m) = self.mime_for(name) else { return "Files" };
-        let icon = self.generic.get(m).map(String::as_str).unwrap_or("");
-        match m.split('/').next().unwrap_or("") {
-            "image" => "Images",
-            "audio" => "Audio",
-            "video" => "Videos",
-            "text" => "Documents",
-            _ if icon == "x-office-document"
-                || icon == "x-office-spreadsheet"
-                || icon == "x-office-presentation"
-                || m == "application/pdf" =>
-            {
-                "Documents"
-            }
-            _ if icon == "package-x-generic" => "Archives",
-            _ => "Files",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -168,9 +147,6 @@ mod tests {
         assert_eq!(d.mime_for("noext"), None);
         assert_eq!(d.icon_for("a.pdf"), "application-pdf");
         assert_eq!(d.icon_for("weird"), "unknown");
-        assert_eq!(d.category_for("a.png"), "Images");
-        assert_eq!(d.category_for("a.pdf"), "Documents");
-        assert_eq!(d.category_for("a.tar.gz"), "Archives");
     }
 
     #[test]

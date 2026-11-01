@@ -58,8 +58,8 @@ the engine and integrations. See [installation](INSTALLATION.md).
   `NoDisplay`, `OnlyShowIn`/`NotShowIn`, `TryExec`). Strong name or keyword
   matches are shown above files, weak ones (description only, loose
   subsequence) below them.
-- **Files and folders** come from the daemon's `org.kde.krunner1` `Match`
-  method; opening and revealing go through its `Run` method, which only
+- **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
+  method; opening and revealing go through its `Open` method, which only
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.
 - **Calculator:** an arithmetic expression (`(2+3)*4`, `sqrt(2)`, `2^10`)
   shows its value; Enter copies it. A fixed grammar is evaluated in process;
@@ -92,7 +92,7 @@ ferroseek-launcher
  │    model.rs (rows, selection, actions, keys) · usage.rs · calc.rs
  └─ bus thread: zbus::block_on for the process lifetime
       ├─ serves io.github.ferroseek.Launcher1.Toggle
-      └─ forwards Match/Run to io.github.ferroseek.FerroSeek /runner
+      └─ forwards Search/Open to io.github.ferroseek.FerroSeek /io/github/ferroseek/Search
 ```
 
 - zbus's default runtime drives a connection only from inside
@@ -113,9 +113,6 @@ ferroseek-launcher
 - No XDG activation token is passed to launched applications:
   `iced_layershell` 0.19 does not expose the layer surface needed to request
   one. Focus of the new window is left to the compositor's policy.
-- The daemon's runner shares one query-generation counter between clients:
-  if KRunner and the launcher search at the same instant, one of them may
-  get an empty reply.
 - The window size and position are fixed (720 px wide, near the top of the
   active output); there is no light theme or configuration file yet.
 

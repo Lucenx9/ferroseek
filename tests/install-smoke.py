@@ -36,9 +36,9 @@ case "$*" in
 esac
 exit 0
 '''
-    for name in ['systemctl', 'busctl', 'gdbus', 'claude', 'codex', 'cargo', 'noctalia']:
+    for name in ['systemctl', 'busctl', 'gdbus', 'claude', 'codex', 'cargo']:
         p = commands / name
-        p.write_text('#!/bin/sh\nexit 1\n' if name == 'noctalia' else stub)
+        p.write_text(stub)
         p.chmod(0o755)
     def environment(name='home'):
         home = root / name
@@ -52,9 +52,9 @@ exit 0
                     TEST_MANAGER='yes', TEST_ACTIVE='no', TEST_OWNER='no', TEST_BUS='yes', DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-install-test')
     # Interactive recommendations and customization, without relying on a CI TTY.
     def options():
-        return SimpleNamespace(core=False, mcp=False, krunner=False, full=False, dry_run=False,
+        return SimpleNamespace(core=False, mcp=False, full=False, dry_run=False,
                                register_claude=False, register_codex=False, allow=[])
-    detected = dict(kde=True, claude=True, codex=True, wayland=True)
+    detected = dict(claude=True, codex=True, wayland=True)
     with patch.object(sys.stdin, 'isatty', return_value=True), patch('builtins.input', return_value=''):
         assert installer.choose(options(), detected, None) == {'core', 'launcher'}
         assert installer.choose(options(), dict(detected, wayland=False), None) == {'core'}
@@ -89,6 +89,8 @@ exit 0
     run(expected=1)  # No implicit non-interactive defaults.
     run('--config', expected=2)
     run('--unexpected', expected=2)
+    run('--krunner', expected=2)
+    run('--noctalia', expected=2)
     preview = run('--core', '--config', str(cfg), '--dry-run')
     assert 'Create initial config:' in preview.stdout and str(home / '.config/ferroseek/config.toml') in preview.stdout
     run('--core', '--config', str(cfg))
@@ -109,15 +111,13 @@ exit 0
     launcher.write_bytes((repo / 'target/release/ferroseek-launcher').read_bytes())
     uninstall('--launcher')
     assert not launcher.exists() and (bindir / 'ferroseekd').exists()
-    runner = home / '.local/share/krunner/dbusplugins/ferroseek.desktop'
-    assert not runner.exists()
     config = home / '.config/ferroseek/config.toml'
     config.write_text('# preserve custom config\nroots = []\n')
     data = home / '.local/share/ferroseek'
     data.mkdir()
     (data / 'sentinel').write_text('preserve')
-    run('--mcp', '--krunner', '--config', str(cfg))
-    assert runner.exists() and (bindir / 'ferroseek-mcp').exists()
+    run('--mcp', '--config', str(cfg))
+    assert (bindir / 'ferroseek-mcp').exists()
     run('--full')
     assert config.read_text().startswith('# preserve')
     assert (data / 'sentinel').read_text() == 'preserve'
@@ -128,7 +128,7 @@ exit 0
     assert 'enable --now ferroseek.service' in log.read_text()
     uninstall('--core', expected=1)
     uninstall('--mcp')
-    assert runner.exists() and not (bindir / 'ferroseek-mcp').exists()
+    assert not (bindir / 'ferroseek-mcp').exists()
     uninstall(custom=dict(env, TEST_ACTIVE='yes'), expected=1)
     uninstall('--dry-run')
     assert (bindir / 'ferroseekd').exists()
@@ -208,13 +208,11 @@ exit 0
     assert 'registration paths cannot contain colons' in refusal.stderr
     assert not list(Path(colon['HOME']).iterdir())
 
-    # Headless/no manager: core works, enabling fails, incompatible KDE is refused.
+    # Headless/no manager: core works and enabling fails.
     headless = dict(environment('headless'), XDG_CURRENT_DESKTOP='GNOME', TEST_MANAGER='no', TEST_BUS='no')
     run('--core', custom=headless)
     run('--core', '--enable', custom=headless, expected=1)
     assert 'SystemdService=' not in (Path(headless['HOME']) / '.local/share/dbus-1/services/io.github.ferroseek.FerroSeek.service').read_text()
-    # KDE binaries might also be installed on the test host; desktop selection wins.
-    run('--krunner', custom=headless, expected=1)
     run('--full', custom=headless)
     assert not (Path(headless['HOME']) / '.local/share/krunner').exists()
     unmanaged = dict(headless, TEST_BUS='yes', TEST_OWNER='yes')

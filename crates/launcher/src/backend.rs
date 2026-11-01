@@ -4,22 +4,20 @@
 //! zbus's default runtime drives a connection only from inside
 //! `zbus::block_on`, so one thread sits in it for the life of the process:
 //! it serves the single-instance interface and forwards file searches and
-//! opens to the daemon's `org.kde.krunner1` object. The UI talks to it
+//! opens to the daemon's `io.github.ferroseek.Search1` object. The UI talks to it
 //! through channels, never by awaiting zbus futures on its own executor.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
-use zbus::OwnedVariant as OwnedValue;
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
 /// The daemon (mirrors `ferroseek_engine::ipc`; checked by a test).
 pub const DAEMON_BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
-pub const RUNNER_PATH: &str = "/runner";
-const RUNNER_IFACE: &str = "org.kde.krunner1";
-/// The runner's secondary action (see `crates/daemon/src/runner.rs`).
+pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
+const SEARCH_IFACE: &str = "io.github.ferroseek.Search1";
+/// The file search service's reveal action.
 pub const ACTION_OPEN_PARENT: &str = "open-parent";
 
 pub const LAUNCHER_BUS_NAME: &str = "io.github.ferroseek.Launcher";
@@ -28,7 +26,7 @@ pub const LAUNCHER_PATH: &str = "/io/github/ferroseek/Launcher";
 /// One file or folder result from the daemon.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileHit {
-    /// Opaque match ID (a `file://` URL), passed back to `Run`.
+    /// Opaque match ID (a `file://` URL), passed back to `Open`.
     pub id: String,
     pub path: Option<PathBuf>,
     pub name: String,
@@ -161,10 +159,10 @@ async fn handle(conn: &zbus::Connection, req: Request) {
             let r = conn
                 .call_method(
                     Some(DAEMON_BUS_NAME),
-                    RUNNER_PATH,
-                    Some(RUNNER_IFACE),
-                    "Run",
-                    &(id.as_str(), action.as_str()),
+                    SEARCH_PATH,
+                    Some(SEARCH_IFACE),
+                    "Open",
+                    &(id.as_str(), action.as_str(), ""),
                 )
                 .await
                 .map(|_| ())
@@ -174,26 +172,21 @@ async fn handle(conn: &zbus::Connection, req: Request) {
     }
 }
 
-type RemoteMatch = (String, String, String, i32, f64, HashMap<String, OwnedValue>);
+type FileResult = (String, String, String, String, bool);
 
 async fn search(conn: &zbus::Connection, query: &str) -> Result<Vec<FileHit>, String> {
     // Calling the daemon's name D-Bus-activates it when it is not running.
     let msg = conn
-        .call_method(Some(DAEMON_BUS_NAME), RUNNER_PATH, Some(RUNNER_IFACE), "Match", &(query,))
+        .call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Search", &(query,))
         .await
         .map_err(|e| e.to_string())?;
-    let matches: Vec<RemoteMatch> = msg.body().deserialize().map_err(|e| e.to_string())?;
+    let matches: Vec<FileResult> = msg.body().deserialize().map_err(|e| e.to_string())?;
     Ok(matches.into_iter().map(to_hit).collect())
 }
 
-fn prop_str(props: &HashMap<String, OwnedValue>, key: &str) -> Option<String> {
-    props.get(key).and_then(|v| String::try_from(v.try_clone().ok()?).ok())
-}
-
-fn to_hit((id, name, icon, _category_relevance, _relevance, props): RemoteMatch) -> FileHit {
+fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
     let path = crate::uri::path_from_file_url(&id);
-    let is_dir = icon == "folder" || prop_str(&props, "category").as_deref() == Some("Folders");
-    FileHit { subtext: prop_str(&props, "subtext").unwrap_or_default(), path, name, icon, is_dir, id }
+    FileHit { subtext, path, name, icon, is_dir, id }
 }
 
 impl Backend {
@@ -226,15 +219,13 @@ mod tests {
     #[test]
     fn daemon_names_match_the_engine() {
         assert_eq!(DAEMON_BUS_NAME, ferroseek_engine::ipc::BUS_NAME);
-        assert_eq!(RUNNER_PATH, ferroseek_engine::ipc::RUNNER_PATH);
+        assert_eq!(SEARCH_PATH, ferroseek_engine::ipc::SEARCH_PATH);
+        assert_eq!(SEARCH_IFACE, ferroseek_engine::ipc::SEARCH_IFACE);
     }
 
     #[test]
     fn remote_match_conversion() {
-        let mut props = HashMap::new();
-        props.insert("subtext".to_string(), OwnedValue::try_from(zbus::Variant::from("~/Docs")).unwrap());
-        props.insert("category".to_string(), OwnedValue::try_from(zbus::Variant::from("Folders")).unwrap());
-        let h = to_hit(("file:///home/u/Docs/a%20b".into(), "a b".into(), "folder".into(), 70, 0.5, props));
+        let h = to_hit(("file:///home/u/Docs/a%20b".into(), "a b".into(), "folder".into(), "~/Docs".into(), true));
         assert_eq!(h.path.as_deref(), Some(std::path::Path::new("/home/u/Docs/a b")));
         assert_eq!(h.subtext, "~/Docs");
         assert!(h.is_dir);

@@ -22,5 +22,6 @@ pub mod ipc {
     pub const BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
     pub const CONTROL_PATH: &str = "/io/github/ferroseek/FerroSeek";
     pub const CONTROL_IFACE: &str = "io.github.ferroseek.FerroSeek1";
-    pub const RUNNER_PATH: &str = "/runner";
+    pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
+    pub const SEARCH_IFACE: &str = "io.github.ferroseek.Search1";
 }

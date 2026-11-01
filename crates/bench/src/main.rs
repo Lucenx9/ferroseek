@@ -244,18 +244,12 @@ impl Daemon {
 
     fn status(&self) -> Option<HashMap<String, String>> {
         zbus::block_on(async {
-            let m = self
-                .conn
-                .call_method(
-                    Some(BUS),
-                    "/io/github/ferroseek/FerroSeek",
-                    Some("io.github.ferroseek.FerroSeek1"),
-                    "Status",
-                    &(),
-                )
-                .await
-                .ok()?;
-            m.body().deserialize::<HashMap<String, String>>().ok()
+            let proxy =
+                zbus::Proxy::new(&self.conn, BUS, "/io/github/ferroseek/FerroSeek", "io.github.ferroseek.FerroSeek1")
+                    .await
+                    .ok()?;
+            // Wait for our child; never activate an installed service on the test bus.
+            proxy.call_with_flags("Status", zbus::proxy::MethodFlags::NO_AUTO_START, &()).await.ok().flatten()
         })
     }
 
@@ -280,13 +274,16 @@ impl Daemon {
         }
     }
 
-    /// End-to-end KRunner-equivalent query.
-    fn krunner_match(&self, q: &str) -> Vec<String> {
+    /// End-to-end launcher query.
+    fn launcher_search(&self, q: &str) -> Vec<String> {
         zbus::block_on(async {
-            let m =
-                self.conn.call_method(Some(BUS), "/runner", Some("org.kde.krunner1"), "Match", &(q,)).await.unwrap();
-            type M = (String, String, String, i32, f64, HashMap<String, zbus::OwnedVariant>);
-            m.body().deserialize::<Vec<M>>().unwrap().into_iter().map(|x| x.0).collect()
+            let proxy = zbus::Proxy::new(&self.conn, BUS, "/io/github/ferroseek/Search", "io.github.ferroseek.Search1")
+                .await
+                .unwrap();
+            type FileResult = (String, String, String, String, bool);
+            let hits: Vec<FileResult> =
+                proxy.call_with_flags("Search", zbus::proxy::MethodFlags::NO_AUTO_START, &(q,)).await.unwrap().unwrap();
+            hits.into_iter().map(|x| x.0).collect()
         })
     }
 
@@ -408,13 +405,13 @@ fn main() {
         d.wait_idle(Duration::from_secs(3600));
         let queries: Vec<String> = WORDS.iter().map(|q| q.to_string()).collect();
         for q in &queries {
-            d.krunner_match(q);
+            d.launcher_search(q);
         }
         let mut times = Vec::new();
         for _ in 0..5 {
             for q in &queries {
                 let t = Instant::now();
-                let hits = d.krunner_match(q);
+                let hits = d.launcher_search(q);
                 assert!(!hits.is_empty(), "expected corpus word {q}");
                 times.push(t.elapsed().as_secs_f64() * 1e3);
             }
@@ -422,10 +419,10 @@ fn main() {
         say!("Ordinary word queries D-Bus: {}", lat(&times));
         for q in ["corpus/", "corpus/ report", "home/"] {
             let mut samples = Vec::new();
-            d.krunner_match(q);
+            d.launcher_search(q);
             for _ in 0..15 {
                 let t = Instant::now();
-                let hits = d.krunner_match(q);
+                let hits = d.launcher_search(q);
                 samples.push(t.elapsed().as_secs_f64() * 1e3);
                 assert!(!hits.is_empty(), "broad query {q}");
             }
@@ -566,11 +563,11 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
     let mut dbus_ms = Vec::new();
     for q in &queries {
         let t = Instant::now();
-        let _ = d.krunner_match(q);
+        let _ = d.launcher_search(q);
         dbus_ms.push(t.elapsed().as_secs_f64() * 1e3);
     }
     say(format!("| query latency, library (limit 15, {} queries) | {} |", queries.len(), lat(&lib_ms)));
-    say(format!("| query latency, D-Bus `Match` end-to-end | {} |", lat(&dbus_ms)));
+    say(format!("| query latency, D-Bus `Search` end-to-end | {} |", lat(&dbus_ms)));
     let st = proc_status(pid);
     say(format!("| RSS after query burst | {} |", mib(st["VmRSS"])));
 
@@ -621,7 +618,7 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
 
     review::run(&d, work, db, say);
 
-    // 5. Incremental latency through D-Bus Match (includes 200 ms debounce).
+    // 5. Incremental latency through D-Bus Search (includes 200 ms debounce).
     let dir = corpus.files[0].parent().unwrap().to_path_buf();
     let (mut c_ms, mut r_ms, mut d_ms) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..30 {
@@ -630,21 +627,21 @@ fn run_rest(d: Daemon, bin: &Path, work: &Path, corpus: &Corpus, db: &Path, n: u
         let (ua, ub) = (file_url(&a), file_url(&b));
         let t = Instant::now();
         fs::write(&a, b"x").unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-alpha")).contains(&ua))
+        wait_until(Duration::from_secs(10), || d.launcher_search(&format!("bench-incr-{i}-alpha")).contains(&ua))
             .expect("create");
         c_ms.push(t.elapsed().as_secs_f64() * 1e3);
         let t = Instant::now();
         fs::rename(&a, &b).unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).contains(&ub))
+        wait_until(Duration::from_secs(10), || d.launcher_search(&format!("bench-incr-{i}-omega")).contains(&ub))
             .expect("rename");
         r_ms.push(t.elapsed().as_secs_f64() * 1e3);
         let t = Instant::now();
         fs::remove_file(&b).unwrap();
-        wait_until(Duration::from_secs(10), || d.krunner_match(&format!("bench-incr-{i}-omega")).is_empty())
+        wait_until(Duration::from_secs(10), || d.launcher_search(&format!("bench-incr-{i}-omega")).is_empty())
             .expect("delete");
         d_ms.push(t.elapsed().as_secs_f64() * 1e3);
     }
-    say(format!("| change → visible in `Match`: create (debounce 200 ms) | {} |", lat(&c_ms)));
+    say(format!("| change → visible in `Search`: create (debounce 200 ms) | {} |", lat(&c_ms)));
     say(format!("| ↳ rename | {} |", lat(&r_ms)));
     say(format!("| ↳ delete | {} |", lat(&d_ms)));
 

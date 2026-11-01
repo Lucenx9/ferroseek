@@ -12,11 +12,11 @@ RestartSec=5s
 Slice=background.slice
 # Indexing threads already lower themselves to nice 19 + idle I/O; these
 # weights additionally yield to foreground work under contention without
-# slowing KRunner queries when the machine is idle.
+# slowing the launcher queries when the machine is idle.
 CPUWeight=20
 IOWeight=20
 # Safety net only: measured working set is far below this
-# (docs/BENCHMARKS.md). Applications opened from KRunner run in their own
+# (docs/BENCHMARKS.md). Applications opened from the launcher run in their own
 # transient scope, so these limits never apply to them.
 MemoryHigh=256M
 MemoryMax=512M

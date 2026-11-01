@@ -7,8 +7,8 @@ import tempfile
 binary = Path('target/release/ferroseek-bench').resolve()
 bin_dir = binary.parent
 with tempfile.TemporaryDirectory(prefix='ferroseek-bench-test-') as tmp:
-    work = Path(tmp) / 'work'
-    work.mkdir()
+    work = Path(tmp) / 'home/work'
+    work.mkdir(parents=True)
     sentinel = work / 'keep-me'
     sentinel.write_bytes(b'untouched')
 
@@ -29,7 +29,11 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-bench-test-') as tmp:
         assert result.returncode == 0, result.stderr
         assert (work / 'data/index.sqlite').is_file()
     before = (work / 'report.md').read_bytes()
+    result = run('--reuse-corpus', '--queries-only')
+    assert result.returncode == 0, result.stderr
+    assert b'errors/mismatches: 0' in result.stdout, result.stdout
+    assert b'Activating service' not in result.stderr, result.stderr
     result = run('--only-initial', '--reuse-corpus', files='2000')
     assert result.returncode != 0 and b'matching generated benchmark' in result.stderr
     assert (work / 'report.md').read_bytes() == before
-print('PASS: benchmark rejects unsafe work/reuse arguments; fresh and reused corpus indexing work')
+print('PASS: safe corpus reuse, indexing and launcher queries; 165 checked responses without service activation')

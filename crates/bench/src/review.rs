@@ -16,7 +16,7 @@ pub(super) fn run(d: &Daemon, work: &Path, db: &Path, say: &mut dyn FnMut(String
     let file = dir.join("report-review-sentinel.txt");
     fs::write(&file, b"benchmark sentinel").unwrap();
     let url = file_url(&file);
-    wait_until(Duration::from_secs(30), || d.krunner_match("report-review-sentinel").contains(&url))
+    wait_until(Duration::from_secs(30), || d.launcher_search("report-review-sentinel").contains(&url))
         .expect("review fixture indexed");
     let reader = Reader::open(db).unwrap();
     let ordinary = SearchOptions { limit: 15, ..Default::default() };
@@ -70,7 +70,7 @@ pub(super) fn run(d: &Daemon, work: &Path, db: &Path, say: &mut dyn FnMut(String
             cpu * 1e3 / all.iter().sum::<f64>()
         ));
         if opts.within.is_some() {
-            continue; // KRunner Match has no --in argument.
+            continue; // Launcher Search has no --in argument.
         }
         let check_bus = |hits: &[String]| {
             if present {
@@ -79,14 +79,14 @@ pub(super) fn run(d: &Daemon, work: &Path, db: &Path, say: &mut dyn FnMut(String
                 assert!(hits.is_empty(), "{label}: D-Bus unexpected hit");
             }
         };
-        check_bus(&d.krunner_match(q));
+        check_bus(&d.launcher_search(q));
         rounds.clear();
         all.clear();
         for _ in 0..5 {
             let mut samples = Vec::new();
             for _ in 0..3 {
                 let t = Instant::now();
-                let hits = d.krunner_match(q);
+                let hits = d.launcher_search(q);
                 let ms = t.elapsed().as_secs_f64() * 1e3;
                 check_bus(&hits);
                 samples.push(ms);
@@ -104,7 +104,7 @@ pub(super) fn run(d: &Daemon, work: &Path, db: &Path, say: &mut dyn FnMut(String
         say(format!("| {label} D-Bus sample percentiles | {} | — | — | — |", lat(&all)));
     }
     fs::remove_dir_all(&dir).unwrap();
-    wait_until(Duration::from_secs(30), || d.krunner_match("report-review-sentinel").is_empty())
+    wait_until(Duration::from_secs(30), || d.launcher_search("report-review-sentinel").is_empty())
         .expect("review fixture removed");
     say("\nReview query errors/mismatches: 0 (165 measured responses checked; warmups also checked).\n".into());
     say("| metric | value |\n|---|---|".into());

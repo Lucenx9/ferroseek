@@ -13,20 +13,20 @@ import subprocess
 import tarfile
 import tomllib
 
-from installer import archive_files
+from installer import ARCHIVE_FILES
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--components', choices=['launcher', 'core', 'mcp', 'krunner', 'noctalia', 'full'], default='launcher')
+    parser.add_argument('--components', choices=['launcher', 'core', 'mcp', 'full'], default='launcher')
     parser.add_argument('--output', type=Path, default=ROOT / 'dist')
     parser.add_argument('--no-build', action='store_true')
     args = parser.parse_args()
     if platform.system() != 'Linux':
         parser.error('native Linux packaging only; cross-built artifacts need a separate validation workflow')
-    components = ['core'] + (['launcher', 'mcp', 'krunner', 'noctalia'] if args.components == 'full' else [] if args.components == 'core' else [args.components])
+    components = ['core'] + (['launcher', 'mcp'] if args.components == 'full' else [] if args.components == 'core' else [args.components])
     binaries = {'ferroseek': 'ferroseek-cli', 'ferroseekd': 'ferroseek-daemon'}
     if 'mcp' in components:
         binaries['ferroseek-mcp'] = 'ferroseek-mcp'
@@ -42,7 +42,7 @@ def main():
     if archive.exists() or checksum.exists():
         parser.error('output already exists; refusing to overwrite it')
     content = {}
-    for rel in archive_files(components):
+    for rel in ARCHIVE_FILES:
         content[rel] = ((ROOT / rel).read_bytes(), 0o755 if rel.endswith('.sh') else 0o644)
     for binary in binaries:
         path = ROOT / 'target/release' / binary
