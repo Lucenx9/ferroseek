@@ -11,6 +11,9 @@ use crate::backend::FileHit;
 use crate::usage::Kind;
 use crate::{calc, matcher, uri};
 
+/// Visible rows addressable by Ctrl+1 through Ctrl+8.
+pub const NUMBERED_SLOTS: usize = 8;
+
 /// Applications shown when there are no file results.
 const MAX_APPS_ALONE: usize = 9;
 /// With file results: strong application matches go above files, weak
@@ -294,6 +297,17 @@ impl Cursor {
         }
     }
 
+    /// Selects a numbered slot in the currently drawn window. Missing slots
+    /// leave the selection unchanged and must not activate its previous target.
+    pub fn select_visible(&mut self, slot: usize, len: usize) -> bool {
+        if slot >= NUMBERED_SLOTS {
+            return false;
+        }
+        let Some(index) = self.window(len).nth(slot) else { return false };
+        self.select(index, len);
+        true
+    }
+
     /// Resolves the clicked target against the current list, which may
     /// have changed since the row was drawn.
     pub fn select_target(&mut self, target: &Target, items: &[Item]) -> bool {
@@ -349,6 +363,8 @@ pub enum Command {
     /// Primary action of the selection (or of the highlighted action when
     /// the action panel is open).
     Activate,
+    /// Primary action of a zero-based visible result or filtered action slot.
+    ActivateVisible(usize),
     /// Secondary action (Ctrl+Enter).
     Secondary,
     ToggleActions,
@@ -378,6 +394,11 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::Escape) => Some(Command::Back),
         Key::Named(Named::ContextMenu) => Some(Command::OpenActions),
         Key::Named(Named::F10) if mods.shift() => Some(Command::OpenActions),
+        Key::Character(c)
+            if mods == Modifiers::CTRL && matches!(c.as_str(), "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8") =>
+        {
+            Some(Command::ActivateVisible((c.as_bytes()[0] - b'1') as usize))
+        }
         Key::Character(c) if ctrl => match c.as_str() {
             "k" | "K" => Some(Command::ToggleActions),
             "n" | "N" | "j" | "J" => Some(Command::Down),
@@ -601,6 +622,56 @@ mod tests {
         assert_eq!((c.selected, c.window(2)), (1, 0..2));
         c.select(7, 2);
         assert_eq!(c.selected, 1, "out of range is ignored");
+    }
+
+    #[test]
+    fn numbered_selection_tracks_the_drawn_window_and_ignores_missing_slots() {
+        let mut c = Cursor::new(NUMBERED_SLOTS);
+        c.move_by(7, 20);
+        c.move_by(7, 20);
+        assert_eq!(c.window(20), 7..15);
+        assert!(c.select_visible(0, 20));
+        assert_eq!(c.selected, 7);
+        assert!(c.select_visible(7, 20));
+        assert_eq!(c.selected, 14);
+        c.move_by(20, 20);
+        assert_eq!(c.window(20), 12..20);
+        assert!(c.select_visible(0, 20));
+        assert_eq!(c.selected, 12);
+        let before = c;
+        assert!(!c.select_visible(8, 20));
+        assert!(!c.select_visible(usize::MAX, 20));
+        assert!(!c.select_visible(0, 0));
+        assert_eq!(c, before);
+
+        c.reset();
+        c.select(1, 2);
+        let before = c;
+        assert!(!c.select_visible(2, 2));
+        assert_eq!(c, before);
+        assert!(c.select_visible(0, 2));
+        assert_eq!(c.selected, 0);
+    }
+
+    #[test]
+    fn numbered_keys_require_only_control_and_leave_plain_digits_to_the_field() {
+        for (slot, digit) in (1..=NUMBERED_SLOTS).enumerate() {
+            let key = Key::Character(digit.to_string().into());
+            assert_eq!(command_for(&key, Modifiers::CTRL), Some(Command::ActivateVisible(slot)));
+            for mods in [
+                Modifiers::empty(),
+                Modifiers::ALT,
+                Modifiers::LOGO,
+                Modifiers::CTRL | Modifiers::ALT,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                Modifiers::CTRL | Modifiers::LOGO,
+            ] {
+                assert_eq!(command_for(&key, mods), None);
+            }
+        }
+        for digit in ["0", "9", "12", "!"] {
+            assert_eq!(command_for(&Key::Character(digit.into()), Modifiers::CTRL), None);
+        }
     }
 
     #[test]

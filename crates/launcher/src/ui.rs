@@ -23,7 +23,7 @@ use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Target};
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
-const VISIBLE_ROWS: usize = 8;
+const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
 const ROW_HEIGHT: f32 = 48.0;
 const INPUT_HEIGHT: f32 = 58.0;
 const FOOTER_HEIGHT: f32 = 34.0;
@@ -97,6 +97,9 @@ impl Panel {
     fn action_for_command(&self, cmd: Command) -> Option<Action> {
         match cmd {
             Command::Activate => self.filtered_actions().get(self.selected).copied(),
+            Command::ActivateVisible(slot) if slot < model::NUMBERED_SLOTS => {
+                self.filtered_actions().get(slot).copied()
+            }
             Command::Secondary => model::secondary_action(&self.actions),
             Command::CopyPath => self.actions.contains(&Action::CopyPath).then_some(Action::CopyPath),
             _ => None,
@@ -546,6 +549,11 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::First => s.cursor.move_by(-(len as isize), len),
         Command::Last => s.cursor.move_by(len as isize, len),
         Command::Activate => return s.primary().map_or_else(Task::none, |a| s.perform(a)),
+        Command::ActivateVisible(slot) => {
+            if s.cursor.select_visible(slot, len) {
+                return s.primary().map_or_else(Task::none, |a| s.perform(a));
+            }
+        }
         Command::Secondary => {
             let action = s.selected().and_then(|i| model::secondary_action(&model::actions_for(&i.target)));
             if let Some(action) = action {
@@ -637,13 +645,13 @@ fn results(s: &Launcher) -> Element<'_, Message> {
         .into();
     }
     let mut col = column![];
-    for i in s.cursor.window(s.items.len()) {
-        col = col.push(result_row(s, i));
+    for (slot, i) in s.cursor.window(s.items.len()).enumerate() {
+        col = col.push(result_row(s, i, slot));
     }
     col.into()
 }
 
-fn result_row(s: &Launcher, i: usize) -> Element<'_, Message> {
+fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     let item = &s.items[i];
     let selected = i == s.cursor.selected;
     let icon: Element<'_, Message> = match s.item_icons.get(i).cloned().flatten() {
@@ -662,10 +670,11 @@ fn result_row(s: &Launcher, i: usize) -> Element<'_, Message> {
         border: Border { radius: 6.0.into(), ..Default::default() },
         ..Default::default()
     });
-    let content = row![icon, container(labels).width(Length::Fill).clip(true), tag]
-        .spacing(12)
-        .align_y(Vertical::Center)
-        .padding([0, 12]);
+    let mut content = row![icon, container(labels).width(Length::Fill).clip(true), tag];
+    if s.panel.is_none() {
+        content = content.push(numbered_hint(slot));
+    }
+    let content = content.spacing(12).align_y(Vertical::Center).padding([0, 12]);
     let bar = container(space::vertical()).width(3).height(ROW_HEIGHT - 16.0).style(move |_| container::Style {
         background: selected.then_some(Background::Color(palette::ACCENT)),
         border: Border { radius: 2.0.into(), ..Default::default() },
@@ -744,6 +753,11 @@ fn hint<'a>(key: &'a str, label: &'a str) -> Element<'a, Message> {
     .into()
 }
 
+fn numbered_hint(slot: usize) -> Element<'static, Message> {
+    let label = if slot < model::NUMBERED_SLOTS { format!("Ctrl+{}", slot + 1) } else { String::new() };
+    text(label).size(11).color(palette::DIM).into()
+}
+
 fn action_panel(p: &Panel) -> Element<'_, Message> {
     let input =
         text_input("Search actions…", &p.query).id(actions_id()).on_input(Message::ActionQuery).size(14).padding(8);
@@ -755,9 +769,15 @@ fn action_panel(p: &Panel) -> Element<'_, Message> {
     for (i, a) in actions.iter().enumerate() {
         let selected = i == p.selected;
         let r = container(
-            row![text(a.label()).size(14), space::horizontal(), text(a.shortcut()).size(11).color(palette::DIM)]
-                .align_y(Vertical::Center)
-                .padding([0, 10]),
+            row![
+                text(a.label()).size(14),
+                space::horizontal(),
+                text(a.shortcut()).size(11).color(palette::DIM),
+                numbered_hint(i),
+            ]
+            .spacing(10)
+            .align_y(Vertical::Center)
+            .padding([0, 10]),
         )
         .height(34)
         .width(Length::Fill)
@@ -881,6 +901,28 @@ mod tests {
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
         assert_eq!(panel.actions.len(), 5);
+    }
+
+    #[test]
+    fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
+        let mut panel = Panel {
+            title: "notes.txt".into(),
+            actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
+            query: String::new(),
+            selected: 4,
+        };
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Open));
+        panel.filter("copy".into());
+        panel.selected = 1;
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::CopyPath));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), Some(Action::CopyName));
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(2)), None);
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(8)), None);
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(usize::MAX)), None);
+        assert_eq!(panel.selected, 1);
+        assert_eq!(panel.query, "copy");
+        panel.filter("missing".into());
+        assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), None);
     }
 
     #[test]

@@ -46,6 +46,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
 | Enter | launch the application, open the file, copy a calculator result |
+| Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Shift+F10, Menu key | open actions for the selected row |
@@ -53,7 +54,9 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Esc | clear the action filter, close actions, clear the query, then close |
 
 Type in the action panel to filter its commands without changing the search
-query or selected result. Enter runs the highlighted matching action. File
+query or selected result. Enter runs the highlighted matching action. Ctrl+1…8
+runs the corresponding visible row; numbers follow the window after scrolling
+and the matching actions after filtering. Missing numbers do nothing. File
 shortcuts remain available while filtering. After copying, the launcher stays
 open and returns focus to the main search field.
 
