@@ -1,0 +1,28 @@
+[package]
+name = "ferroseek-launcher"
+description = "Keyboard-first Wayland launcher for applications and FerroSeek file search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ferroseek-launcher"
+path = "src/main.rs"
+
+# Pure-Rust stack: iced with the tiny-skia software renderer on a
+# wlr-layer-shell surface. Check `cargo tree -e normal | grep -- -sys`
+# before adding dependencies: nothing here may build C code.
+[dependencies]
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "wayland", "svg", "image", "thread-pool"] }
+iced_layershell = { version = "0.19", default-features = false }
+# iced_exdevtools 0.19.1 does not build against winit-core beta.4
+# (NativeKeyCode became non-exhaustive); keep the beta.2 it was written for.
+winit-core = "=0.31.0-beta.2"
+zbus.workspace = true
+freedesktop-icons = "0.4"
+log.workspace = true
+
+[dev-dependencies]
+ferroseek-engine.workspace = true
+tempfile.workspace = true

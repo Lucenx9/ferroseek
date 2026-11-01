@@ -54,6 +54,7 @@ For headless use, `ferroseek index` and `ferroseek search` work without a runnin
 | **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
 | **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
 | **Noctalia v5** | Optional `/ferro` launcher plugin | Managed install with `--noctalia`; [setup and validation limits](docs/NOCTALIA.md) |
+| **`ferroseek-launcher`** | Keyboard-first Wayland launcher for applications and files | Optional, experimental; [build and limits](docs/LAUNCHER.md) |
 | **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Planned, **not available yet** |
 
 ### Command line
@@ -120,6 +121,7 @@ The current engine does not implement file-content indexing, advanced tags, KIO/
 | [Installation](docs/INSTALLATION.md) | Components, setup, upgrade, rollback and archive details |
 | [MCP](docs/MCP.md) | Agent tools, access modes and configuration |
 | [Noctalia](docs/NOCTALIA.md) | Optional launcher plugin and CLI JSON contract |
+| [Launcher](docs/LAUNCHER.md) | Optional standalone Wayland launcher (`ferroseek-launcher`) |
 | [Architecture](docs/ARCHITECTURE.md) | Core, index, watcher and optional adapters |
 | [Benchmarks](docs/BENCHMARKS.md) | Reproducible performance results and caveats |
 | [Comparisons](docs/COMPARISONS.md) | Where FerroSeek, Baloo, fd, rg and plocate fit |

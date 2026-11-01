@@ -28,6 +28,10 @@ claims tied to their measured workloads. Do not imply Baloo feature parity.
 - `crates/mcp` (`ferroseek-mcp`): optional read-only MCP stdio server (rmcp 3.8).
   `policy.rs` (allowlist/deny/path validation, pure) and `server.rs` (tools,
   reader cache, idle release). See `docs/MCP.md`.
+- `crates/launcher` (`ferroseek-launcher`): optional pure-Rust Wayland
+  launcher (iced + iced_layershell). `model.rs` (rows, selection, keys,
+  pure), `backend.rs` (bus thread), `apps.rs` (own .desktop parser),
+  `usage.rs` (launch history), `calc.rs`. See `docs/LAUNCHER.md`.
 - `data/`: KRunner `.desktop` file, D-Bus `.service` file, systemd unit
   templates. `scripts/installer.py`: component planning and registration;
   `install_transaction.py`: ownership-safe durable rollback; `package.py`: local archives.
@@ -224,3 +228,25 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - scripts/benchmark-mcp-discovery.py makes real authenticated model requests only
   when requested. Profiles/indexes are temporary; raw logs belong in bench-out.
   tests/mcp-discovery-smoke.py is the offline, credential-free CI counterpart.
+
+## Launcher checkpoint
+
+- `ferroseek-launcher` stays pure Rust: no GTK/Qt or crates that build C
+  (check `cargo tree -p ferroseek-launcher -e normal | grep -- -sys`). That
+  is why `.desktop` parsing is local. Building needs libxkbcommon headers
+  (sctk's pkg-config probe; CI installs `libxkbcommon-dev` in both jobs).
+  `winit-core` is pinned to beta.2 for
+  `iced_exdevtools` 0.19.1; revisit when bumping iced_layershell.
+- It never opens the index: files come from the daemon's `Match`/`Run`
+  (D-Bus activation), so `Run` keeps refusing non-indexed paths.
+- zbus stays on its own thread inside `zbus::block_on`; never await zbus
+  futures on iced's executor. Replies carry the query generation.
+- A new query clears old file rows; late results keep the selected target.
+  Only one open is in flight; the process exits after it succeeds.
+- History boosts reorder within a match class only (exact > strong > weak);
+  history writes are locked read-modify-write, `0600`, honour `--private`.
+- `tests/launcher-smoke.sh` uses a nested `kwin_wayland --virtual`, temp
+  HOME/XDG and a private bus with an EMPTY activation dir: user activation
+  files once started the real daemon, and portals outlived the bus.
+- No XDG activation token yet: iced_layershell 0.19 does not expose the
+  layer surface (`window::run` is unhandled).
