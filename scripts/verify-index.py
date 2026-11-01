@@ -79,8 +79,11 @@ def indexed(database):
     with closing(sqlite3.connect(uri, uri=True, timeout=5)) as db:
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
-        assert db.execute('PRAGMA application_id').fetchone()[0] == 0x46534B31
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 1
+        if db.execute('PRAGMA application_id').fetchone()[0] != 0x46534B31:
+            raise ValueError('not a FerroSeek index')
+        # Both versions have the same entry metadata; matching keys are not read.
+        if db.execute('PRAGMA user_version').fetchone()[0] not in (1, 2):
+            raise ValueError('unsupported index schema version')
         rows = db.execute('SELECT id,parent,name,kind,size,mtime FROM entries').fetchall()
     remaining = {row[0]: row[1:] for row in rows}
     paths = {}
@@ -121,7 +124,7 @@ def main():
         result = compare(config, a.database)
         print(json.dumps(result))
         return 2 if not result['stable'] else int(any(result[k] for k in ('missing', 'stale', 'metadata_mismatches')))
-    except (OSError, sqlite3.Error, ValueError, KeyError, AssertionError):
+    except (OSError, sqlite3.Error, ValueError, KeyError):
         print(json.dumps(dict(timestamp=int(time.time()), stable=False, error='comparison incomplete')))
         return 2
 

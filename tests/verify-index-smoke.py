@@ -1,16 +1,70 @@
 #!/usr/bin/env python3
 """Independent oracle must detect missing, stale and metadata discrepancies."""
+import argparse
+from contextlib import closing
 import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
+import sys
 import tempfile
 import tomllib
 
 spec = importlib.util.spec_from_file_location('verify_index', 'scripts/verify-index.py')
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
+
+
+def schema_compatibility():
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        (work/'home').mkdir()
+        config = work/'effective.toml'
+        config.write_text('roots = []\nexclude_paths = []\nexclude_names = []\n'
+                          'stay_on_filesystem = false\nmax_depth = 1\n'
+                          'respect_cachedir_tag = false\nindex_hidden = false\n')
+        env = dict(os.environ, HOME=str(work/'home'),
+                   DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-ferroseek-test-bus')
+        for application_id, version in ((0x46534B31, 1), (0x46534B31, 2),
+                                        (0x46534B31, 3), (0, 2)):
+            database = work/f'index-{application_id}-{version}.sqlite'
+            with closing(sqlite3.connect(database)) as db:
+                db.executescript(f'PRAGMA application_id={application_id};\n'
+                                 f'PRAGMA user_version={version};\n'
+                                 'CREATE TABLE entries(id INTEGER PRIMARY KEY, parent INTEGER, '
+                                 'name BLOB, key TEXT, kind INTEGER, size INTEGER, mtime INTEGER, ino INTEGER);')
+                db.executemany('INSERT INTO entries VALUES (?,?,?,?,?,?,?,?)', (
+                    (1, None, b'/synthetic', 'unused', 1, 0, 0, 1),
+                    (2, 1, b'raw-\xff.txt', 'unused', 0, 3, 5, 2),
+                ))
+                db.commit()
+            before = database.read_bytes()
+            if application_id == 0x46534B31 and version in (1, 2):
+                assert verify.indexed(database) == {b'/synthetic': (1,), b'/synthetic/raw-\xff.txt': (0, 3, 5)}
+            else:
+                try:
+                    verify.indexed(database)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f'accepted unsupported identity: {application_id}, {version}')
+                result = subprocess.run([sys.executable, '-O', 'scripts/verify-index.py', '--config', str(config),
+                                         '--database', str(database)], env=env, capture_output=True, text=True, timeout=5)
+                assert result.returncode == 2, result
+                assert json.loads(result.stdout)['error'] == 'comparison incomplete', result.stdout
+            assert database.read_bytes() == before, 'verification must not modify the database'
+
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--schema-only', action='store_true', help='test schema compatibility without built binaries')
+args = parser.parse_args()
+schema_compatibility()
+if args.schema_only:
+    print('PASS: schemas 1 and 2 accepted; unknown versions and foreign application IDs rejected, including python -O')
+    raise SystemExit(0)
+
 binary = Path('target/release/ferroseek').resolve()
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp)
