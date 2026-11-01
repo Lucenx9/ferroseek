@@ -24,6 +24,7 @@ decisions and historical measurements are retained with their evidence.
 | `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control interface, KRunner runner |
 | `crates/cli` (`ferroseek`) | bin | `search`, `status`, `pause`, `resume`, `index`, `rebuild`, `config` |
 | `crates/mcp` (`ferroseek-mcp`) | bin | optional read-only stdio MCP adapter and access policy, independent of KDE |
+| `crates/launcher` (`ferroseek-launcher`) | bin | optional Wayland launcher: applications, daemon file results, calculator; never opens the index |
 | `crates/bench` (`ferroseek-bench`) | bin | deterministic corpus generator and benchmark runner |
 
 The original engineering brief proposed eight crates. Several of those
@@ -205,7 +206,13 @@ CLI ────────────┐
 KRunner (KDE) ──┼──> shared FerroSeek index <── inotify indexing engine
 MCP (agents) ───┘
 Noctalia ──> CLI (search --json) ──> same index
+ferroseek-launcher ──> daemon D-Bus runner (Match/Run) ──> same index
 ```
+
+The optional `ferroseek-launcher` is a separate layer-shell client. It gets
+file results from the daemon's runner over D-Bus, parses desktop entries for
+applications itself and keeps its own launch history. See
+[LAUNCHER.md](LAUNCHER.md).
 
 The optional Noctalia v5 adapter lives in `integrations/noctalia/ferroseek`.
 It uses argument-array subprocesses, coalesces input while a query is in flight,
