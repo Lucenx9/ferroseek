@@ -50,6 +50,8 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Ctrl+K | open/close the searchable action panel for the selected row |
+| Ctrl+I | open/close file search status |
+| Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
 | Esc | clear the action filter, close actions, clear the query, then close |
@@ -123,6 +125,31 @@ to another command.
 Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.
 `Terminal=true` entries run in `xdg-terminal-exec` or a known terminal.
+
+## File search status
+
+Click **Index status** beside the search filters, or press Ctrl+I, to check the
+search service without leaving the launcher. Empty file searches and search
+errors also offer **Check file search status**. Esc or **Back to search** returns
+to the same query, filter and selected result.
+
+The view distinguishes starting, indexing, watching for changes, paused and
+stopping states. It shows indexed file/folder counts, queued folders and indexed
+locations. Counts describe the index, not the current query's results or a
+completion percentage. A folder-watch limit warning indicates that some changes
+may not be detected promptly; the error count is cumulative for the service
+session and does not mean every reported error is still unresolved.
+
+Opening the view requests a snapshot and can D-Bus-activate the search service.
+It does not poll in the background. Use **Refresh** or Ctrl+R for a new snapshot;
+only one status request is sent at a time. Up/Down, Page Up/Page Down,
+Ctrl+Home/Ctrl+End and the mouse wheel scroll the details. If the service cannot
+answer, the view shows an error with retry and return controls; missing data is
+not displayed as zero. Applications and calculations remain usable.
+
+This view does not edit configuration or pause/resume indexing. Folder selection
+and first-run configuration in the launcher remain planned. Install or update
+the launcher and daemon together to use the status interface.
 
 ## Favorites
 

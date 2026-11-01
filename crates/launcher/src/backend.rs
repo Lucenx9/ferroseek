@@ -17,6 +17,8 @@ use zbus::fdo::{RequestNameFlags, RequestNameReply};
 pub const DAEMON_BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
 pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
 const SEARCH_IFACE: &str = "io.github.ferroseek.Search1";
+pub const CONTROL_PATH: &str = "/io/github/ferroseek/FerroSeek";
+pub const CONTROL_IFACE: &str = "io.github.ferroseek.FerroSeek1";
 /// The file search service's reveal action.
 pub const ACTION_OPEN_PARENT: &str = "open-parent";
 
@@ -36,6 +38,18 @@ pub struct FileHit {
     pub is_dir: bool,
 }
 
+/// Read-only engine state and live index coverage from the daemon.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchStatus {
+    pub state: String,
+    pub files: u64,
+    pub dirs: u64,
+    pub queued_dirs: u64,
+    pub watch_limit_hit: bool,
+    pub errors: u64,
+    pub roots: Vec<String>,
+}
+
 /// Events the bus thread delivers to the UI.
 #[derive(Debug, Clone)]
 pub enum UiEvent {
@@ -46,6 +60,7 @@ pub enum UiEvent {
 enum Request {
     Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), String>> },
+    Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
 }
 
 /// Handle to the bus thread. Cloning shares the thread.
@@ -169,10 +184,28 @@ async fn handle(conn: &zbus::Connection, req: Request) {
                 .map_err(|e| e.to_string());
             let _ = reply.send(r);
         }
+        Request::Status { reply } => {
+            let r = file_search_status(conn).await;
+            let _ = reply.send(r);
+        }
     }
 }
 
 type FileResult = (String, String, String, String, bool);
+type StatusResult = (String, u64, u64, u64, bool, u64, Vec<String>);
+
+async fn file_search_status(conn: &zbus::Connection) -> Result<SearchStatus, String> {
+    let msg = conn
+        .call_method(Some(DAEMON_BUS_NAME), CONTROL_PATH, Some(CONTROL_IFACE), "FileSearchStatus", &())
+        .await
+        .map_err(|e| e.to_string())?;
+    let status: StatusResult = msg.body().deserialize().map_err(|e| e.to_string())?;
+    Ok(to_status(status))
+}
+
+fn to_status((state, files, dirs, queued_dirs, watch_limit_hit, errors, roots): StatusResult) -> SearchStatus {
+    SearchStatus { state, files, dirs, queued_dirs, watch_limit_hit, errors, roots }
+}
 
 async fn search(conn: &zbus::Connection, query: &str) -> Result<Vec<FileHit>, String> {
     // Calling the daemon's name D-Bus-activates it when it is not running.
@@ -216,6 +249,12 @@ impl Backend {
             .map_err(|_| "bus thread stopped".to_string())?;
         rx.await.map_err(|_| "bus thread stopped".to_string())?
     }
+
+    pub async fn status(self) -> Result<SearchStatus, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.unbounded_send(Request::Status { reply }).map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +266,8 @@ mod tests {
         assert_eq!(DAEMON_BUS_NAME, ferroseek_engine::ipc::BUS_NAME);
         assert_eq!(SEARCH_PATH, ferroseek_engine::ipc::SEARCH_PATH);
         assert_eq!(SEARCH_IFACE, ferroseek_engine::ipc::SEARCH_IFACE);
+        assert_eq!(CONTROL_PATH, ferroseek_engine::ipc::CONTROL_PATH);
+        assert_eq!(CONTROL_IFACE, ferroseek_engine::ipc::CONTROL_IFACE);
     }
 
     #[test]
@@ -235,5 +276,37 @@ mod tests {
         assert_eq!(h.path.as_deref(), Some(std::path::Path::new("/home/u/Docs/a b")));
         assert_eq!(h.subtext, "~/Docs");
         assert!(h.is_dir);
+    }
+
+    #[test]
+    fn status_conversion_preserves_counts_flags_and_root_boundaries() {
+        let status = to_status(("paused".into(), 23, 5, 2, true, 7, vec!["/a:b".into(), "/c".into()]));
+        assert_eq!(
+            status,
+            SearchStatus {
+                state: "paused".into(),
+                files: 23,
+                dirs: 5,
+                queued_dirs: 2,
+                watch_limit_hit: true,
+                errors: 7,
+                roots: vec!["/a:b".into(), "/c".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn status_returns_daemon_and_disconnection_errors() {
+        zbus::block_on(async {
+            assert_eq!(Backend::disconnected().status().await.unwrap_err(), "bus thread stopped");
+            let (tx, mut requests) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let respond = async move {
+                let Some(Request::Status { reply }) = requests.next().await else { panic!("expected status request") };
+                let _ = reply.send(Err("File-search status is unavailable. Try again.".into()));
+            };
+            let (result, ()) = iced::futures::future::join(backend.status(), respond).await;
+            assert_eq!(result.unwrap_err(), "File-search status is unavailable. Try again.");
+        });
     }
 }

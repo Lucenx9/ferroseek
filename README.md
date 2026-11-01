@@ -26,6 +26,7 @@ been published yet.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file, reveal it in its folder or copy its path through keyboard actions.
 - Pin applications and files as favorites at the top of the home suggestions.
+- Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
   Use `--private` to avoid recording a session.
 
@@ -72,6 +73,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
+| Ctrl+I | Show file search status; Esc returns to search |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |

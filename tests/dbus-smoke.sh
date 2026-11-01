@@ -16,10 +16,11 @@ fi
 
 T=$(mktemp -d)
 trap 'kill "$PID" 2>/dev/null || true; wait "$PID" 2>/dev/null || true; rm -rf "$T"' EXIT
-mkdir -p "$T/root/Documents" "$T/data"
+mkdir -p "$T/root/Documents" "$T/root:colon" "$T/data"
 echo hi > "$T/root/Documents/Quarterly Report.pdf"
 echo hi > "$T/root/Documents/notes-2024.md"
-printf 'roots = ["%s"]\ndebounce_ms = 20\n' "$T/root" > "$T/config.toml"
+echo hi > "$T/root:colon/colon-file.txt"
+printf 'roots = ["%s", "%s"]\ndebounce_ms = 20\n' "$T/root" "$T/root:colon" > "$T/config.toml"
 
 mkdir -p "$T/bin" "$T/runtime"
 chmod 700 "$T/runtime"
@@ -37,6 +38,7 @@ PID=$!
 SVC=io.github.ferroseek.FerroSeek
 call() { gdbus call --session --dest "$SVC" "$@"; }
 fail() { echo "FAIL: $*"; echo "--- daemon log"; cat "$T/daemon.log"; exit 1; }
+file_status() { call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.FileSearchStatus; }
 
 for _ in $(seq 100); do
     call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status \
@@ -46,6 +48,29 @@ done
 
 echo "== Status"
 call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status
+
+echo "== Typed file-search status"
+gdbus introspect --session --dest "$SVC" --object-path /io/github/ferroseek/FerroSeek --xml > "$T/control.xml"
+python3 - "$T/control.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+root = ET.parse(sys.argv[1]).getroot()
+interface = root.find("./interface[@name='io.github.ferroseek.FerroSeek1']")
+assert interface is not None, "control interface missing"
+method = interface.find("./method[@name='FileSearchStatus']")
+assert method is not None, "FileSearchStatus missing"
+args = method.findall("arg")
+assert [arg.attrib["type"] for arg in args if arg.attrib.get("direction") == "out"] == [
+    "s", "t", "t", "t", "b", "t", "as"
+], "FileSearchStatus output signature"
+assert not [arg for arg in args if arg.attrib.get("direction") == "in"], "FileSearchStatus takes no arguments"
+PY
+out=$(file_status)
+echo "$out"
+[[ "$out" == "('idle', uint64 3, uint64 3, "* ]] || fail "status live counts/state"
+[[ "$out" == *"'$T/root'"* && "$out" == *"'$T/root:colon'"* ]] || fail "status root array lost a path or split a colon"
+[[ "$(file_status)" == "$out" ]] || fail "status read changed idle state"
 
 echo "== Search 'report'"
 out=$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Search "report")
@@ -63,6 +88,12 @@ for _ in $(seq 100); do
 done
 [[ "$out" == *brand-new-file.txt* ]] || fail "live update not visible"
 echo "$out"
+for _ in $(seq 100); do
+    out=$(file_status)
+    [[ "$out" == "('idle', uint64 4, uint64 3, "* ]] && break
+    sleep 0.01
+done
+[[ "$out" == "('idle', uint64 4, uint64 3, "* ]] || fail "status did not report live file count"
 
 echo "== Short and empty queries"
 empty() { [[ "$1" == *"[]"* && "$1" != *"file://"* ]]; }
@@ -101,8 +132,26 @@ fi
 echo "== Release, Pause/Resume"
 call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Release >/dev/null
 call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Pause >/dev/null
+for _ in $(seq 100); do
+    call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status | grep -q "'state': 'paused'" && break
+    sleep 0.01
+done
 call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status | grep -q "'state': 'paused'" || fail "pause"
+out=$(file_status)
+[[ "$out" == "('paused', uint64 4, uint64 3, "* ]] || fail "typed paused status"
+echo paused > "$T/root/created-while-paused.txt"
+sleep 0.1
+for _ in $(seq 3); do
+    [[ "$(file_status)" == "$out" ]] || fail "status read mutated or resumed a paused index"
+done
+call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status | grep -q "'state': 'paused'" || fail "status read resumed engine"
 call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Resume >/dev/null
+for _ in $(seq 100); do
+    out=$(file_status)
+    [[ "$out" == "('idle', uint64 5, uint64 3, "* ]] && break
+    sleep 0.05
+done
+[[ "$out" == "('idle', uint64 5, uint64 3, "* ]] || fail "resume did not reconcile after read-only status"
 
 echo "== Introspection"
 gdbus introspect --session --dest "$SVC" --object-path /io/github/ferroseek/Search | grep -E "method|out|in " | head -20
