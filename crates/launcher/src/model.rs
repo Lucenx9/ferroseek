@@ -4,12 +4,18 @@
 
 use std::ops::Range;
 
-use iced::keyboard::{Key, Modifiers, key::Named};
+use iced::keyboard::{
+    Key, Modifiers,
+    key::{Code, Named, Physical},
+};
 
 use crate::apps::App;
 use crate::backend::FileHit;
 use crate::usage::Kind;
 use crate::{calc, matcher, uri};
+
+/// Visible rows addressable by Ctrl+1 through Ctrl+8.
+pub const NUMBERED_SLOTS: usize = 8;
 
 /// Applications shown when there are no file results.
 const MAX_APPS_ALONE: usize = 9;
@@ -294,6 +300,17 @@ impl Cursor {
         }
     }
 
+    /// Selects a numbered slot in the currently drawn window. Missing slots
+    /// leave the selection unchanged and must not activate its previous target.
+    pub fn select_visible(&mut self, slot: usize, len: usize) -> bool {
+        if slot >= NUMBERED_SLOTS {
+            return false;
+        }
+        let Some(index) = self.window(len).nth(slot) else { return false };
+        self.select(index, len);
+        true
+    }
+
     /// Resolves the clicked target against the current list, which may
     /// have changed since the row was drawn.
     pub fn select_target(&mut self, target: &Target, items: &[Item]) -> bool {
@@ -349,6 +366,8 @@ pub enum Command {
     /// Primary action of the selection (or of the highlighted action when
     /// the action panel is open).
     Activate,
+    /// Primary action of a zero-based visible result or filtered action slot.
+    ActivateVisible(usize),
     /// Secondary action (Ctrl+Enter).
     Secondary,
     ToggleActions,
@@ -356,6 +375,37 @@ pub enum Command {
     CopyPath,
     /// Close the panel, else clear the query, else hide.
     Back,
+}
+
+/// Number-row shortcuts use physical positions on layouts whose digits need
+/// Shift (such as AZERTY). Logical digits also support numpads/unknown codes.
+/// These commands must be captured before a text input sees printable text.
+pub fn numbered_command(key: &Key, physical: Physical, mods: Modifiers) -> Option<Command> {
+    if mods != Modifiers::CTRL {
+        return None;
+    }
+    let slot = match physical {
+        Physical::Code(Code::Digit1) => 0,
+        Physical::Code(Code::Digit2) => 1,
+        Physical::Code(Code::Digit3) => 2,
+        Physical::Code(Code::Digit4) => 3,
+        Physical::Code(Code::Digit5) => 4,
+        Physical::Code(Code::Digit6) => 5,
+        Physical::Code(Code::Digit7) => 6,
+        Physical::Code(Code::Digit8) => 7,
+        _ => match key.as_ref() {
+            Key::Character("1") => 0,
+            Key::Character("2") => 1,
+            Key::Character("3") => 2,
+            Key::Character("4") => 3,
+            Key::Character("5") => 4,
+            Key::Character("6") => 5,
+            Key::Character("7") => 6,
+            Key::Character("8") => 7,
+            _ => return None,
+        },
+    };
+    Some(Command::ActivateVisible(slot))
 }
 
 /// Maps a key press to a launcher command. Keys not listed here go to the
@@ -601,6 +651,91 @@ mod tests {
         assert_eq!((c.selected, c.window(2)), (1, 0..2));
         c.select(7, 2);
         assert_eq!(c.selected, 1, "out of range is ignored");
+    }
+
+    #[test]
+    fn numbered_selection_tracks_the_drawn_window_and_ignores_missing_slots() {
+        let mut c = Cursor::new(NUMBERED_SLOTS);
+        c.move_by(7, 20);
+        c.move_by(7, 20);
+        assert_eq!(c.window(20), 7..15);
+        assert!(c.select_visible(0, 20));
+        assert_eq!(c.selected, 7);
+        assert!(c.select_visible(7, 20));
+        assert_eq!(c.selected, 14);
+        c.move_by(20, 20);
+        assert_eq!(c.window(20), 12..20);
+        assert!(c.select_visible(0, 20));
+        assert_eq!(c.selected, 12);
+        let before = c;
+        assert!(!c.select_visible(8, 20));
+        assert!(!c.select_visible(usize::MAX, 20));
+        assert!(!c.select_visible(0, 0));
+        assert_eq!(c, before);
+
+        c.reset();
+        c.select(1, 2);
+        let before = c;
+        assert!(!c.select_visible(2, 2));
+        assert_eq!(c, before);
+        assert!(c.select_visible(0, 2));
+        assert_eq!(c.selected, 0);
+    }
+
+    #[test]
+    fn numbered_keys_require_only_control_and_leave_plain_digits_to_the_field() {
+        for (slot, digit) in (1..=NUMBERED_SLOTS).enumerate() {
+            let key = Key::Character(digit.to_string().into());
+            assert_eq!(
+                numbered_command(
+                    &key,
+                    Physical::Unidentified(iced::keyboard::key::NativeCode::Unidentified),
+                    Modifiers::CTRL
+                ),
+                Some(Command::ActivateVisible(slot))
+            );
+            for mods in [
+                Modifiers::empty(),
+                Modifiers::ALT,
+                Modifiers::LOGO,
+                Modifiers::CTRL | Modifiers::ALT,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                Modifiers::CTRL | Modifiers::LOGO,
+            ] {
+                assert_eq!(numbered_command(&key, Physical::Code(Code::Digit1), mods), None);
+            }
+        }
+        for digit in ["0", "9", "12", "!"] {
+            assert_eq!(
+                numbered_command(&Key::Character(digit.into()), Physical::Code(Code::Digit9), Modifiers::CTRL),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn numbered_keys_follow_physical_positions_on_azerty() {
+        for (slot, (symbol, code)) in [
+            ("&", Code::Digit1),
+            ("é", Code::Digit2),
+            ("\"", Code::Digit3),
+            ("'", Code::Digit4),
+            ("(", Code::Digit5),
+            ("-", Code::Digit6),
+            ("è", Code::Digit7),
+            ("_", Code::Digit8),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = Key::Character(symbol.into());
+            assert_eq!(
+                numbered_command(&key, Physical::Code(code), Modifiers::CTRL),
+                Some(Command::ActivateVisible(slot))
+            );
+            assert_eq!(numbered_command(&key, Physical::Code(code), Modifiers::empty()), None);
+            assert_eq!(numbered_command(&key, Physical::Code(code), Modifiers::CTRL | Modifiers::SHIFT), None);
+        }
     }
 
     #[test]
