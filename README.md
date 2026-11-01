@@ -30,6 +30,7 @@ For scripted or selective installation:
 
 ```sh
 ./scripts/install.sh --core        # daemon + CLI, including headless Linux
+./scripts/install.sh --noctalia    # core + managed Noctalia v5 launcher plugin
 ./scripts/install.sh --krunner     # core + KDE Plasma integration
 ./scripts/install.sh --mcp         # core + optional MCP executable
 ./scripts/install.sh --full        # all implemented, compatible components
@@ -52,7 +53,7 @@ For headless use, `ferroseek index` and `ferroseek search` work without a runnin
 | **CLI** (`ferroseek`) | Search, index, status and maintenance commands | Core, available |
 | **KRunner** | File results from Alt+Space in KDE Plasma | Optional, verified on Plasma 6 |
 | **MCP** (`ferroseek-mcp`) | Read-only name/path search and metadata for AI agents | Optional, tested with Claude Code and Codex |
-| **Noctalia v5** | Optional `/ferro` launcher plugin | Source-checkout adapter; [setup and validation limits](docs/NOCTALIA.md) |
+| **Noctalia v5** | Optional `/ferro` launcher plugin | Managed install with `--noctalia`; [setup and validation limits](docs/NOCTALIA.md) |
 | **GNOME, Rofi and other launchers** | Dedicated desktop adapters | Planned, **not available yet** |
 
 ### Command line
@@ -78,9 +79,10 @@ Install `--krunner` to surface FerroSeek's results in **KRunner (Alt+Space)**. R
 
 The optional `lucenx9/ferroseek` plugin adds `/ferro` file search to Noctalia's
 launcher, including on Niri. It reuses the CLI and existing index, with no
-second background service. Installation is separate from the core installer;
-see the [Noctalia guide](docs/NOCTALIA.md) for setup, requirements and validation
-limits.
+second background service. `./scripts/install.sh --noctalia` installs a managed
+copy independent of the source checkout; add `--enable` for plugin activation
+and live indexing. See the [Noctalia guide](docs/NOCTALIA.md) for setup,
+requirements and validation limits.
 
 ### AI agents (optional MCP)
 

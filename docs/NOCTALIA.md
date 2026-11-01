@@ -7,32 +7,67 @@ open in the file manager. No KDE, KRunner or MCP server is needed.
 
 ## Requirements and installation
 
-- Noctalia v5 with plugin API **24 or newer** (argument-array subprocesses).
+- Stable Noctalia v5+ with plugin API **24 or newer** (argument-array subprocesses).
   Noctalia v4/QML plugins use a different API and are not supported.
-- The FerroSeek CLI from the same checkout, with `search --json` support.
+- The FerroSeek CLI with `search --json` support (installed with the plugin).
 - GLib's `gio` command and a configured default file manager/applications
   (`glib2` on Arch, `libglib2.0-bin` on Debian/Ubuntu).
 
-From the FerroSeek checkout, install the core if needed:
+From a source checkout or a matching Noctalia/full native archive:
 
 ```sh
-./scripts/install.sh --core
+./scripts/install.sh --noctalia --dry-run
+./scripts/install.sh --noctalia
 ```
 
-Review `ferroseek config` and choose the indexing roots/exclusions in the
-reported configuration file **before** creating an index. The engine's default
-root is the home directory. Then run `ferroseek index`, or explicitly start
-the installed user service for live updates:
+The installer checks Noctalia and `gio`, installs core plus a managed plugin
+copy under `$XDG_DATA_HOME/noctalia/plugins/ferroseek` (normally
+`~/.local/share/noctalia/plugins/ferroseek`) and reloads Noctalia when reachable.
+It sets the plugin's default executable to the installed CLI's absolute path,
+so Noctalia need not inherit `~/.local/bin` on PATH. Existing plugin setting
+overrides remain in effect. It never installs system dependencies itself.
+
+Review `ferroseek config` and choose indexing roots/exclusions **before**
+starting indexing; the engine's default root is the home directory. Activate
+the plugin alone after installation:
 
 ```sh
-systemctl --user enable --now ferroseek.service
+noctalia msg plugins enable lucenx9/ferroseek
 ```
 
-Searching also works with a stopped daemon; the index then remains as fresh
-as its last indexing run. The plugin never builds/rebuilds the index, starts
-a daemon, expands indexing roots or changes other desktop integrations.
+For live indexing and plugin activation together, explicitly opt in:
 
-Add the optional plugin source and enable it:
+```sh
+./scripts/install.sh --noctalia --enable
+```
+
+This needs a running Noctalia instance plus the systemd user manager/session
+bus. It enables/starts the indexer and enables the plugin through Noctalia's
+native IPC. Upgrades never restart an active indexer. Without `--enable`, the
+installer preserves Noctalia's saved enabled list; an already enabled plugin
+continues to use the updated files. Searching also works against an index
+created with `ferroseek index` while the daemon is stopped.
+
+## Updates, removal and development
+
+Re-run `./scripts/install.sh --noctalia` from the new source/archive to update
+the copied plugin and core. The installer owns each copied file by its hash,
+uses the same rollback journal as other components and refuses unrelated or
+locally modified files. The installed plugin remains usable if the source
+checkout is moved or removed. `--full` and interactive recommendations include
+Noctalia when stable Noctalia and `gio` are detected.
+
+```sh
+./scripts/uninstall.sh --noctalia --dry-run
+./scripts/uninstall.sh --noctalia
+```
+
+Removal disables the plugin through IPC when Noctalia is running, then removes
+only managed plugin files. Core, index and settings are retained. Offline
+removal retains Noctalia's saved enabled list; disable the entry in Settings
+if needed, especially if another source supplies the same plugin ID.
+
+For **development**, a path source still allows editing in place:
 
 ```sh
 # Run from the FerroSeek checkout; keep this checkout at this location.
@@ -40,17 +75,20 @@ noctalia msg plugins source add ferroseek path "$PWD/integrations/noctalia"
 noctalia msg plugins enable lucenx9/ferroseek
 ```
 
+The managed local-data copy takes precedence over a path/git source with the
+same ID. When switching from a development source, keep existing settings;
+you can remove that source explicitly with `noctalia msg plugins source remove
+ferroseek`. The installer never removes user-defined sources automatically.
+FerroSeek is not in Noctalia's community catalog.
+
 Open the launcher with your existing keybinding (for example Super+Space on
-Niri) and type `/ferro report`. `/` also lists the provider alongside the
-built-in providers. Plugin changes are not installed automatically by the
-FerroSeek installer; this source-checkout adapter is not part of the native
-component archives or Noctalia's community catalog.
+Niri) and type `/ferro report`. `/` lists the provider alongside built-ins.
 
 In **Noctalia Settings → Plugins → FerroSeek**, configure:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| FerroSeek executable | `ferroseek` | Executable name on Noctalia's PATH, or an absolute/`~/` path such as `~/.local/bin/ferroseek` |
+| FerroSeek executable | Installed CLI absolute path; `ferroseek` in development source | Executable name on PATH, or an absolute/`~/` path |
 | Search directory | empty | Optional `--in` scope inside the existing index; it does not authorize or index a new root |
 | Maximum results | 30 | Between 1 and 100 |
 
@@ -59,13 +97,6 @@ to ordinary app searches. Hidden paths are always excluded by `--no-hidden`.
 This is a local desktop adapter using the CLI: **MCP allowlists and sensitive
 name filters do not apply**. Other non-hidden indexed paths are searchable,
 subject to the optional search-directory scope.
-
-To disable/remove the source without touching the FerroSeek index:
-
-```sh
-noctalia msg plugins disable lucenx9/ferroseek
-noctalia msg plugins source remove ferroseek
-```
 
 ## How it works
 
@@ -131,6 +162,7 @@ Existing CLI filters and query syntax are unchanged.
 cargo test -p ferroseek-cli --locked
 lua5.4 tests/noctalia-provider.lua
 python3 tests/noctalia-open-smoke.py
+python3 tests/noctalia-install-smoke.py
 noctalia plugins lint integrations/noctalia/ferroseek
 ```
 

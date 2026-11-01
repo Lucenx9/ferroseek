@@ -15,21 +15,28 @@ No downloads or remote scripts are executed by the installer.
 ./scripts/install.sh --dry-run      # inspect recommended changes; no writes/build
 ./scripts/install.sh --core         # daemon + CLI, no graphical integration
 ./scripts/install.sh --krunner      # core + KDE Plasma KRunner registration
+./scripts/install.sh --noctalia     # core + copied Noctalia v5 launcher plugin
 ./scripts/install.sh --mcp          # core + optional MCP executable
-./scripts/install.sh --full         # core + MCP + KRunner when KDE is available
+./scripts/install.sh --full         # all compatible components, including Noctalia
 ./scripts/install.sh --krunner --mcp
 ./scripts/install.sh --core --dry-run
 ```
 
 Explicit component flags are non-interactive, except optional agent registration.
 No flags with redirected input is rejected; scripts must choose components.
-KRunner is recommended on Plasma, not GNOME/Hyprland. There is no graphical
-integration for other desktops. CLI indexing/search works without a graphical
+KRunner is recommended on Plasma. Noctalia supplies its own optional launcher
+integration, including on Niri. CLI indexing/search works without a graphical
 session or session D-Bus. Core includes optional user systemd/D-Bus activation
 files for its control interface; it does not depend on KDE packages or MCP.
 
 The installer reports distribution, architecture, desktop, session D-Bus,
 systemd user manager, agent CLI availability and existing configuration.
+Noctalia is recommended/included in `--full` when stable Noctalia v5+ and GLib
+`gio` are available. Explicit `--noctalia` validates those requirements before
+installing files; dependencies are not installed automatically. Its managed
+plugin copy lives at `$XDG_DATA_HOME/noctalia/plugins/ferroseek` and defaults to
+the absolute installed CLI path. See [Noctalia setup and updates](NOCTALIA.md).
+
 Recommendations do not install unimplemented integrations. `--no-build` uses
 already built `target/release` executables. A matching binary archive uses its
 `bin/` payload automatically and needs no Rust toolchain.
@@ -46,12 +53,18 @@ starts it on the first relevant query. To opt into background indexing now:
 
 ```sh
 ./scripts/install.sh --core --enable
+./scripts/install.sh --noctalia --enable  # also activate the installed plugin
 ```
 
 `--enable` requires an available user systemd manager and session bus. It is an
 explicit opt-in to `systemctl --user enable --now ferroseek.service`; an already
 running service is not restarted. Without a session bus, `ferroseek index` runs
 foreground indexing and `ferroseek search` reads the index locally.
+With `--noctalia`, `--enable` also requires a running Noctalia instance. Plugin
+activation uses native IPC and preserves other enabled entries. A plain
+`--noctalia` install reloads reachable Noctalia and prints the activation command;
+it preserves the saved enabled list. A failed post-install reload/enable leaves
+the complete installed file set and reports how to retry.
 
 Add `$HOME/.local/bin` to PATH if your distribution does not already do so.
 KRunner discovers a new runner at its next restart/login. The installer does
@@ -155,6 +168,7 @@ close their configuration editors during registration.
 ./scripts/uninstall.sh --dry-run
 ./scripts/uninstall.sh --mcp         # remove only the optional executable
 ./scripts/uninstall.sh --krunner     # remove only KDE registration
+./scripts/uninstall.sh --noctalia    # disable/remove only the managed plugin
 ./scripts/uninstall.sh              # remove all managed components
 ./scripts/uninstall.sh --stop        # explicitly stop/disable an active service too
 ```
@@ -165,6 +179,10 @@ to stop them. A daemon owning the current session bus outside this systemd unit
 must be stopped manually; uninstall refuses removal even with `--stop` in that
 case. The ownership check does not activate a daemon. Missing files are harmless and repeat removal is safe. Modified
 managed files cause a refusal, and unowned files are never deleted.
+Noctalia removal disables the plugin via IPC before deleting its files when
+the shell is reachable; a disable failure leaves the files in place. Offline
+removal preserves Noctalia's saved settings and enabled list. Other plugin
+sources, Noctalia settings, core and index are retained by partial removal.
 Configuration, indexes and agent registrations are retained. Remove agent
 entries separately with `claude mcp remove --scope user ferroseek` and
 `codex mcp remove ferroseek` if desired. The old `--purge` switch is intentionally
@@ -176,14 +194,16 @@ unsupported: user data removal is separate from software uninstallation.
 python3 scripts/package.py --components core
 python3 scripts/package.py --components krunner
 python3 scripts/package.py --components mcp
+python3 scripts/package.py --components noctalia
 python3 scripts/package.py --components full
 # After a workspace release build, add --no-build to reuse its binaries.
 ```
 
 Archives are native Linux `tar.gz` files under `dist/`, with a SHA-256 sidecar,
 `bin/`, component/platform metadata, per-file integrity hashes, installation
-scripts/templates, license and installation/MCP documentation. Metadata is
-normalized for reproducibility (`SOURCE_DATE_EPOCH`, default zero). Output files
+scripts/templates, license and installation/MCP documentation.
+Noctalia/full archives also include the plugin payload and Noctalia guide.
+Metadata is normalized for reproducibility (`SOURCE_DATE_EPOCH`, default zero). Output files
 are never silently overwritten. No upload, GitHub release or AUR dependency.
 
 Before extracting a downloaded archive, authenticate its checksum through the
