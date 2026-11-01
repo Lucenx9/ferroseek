@@ -69,7 +69,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
-| Ctrl+Enter | Reveal a file in its folder |
+| Ctrl+Enter | Reveal a file or continue a calculation from its result |
 | Ctrl+Shift+C | Copy a file path |
 | Esc | Close actions, clear the query, then close the launcher |
 

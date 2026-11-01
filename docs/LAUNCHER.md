@@ -46,7 +46,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
 | Enter | launch the application, open the file, copy a calculator result |
-| Ctrl+Enter | show the file in its folder |
+| Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
@@ -74,8 +74,13 @@ ignored rather than opening a different row.
   method; opening and revealing go through its `Open` method, which only
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.
 - **Calculator:** an arithmetic expression (`(2+3)*4`, `sqrt(2)`, `2^10`)
-  shows its value; Enter copies it. A fixed grammar is evaluated in process;
-  nothing is passed to a shell or interpreter.
+  shows its value; Enter copies it. Prefix with `=` for calculator-only
+  results, including plain numbers (`= 42`) and scientific notation
+  (`= 1e-12 * 2`). Ctrl+Enter or **Use result** replaces the expression with
+  its answer so you can append another operation. Continued calculations
+  retain full precision; copied answers use the displayed precision.
+  A fixed grammar is evaluated in process; nothing is passed to a shell or
+  interpreter.
 - **Empty query:** the most often opened applications and files that still
   exist, followed by available applications to fill the suggestions. Removed
   items do not use up a suggestion slot.

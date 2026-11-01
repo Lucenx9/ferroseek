@@ -17,6 +17,7 @@ use iced_layershell::to_layer_message;
 
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, UiEvent};
+use crate::calc;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Target};
 use crate::usage::{self, Kind, Usage};
@@ -96,7 +97,7 @@ impl Panel {
     fn action_for_command(&self, cmd: Command) -> Option<Action> {
         match cmd {
             Command::Activate => self.filtered_actions().get(self.selected).copied(),
-            Command::Secondary => self.actions.contains(&Action::Reveal).then_some(Action::Reveal),
+            Command::Secondary => model::secondary_action(&self.actions),
             Command::CopyPath => self.actions.contains(&Action::CopyPath).then_some(Action::CopyPath),
             _ => None,
         }
@@ -253,10 +254,12 @@ impl Launcher {
             model::home_items(&self.apps, &self.usage.recent(usage::now(), usize::MAX), VISIBLE_ROWS)
         } else {
             let mut items: Vec<Item> = model::calc_item(&self.query).into_iter().collect();
-            let mut files = self.files.clone();
-            let now = usage::now();
-            model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
-            items.extend(model::build_items(&self.apps, &self.app_hits, &files));
+            if !calc::is_explicit(&self.query) {
+                let mut files = self.files.clone();
+                let now = usage::now();
+                model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
+                items.extend(model::build_items(&self.apps, &self.app_hits, &files));
+            }
             items
         };
         let icons = &mut self.icons;
@@ -329,6 +332,18 @@ impl Launcher {
             },
             (Action::CopyName, _) => self.copy(item.title.clone(), "name"),
             (Action::CopyResult, Target::Calc(v)) => self.copy(v.clone(), "result"),
+            (Action::UseResult, Target::Calc(_)) => {
+                let Some(query) = calc::continuation(&self.query) else { return Task::none() };
+                self.panel = None;
+                // Update before moving the cursor: the continued value can
+                // be longer than the original expression.
+                let change = update(self, Message::Query(query));
+                Task::batch([
+                    change,
+                    widget::operation::focus(search_id()),
+                    widget::operation::move_cursor_to_end(search_id()),
+                ])
+            }
             (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
@@ -382,8 +397,14 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             s.generation += 1;
             let (usage, now) = (&s.usage, usage::now());
             let q = s.query.as_str();
-            s.app_hits = model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now));
-            let file_query = s.query.trim().chars().count() >= MIN_FILE_QUERY;
+            // An explicit calculator query stays in that mode while incomplete.
+            let calculator = calc::is_explicit(q);
+            s.app_hits = if calculator {
+                Vec::new()
+            } else {
+                model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
+            };
+            let file_query = !calculator && s.query.trim().chars().count() >= MIN_FILE_QUERY;
             // Results of the previous query must not stay actionable while
             // this one is searched.
             s.files.clear();
@@ -526,9 +547,9 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::Last => s.cursor.move_by(len as isize, len),
         Command::Activate => return s.primary().map_or_else(Task::none, |a| s.perform(a)),
         Command::Secondary => {
-            let has_reveal = s.selected().is_some_and(|i| model::actions_for(&i.target).contains(&Action::Reveal));
-            if has_reveal {
-                return s.perform(Action::Reveal);
+            let action = s.selected().and_then(|i| model::secondary_action(&model::actions_for(&i.target)));
+            if let Some(action) = action {
+                return s.perform(action);
             }
         }
         Command::CopyPath => return s.perform(Action::CopyPath),
@@ -602,6 +623,7 @@ fn results(s: &Launcher) -> Element<'_, Message> {
         let (msg, help) = match &s.status {
             Status::Searching => ("Searching…", ""),
             Status::Error(_) => ("File search unavailable", "You can still search applications or calculate a result."),
+            _ if calc::is_explicit(&s.query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
             _ if s.query.trim().is_empty() => ("Start typing to search", "Find an application, a file, or try 2 + 3."),
             _ if s.query.trim().chars().count() < MIN_FILE_QUERY => {
                 ("No matching applications", "Type at least 2 characters to search files.")
@@ -669,6 +691,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching => ("Searching…".to_string(), palette::DIM),
+        Status::Idle if calc::is_explicit(&s.query) => ("Calculator".to_string(), palette::DIM),
         Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
         Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
         Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
@@ -681,8 +704,8 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     if let Some(item) = s.selected() {
         let acts = model::actions_for(&item.target);
         hints = hints.push(hint("Enter", acts[0].label()));
-        if acts.contains(&Action::Reveal) {
-            hints = hints.push(hint("Ctrl+Enter", Action::Reveal.label()));
+        if let Some(action) = model::secondary_action(&acts) {
+            hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
         hints = hints.push(
             button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
@@ -858,6 +881,18 @@ mod tests {
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
         assert_eq!(panel.actions.len(), 5);
+    }
+
+    #[test]
+    fn calculator_secondary_action_is_available_while_filtering_for_copy() {
+        let mut panel = Panel::new(&model::calc_item("= 1/3").unwrap());
+        panel.filter("copy".into());
+        assert_eq!(panel.filtered_actions(), [Action::CopyResult]);
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyResult));
+        assert_eq!(panel.action_for_command(Command::Secondary), Some(Action::UseResult));
+        panel.filter("use".into());
+        assert_eq!(panel.action_for_command(Command::Activate), Some(Action::UseResult));
+        assert_eq!(Action::UseResult.shortcut(), "Ctrl+Enter");
     }
 
     #[test]
