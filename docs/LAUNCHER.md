@@ -48,6 +48,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Enter | launch the application, open the file, copy a calculator result |
 | Ctrl+Enter | show the file in its folder |
 | Ctrl+K | open/close the searchable action panel for the selected row |
+| Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
 | Esc | clear the action filter, close actions, clear the query, then close |
 
@@ -55,6 +56,11 @@ Type in the action panel to filter its commands without changing the search
 query or selected result. Enter runs the highlighted matching action. File
 shortcuts remain available while filtering. After copying, the launcher stays
 open and returns focus to the main search field.
+
+Click a result once to select it; double-click or press Enter to open it.
+Right-click a result to select it and open its actions, or click **Actions**
+in the footer. A click on a result that disappears while results update is
+ignored rather than opening a different row.
 
 ## Results
 
@@ -92,6 +98,13 @@ every 14 days. It is used only to order results:
   above an exact name, or a weak match above files.
 - Updates are a locked read-modify-write, so several instances and
   `--forget-history` do not overwrite each other.
+
+Use **Reset ranking** in an application or file's action panel to remove that
+item's overall and query-specific history. Other items keep their history, and
+the results update immediately. The application or file remains searchable;
+opening it again starts a new history. In a `--private` session, reset changes
+only the session's in-memory history. A failed reset is shown in the launcher;
+if another instance is updating history, retry after it finishes.
 
 ## Design
 

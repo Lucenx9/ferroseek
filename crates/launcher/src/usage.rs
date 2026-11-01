@@ -141,7 +141,7 @@ impl Usage {
             add_use(&mut self.entries, kind, key, query.as_deref(), now);
             return;
         };
-        let r = with_lock(&path, || {
+        let r = with_lock(&path, true, || {
             // The file is authoritative: another instance may have added
             // uses, or the history may have been forgotten, since load.
             self.entries = read_entries(&path);
@@ -153,13 +153,43 @@ impl Usage {
         }
     }
 
+    /// Removes all ranking signals for one item, preserving other instances'
+    /// updates. Returns `WouldBlock` when another writer holds the lock;
+    /// a failed reset leaves the in-memory ranking unchanged.
+    pub fn reset(&mut self, kind: Kind, key: &str) -> std::io::Result<()> {
+        let item = (kind, key.to_string());
+        let Some(path) = self.path.clone() else {
+            self.entries.remove(&item);
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            match std::fs::metadata(parent) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    self.entries.clear();
+                    return Ok(());
+                }
+                Err(e) => return Err(e),
+                Ok(_) => {}
+            }
+        }
+        let entries = with_lock(&path, false, || {
+            let mut entries = try_read_entries(&path)?;
+            if entries.remove(&item).is_some() {
+                write_entries(&path, &entries)?;
+            }
+            Ok(entries)
+        })?;
+        self.entries = entries;
+        Ok(())
+    }
+
     /// Deletes the stored history (`--forget-history`), under the same
     /// lock as updates.
     pub fn forget(path: &Path) -> std::io::Result<()> {
         if !path.parent().is_some_and(Path::exists) {
             return Ok(());
         }
-        with_lock(path, || match std::fs::remove_file(path) {
+        with_lock(path, true, || match std::fs::remove_file(path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             r => r,
         })
@@ -193,8 +223,16 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
 /// `qapp|qfile <weight> <last> <query> <key>` per query, tab-separated.
 /// Unknown or malformed lines are skipped.
 fn read_entries(path: &Path) -> Records {
+    try_read_entries(path).unwrap_or_default()
+}
+
+fn try_read_entries(path: &Path) -> std::io::Result<Records> {
     let mut entries = Records::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return entries };
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
+        Err(e) => return Err(e),
+    };
     for line in text.lines() {
         let mut f = line.splitn(2, '\t');
         let (Some(tag), Some(rest)) = (f.next(), f.next()) else { continue };
@@ -223,7 +261,7 @@ fn read_entries(path: &Path) -> Records {
             None => r.general = Some(e),
         }
     }
-    entries
+    Ok(entries)
 }
 
 /// Owner-only file creation: the history names files the user opened.
@@ -235,15 +273,19 @@ fn private_options() -> std::fs::OpenOptions {
 }
 
 /// Runs `f` holding an exclusive lock on `<path>.lock`, creating the
-/// directory owner-only if needed.
-fn with_lock<T>(path: &Path, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+/// directory owner-only if needed. Without `wait`, contention returns an error.
+fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
     }
     let lock =
         private_options().read(true).write(true).create(true).truncate(false).open(path.with_extension("lock"))?;
-    lock.lock()?;
+    if wait {
+        lock.lock()?;
+    } else {
+        lock.try_lock()?;
+    }
     let r = f();
     let _ = lock.unlock();
     r
@@ -397,5 +439,140 @@ mod tests {
         let v = Usage::load(Some(p));
         assert_eq!(v.boost(Kind::File, "file:///t/a", "rep", 5), u.boost(Kind::File, "file:///t/a", "rep", 5));
         assert!(v.boost(Kind::File, "file:///t/a", "rep", 5) > v.boost(Kind::File, "file:///t/a", "", 5));
+    }
+
+    #[test]
+    fn reset_from_a_stale_instance_preserves_other_updates_and_kinds() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("launcher-usage");
+        let mut writer = Usage::load(Some(p.clone()));
+        writer.record(Kind::App, "shared", "fir", 100);
+        let mut stale = Usage::load(Some(p.clone()));
+        writer.record(Kind::App, "shared", "fire", 100);
+        writer.record(Kind::File, "shared", "fir", 100);
+        writer.record(Kind::App, "other", "oth", 100);
+        let mut other_records = writer.entries.clone();
+        other_records.remove(&(Kind::App, "shared".into()));
+
+        stale.reset(Kind::App, "shared").unwrap();
+        assert_eq!(stale.entries, other_records);
+        assert_eq!(Usage::load(Some(p.clone())).entries, other_records);
+        assert!(stale.boost(Kind::File, "shared", "fir", 100) > 0);
+
+        // A writer loaded before reset must not bring the removed record back.
+        writer.record(Kind::App, "new", "n", 100);
+        let disk = Usage::load(Some(p));
+        assert_eq!(disk.boost(Kind::App, "shared", "fir", 100), 0);
+        assert!(disk.boost(Kind::App, "new", "n", 100) > 0);
+        assert!(disk.boost(Kind::App, "other", "oth", 100) > 0);
+    }
+
+    #[test]
+    fn reset_removes_overall_and_related_query_boosts_and_new_use_starts_fresh() {
+        let mut u = Usage::disabled();
+        for _ in 0..5 {
+            u.record(Kind::App, "firefox.desktop", "fir", 100);
+        }
+        u.record(Kind::App, "firefox.desktop", "browser", 100);
+        u.reset(Kind::App, "firefox.desktop").unwrap();
+        for q in ["", "f", "fir", "firefox", "browser"] {
+            assert_eq!(u.boost(Kind::App, "firefox.desktop", q, 100), 0, "{q:?}");
+        }
+        assert!(u.recent(100, 8).is_empty());
+        u.record(Kind::App, "firefox.desktop", "fir", 100);
+        let mut fresh = Usage::disabled();
+        fresh.record(Kind::App, "firefox.desktop", "fir", 100);
+        assert_eq!(u.entries, fresh.entries);
+    }
+
+    #[test]
+    fn reset_missing_item_does_not_create_or_rewrite_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing_parent = dir.path().join("missing/launcher-usage");
+        Usage::load(Some(missing_parent.clone())).reset(Kind::App, "absent").unwrap();
+        assert!(!missing_parent.parent().unwrap().exists());
+
+        let p = dir.path().join("launcher-usage");
+        let mut u = Usage::load(Some(p.clone()));
+        u.reset(Kind::App, "absent").unwrap();
+        assert!(!p.exists());
+        u.record(Kind::App, "present", "p", 100);
+        let before = std::fs::read(&p).unwrap();
+        u.reset(Kind::App, "absent").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), before);
+        Usage::forget(&p).unwrap();
+        u.reset(Kind::App, "present").unwrap();
+        assert!(u.entries.is_empty());
+        assert!(!p.exists(), "reset must not resurrect forgotten history");
+    }
+
+    #[test]
+    fn reset_propagates_read_and_write_errors_without_changing_ranking() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("launcher-usage");
+        let mut u = Usage::load(Some(p.clone()));
+        u.record(Kind::App, "app", "a", 100);
+        let before = u.entries.clone();
+        let disk = std::fs::read(&p).unwrap();
+        let tmp = p.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::create_dir(&tmp).unwrap();
+        assert!(u.reset(Kind::App, "app").is_err());
+        assert_eq!(u.entries, before);
+        assert_eq!(std::fs::read(&p).unwrap(), disk);
+
+        std::fs::remove_dir(&tmp).unwrap();
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        assert!(u.reset(Kind::App, "app").is_err());
+        assert_eq!(u.entries, before);
+    }
+
+    #[test]
+    fn reset_returns_without_waiting_for_a_busy_history_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("launcher-usage");
+        let mut u = Usage::load(Some(p.clone()));
+        u.record(Kind::App, "app", "a", 100);
+        let before = u.entries.clone();
+        let disk = std::fs::read(&p).unwrap();
+        let lock = private_options().read(true).write(true).open(p.with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = u.reset(Kind::App, "app");
+            tx.send((u, result)).unwrap();
+        });
+        let received = rx.recv_timeout(Duration::from_secs(2));
+        // Release before asserting so a blocking-lock regression cannot hang.
+        lock.unlock().unwrap();
+        worker.join().unwrap();
+        let (mut u, result) = received.expect("reset must return while the history lock is held");
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert_eq!(u.entries, before);
+        assert_eq!(std::fs::read(&p).unwrap(), disk);
+
+        u.reset(Kind::App, "app").unwrap();
+        assert!(u.entries.is_empty());
+        assert!(Usage::load(Some(p)).entries.is_empty());
+    }
+
+    #[test]
+    fn reset_without_a_backing_path_only_changes_session_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("launcher-usage");
+        let mut persistent = Usage::load(Some(p.clone()));
+        persistent.record(Kind::App, "app", "a", 100);
+        let before = std::fs::read(&p).unwrap();
+        let mut private = Usage::disabled();
+        private.record(Kind::App, "app", "a", 100);
+        private.record(Kind::File, "app", "a", 100);
+        private.reset(Kind::App, "app").unwrap();
+        assert_eq!(private.boost(Kind::App, "app", "a", 100), 0);
+        assert!(private.boost(Kind::File, "app", "a", 100) > 0);
+        assert_eq!(std::fs::read(&p).unwrap(), before);
     }
 }
