@@ -4,7 +4,10 @@
 
 use std::ops::Range;
 
-use iced::keyboard::{Key, Modifiers, key::Named};
+use iced::keyboard::{
+    Key, Modifiers,
+    key::{Code, Named, Physical},
+};
 
 use crate::apps::App;
 use crate::backend::FileHit;
@@ -374,6 +377,37 @@ pub enum Command {
     Back,
 }
 
+/// Number-row shortcuts use physical positions on layouts whose digits need
+/// Shift (such as AZERTY). Logical digits also support numpads/unknown codes.
+/// These commands must be captured before a text input sees printable text.
+pub fn numbered_command(key: &Key, physical: Physical, mods: Modifiers) -> Option<Command> {
+    if mods != Modifiers::CTRL {
+        return None;
+    }
+    let slot = match physical {
+        Physical::Code(Code::Digit1) => 0,
+        Physical::Code(Code::Digit2) => 1,
+        Physical::Code(Code::Digit3) => 2,
+        Physical::Code(Code::Digit4) => 3,
+        Physical::Code(Code::Digit5) => 4,
+        Physical::Code(Code::Digit6) => 5,
+        Physical::Code(Code::Digit7) => 6,
+        Physical::Code(Code::Digit8) => 7,
+        _ => match key.as_ref() {
+            Key::Character("1") => 0,
+            Key::Character("2") => 1,
+            Key::Character("3") => 2,
+            Key::Character("4") => 3,
+            Key::Character("5") => 4,
+            Key::Character("6") => 5,
+            Key::Character("7") => 6,
+            Key::Character("8") => 7,
+            _ => return None,
+        },
+    };
+    Some(Command::ActivateVisible(slot))
+}
+
 /// Maps a key press to a launcher command. Keys not listed here go to the
 /// search field.
 pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
@@ -394,11 +428,6 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::Escape) => Some(Command::Back),
         Key::Named(Named::ContextMenu) => Some(Command::OpenActions),
         Key::Named(Named::F10) if mods.shift() => Some(Command::OpenActions),
-        Key::Character(c)
-            if mods == Modifiers::CTRL && matches!(c.as_str(), "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8") =>
-        {
-            Some(Command::ActivateVisible((c.as_bytes()[0] - b'1') as usize))
-        }
         Key::Character(c) if ctrl => match c.as_str() {
             "k" | "K" => Some(Command::ToggleActions),
             "n" | "N" | "j" | "J" => Some(Command::Down),
@@ -657,7 +686,14 @@ mod tests {
     fn numbered_keys_require_only_control_and_leave_plain_digits_to_the_field() {
         for (slot, digit) in (1..=NUMBERED_SLOTS).enumerate() {
             let key = Key::Character(digit.to_string().into());
-            assert_eq!(command_for(&key, Modifiers::CTRL), Some(Command::ActivateVisible(slot)));
+            assert_eq!(
+                numbered_command(
+                    &key,
+                    Physical::Unidentified(iced::keyboard::key::NativeCode::Unidentified),
+                    Modifiers::CTRL
+                ),
+                Some(Command::ActivateVisible(slot))
+            );
             for mods in [
                 Modifiers::empty(),
                 Modifiers::ALT,
@@ -666,11 +702,39 @@ mod tests {
                 Modifiers::CTRL | Modifiers::SHIFT,
                 Modifiers::CTRL | Modifiers::LOGO,
             ] {
-                assert_eq!(command_for(&key, mods), None);
+                assert_eq!(numbered_command(&key, Physical::Code(Code::Digit1), mods), None);
             }
         }
         for digit in ["0", "9", "12", "!"] {
-            assert_eq!(command_for(&Key::Character(digit.into()), Modifiers::CTRL), None);
+            assert_eq!(
+                numbered_command(&Key::Character(digit.into()), Physical::Code(Code::Digit9), Modifiers::CTRL),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn numbered_keys_follow_physical_positions_on_azerty() {
+        for (slot, (symbol, code)) in [
+            ("&", Code::Digit1),
+            ("é", Code::Digit2),
+            ("\"", Code::Digit3),
+            ("'", Code::Digit4),
+            ("(", Code::Digit5),
+            ("-", Code::Digit6),
+            ("è", Code::Digit7),
+            ("_", Code::Digit8),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = Key::Character(symbol.into());
+            assert_eq!(
+                numbered_command(&key, Physical::Code(code), Modifiers::CTRL),
+                Some(Command::ActivateVisible(slot))
+            );
+            assert_eq!(numbered_command(&key, Physical::Code(code), Modifiers::empty()), None);
+            assert_eq!(numbered_command(&key, Physical::Code(code), Modifiers::CTRL | Modifiers::SHIFT), None);
         }
     }
 

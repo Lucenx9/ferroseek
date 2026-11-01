@@ -56,7 +56,9 @@ the engine and integrations. See [installation](INSTALLATION.md).
 Type in the action panel to filter its commands without changing the search
 query or selected result. Enter runs the highlighted matching action. Ctrl+1…8
 runs the corresponding visible row; numbers follow the window after scrolling
-and the matching actions after filtering. Missing numbers do nothing. File
+and the matching actions after filtering. The top number-row positions also
+work on layouts such as AZERTY, where typing digits normally requires Shift.
+Missing numbers do nothing. File
 shortcuts remain available while filtering. After copying, the launcher stays
 open and returns focus to the main search field.
 

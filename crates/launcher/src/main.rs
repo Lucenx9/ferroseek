@@ -12,6 +12,7 @@ mod icons;
 mod launch;
 mod matcher;
 mod model;
+mod shortcuts;
 mod ui;
 mod uri;
 mod usage;

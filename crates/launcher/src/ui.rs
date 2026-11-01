@@ -612,10 +612,10 @@ fn view(s: &Launcher) -> Element<'_, Message> {
             ..Default::default()
         });
 
-    match &s.panel {
+    crate::shortcuts::capture_numbered(match &s.panel {
         Some(p) => stack![surface, action_panel(p)].into(),
         None => surface.into(),
-    }
+    })
 }
 
 fn divider<'a>() -> Element<'a, Message> {
@@ -833,6 +833,20 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("1".into()),
+            modified_key: Key::Character("1".into()),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Digit1),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::CTRL,
+            text: Some("1".into()),
+            repeat: false,
+        });
+        assert!(on_event(event, event::Status::Captured, iced::window::Id::unique()).is_none());
+    }
 
     #[test]
     fn displayed_shortcuts_work_inside_the_action_panel() {
