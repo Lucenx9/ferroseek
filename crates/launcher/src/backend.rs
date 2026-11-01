@@ -259,7 +259,7 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
                     )
                     .await
                     .map_err(|_| {
-                        "Folders were saved, but application was not confirmed. Check index status or apply again."
+                        "The service did not confirm within 30 seconds. Check index status or save and apply again."
                             .to_string()
                     })?
                     .map_err(|e| e.to_string())?;

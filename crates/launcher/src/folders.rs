@@ -372,7 +372,7 @@ impl Panel {
         } else {
             body = body.push(
                 text(if self.exit_on_cancel {
-                    "Choose folders before file indexing starts."
+                    "Review your folders, then save to start file search."
                 } else {
                     "Choose where FerroSeek searches for files."
                 })
