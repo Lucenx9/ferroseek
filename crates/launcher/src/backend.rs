@@ -644,6 +644,16 @@ mod tests {
     }
 
     #[test]
+    fn viewing_folder_settings_does_not_activate_an_absent_service() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let conn = zbus::connection::Builder::address(address.trim()).unwrap().build().await.unwrap();
+            assert!(folder_policy(&conn).await.unwrap().is_none());
+            assert!(folder_policy(&conn).await.unwrap().is_none());
+        });
+    }
+
+    #[test]
     fn no_reply_is_not_misreported_as_a_rejected_open() {
         assert!(matches!(
             open_error(zbus::fdo::Error::NoReply("connection lost".into()).into()),

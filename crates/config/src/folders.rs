@@ -65,10 +65,10 @@ impl Document {
         }
         let decor = document.get("roots").and_then(toml_edit::Item::as_value).map(|value| value.decor().clone());
         document["roots"] = toml_edit::value(array);
-        if let Some(decor) = decor {
-            if let Some(value) = document["roots"].as_value_mut() {
-                *value.decor_mut() = decor;
-            }
+        if let Some(decor) = decor
+            && let Some(value) = document["roots"].as_value_mut()
+        {
+            *value.decor_mut() = decor;
         }
         let text = document.to_string();
         let config = Config::parse(&text).map_err(|e| e.to_string())?;

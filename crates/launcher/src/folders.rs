@@ -137,7 +137,13 @@ impl Panel {
             Event::Policy { revision, result } if revision == self.revision => match result {
                 Ok(Some(policy)) => {
                     self.policy = Some(policy.config);
-                    self.policy_note = format!("Active exclusions · {}", policy.config_path);
+                    self.policy_note = if std::fs::canonicalize(&self.path).ok()
+                        == std::fs::canonicalize(&policy.config_path).ok()
+                    {
+                        "Active exclusion settings:".into()
+                    } else {
+                        "The running service uses a different configuration. Folders can be saved here, but cannot be applied to that service.".into()
+                    };
                 }
                 Ok(None) => {
                     self.policy = None;
@@ -296,6 +302,10 @@ impl Panel {
             }
             _ => {}
         }
+        if matches!(self.phase, Phase::Saving | Phase::Applying) || self.message.is_some() {
+            task =
+                Task::batch([task, widget::operation::snap_to(scroll_id(), widget::operation::RelativeOffset::START)]);
+        }
         (task, Effect::None)
     }
 
@@ -346,17 +356,16 @@ impl Panel {
     }
 
     pub fn view(&self) -> Element<'_, Event> {
-        let header = container(
-            row![
-                text("Search folders").size(20),
-                space::horizontal(),
-                button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
-            ]
-            .align_y(Vertical::Center),
-        )
-        .height(58)
-        .padding([0, 16])
-        .align_y(Vertical::Center);
+        let editable = self.phase == Phase::Ready && self.pending.is_none() && self.document.is_some();
+        let mut reload = button(ui::hint("Ctrl+R", "Reload")).style(ui::status_button_style);
+        if !self.busy() && self.phase != Phase::Loading {
+            reload = reload.on_press(Event::Reload);
+        }
+        let header =
+            container(row![text("Search folders").size(20), space::horizontal(), reload].align_y(Vertical::Center))
+                .height(58)
+                .padding([0, 16])
+                .align_y(Vertical::Center);
         let mut body = column![].spacing(10).padding(16);
         if self.phase == Phase::Loading {
             body = body.push(text("Loading folder settings…").size(16));
@@ -369,15 +378,27 @@ impl Panel {
                 })
                 .size(14),
             );
-            let input = text_input("Absolute path or ~/Documents", &self.input).id(input_id()).size(14).padding(8);
-            body = body.push(
-                row![
-                    input.on_input(Event::Input),
-                    button(ui::hint("Enter", "Add folder")).on_press(Event::Add).style(ui::status_button_style)
-                ]
-                .spacing(8)
-                .align_y(Vertical::Center),
-            );
+            if let Some((message, error)) = &self.message {
+                body = body.push(text(message).size(13).color(if *error { palette::ERROR } else { palette::ACCENT }));
+            }
+            if self.busy() {
+                body = body.push(
+                    text(match self.phase {
+                        Phase::Saving => "Saving folders…",
+                        Phase::Applying => "Applying folders…",
+                        _ => "Checking folder…",
+                    })
+                    .size(13)
+                    .color(palette::ACCENT),
+                );
+            }
+            let mut input = text_input("Absolute path or ~/Documents", &self.input).id(input_id()).size(14).padding(8);
+            let mut add = button(ui::hint("Enter", "Add folder")).style(ui::status_button_style);
+            if editable {
+                input = input.on_input(Event::Input);
+                add = add.on_press(Event::Add);
+            }
+            body = body.push(row![input, add].spacing(8).align_y(Vertical::Center));
             if self.roots.is_empty() {
                 body = body.push(
                     text("No folders selected. File search will have no indexed files.").size(13).color(palette::DIM),
@@ -386,15 +407,13 @@ impl Panel {
             for i in self.cursor.window(self.roots.len()) {
                 let path = &self.roots[i];
                 let selected = self.cursor.selected == i;
+                let mut remove = button(text("Remove").size(12)).style(ui::status_button_style);
+                if editable {
+                    remove = remove.on_press(Event::Remove(path.clone()));
+                }
                 let content = container(
-                    row![
-                        text(ui::ellipsize_middle(path, 40)).size(14),
-                        space::horizontal(),
-                        button(text("Remove").size(12))
-                            .on_press(Event::Remove(path.clone()))
-                            .style(ui::status_button_style)
-                    ]
-                    .align_y(Vertical::Center),
+                    row![text(ui::ellipsize_middle(path, 40)).size(14), space::horizontal(), remove]
+                        .align_y(Vertical::Center),
                 )
                 .padding([4, 8])
                 .style(move |_| container::Style {
@@ -461,20 +480,6 @@ impl Panel {
                         .color(palette::DIM),
                 );
             }
-            if let Some((message, error)) = &self.message {
-                body = body.push(text(message).size(13).color(if *error { palette::ERROR } else { palette::ACCENT }));
-            }
-            if self.busy() {
-                body = body.push(
-                    text(match self.phase {
-                        Phase::Saving => "Saving folders…",
-                        Phase::Applying => "Applying folders…",
-                        _ => "Checking folder…",
-                    })
-                    .size(13)
-                    .color(palette::ACCENT),
-                );
-            }
         }
         if self.pending.is_some() {
             body = body.push(text("Discard unsaved folder changes?").size(14).color(palette::ACCENT));
@@ -507,5 +512,93 @@ impl Panel {
             .width(Length::Fill)
             .style(ui::surface_style)
             .into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded() -> (tempfile::TempDir, Panel) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "roots = []\nexclude_names = ['private*']\n").unwrap();
+        let mut panel = Panel::new(path.clone(), false);
+        let _ = panel.load(Backend::disconnected());
+        let revision = panel.revision;
+        let _ = panel.update(Event::Loaded { revision, result: Document::load(path) }, Backend::disconnected());
+        (temp, panel)
+    }
+
+    #[test]
+    fn dirty_edits_require_explicit_discard_and_root_clicks_keep_identity() {
+        let (_temp, mut panel) = loaded();
+        let backend = Backend::disconnected();
+        let _ = panel.update(Event::Input("/synthetic/new folder".into()), backend.clone());
+        let _ = panel.update(Event::Add, backend.clone());
+        let _ =
+            panel.update(Event::Validated { path: "/synthetic/new folder".into(), result: Ok(()) }, backend.clone());
+        assert_eq!(panel.roots, ["/synthetic/new folder"]);
+        let (_, effect) = panel.update(Event::Back, backend.clone());
+        assert!(matches!(effect, Effect::None));
+        assert!(panel.pending.is_some());
+        let _ = panel.update(Event::Save, backend.clone());
+        assert!(panel.phase == Phase::Ready, "discard prompt must not permit a write");
+        let _ = panel.update(Event::KeepEditing, backend.clone());
+        let _ = panel.update(Event::Remove("/no-longer-listed".into()), backend.clone());
+        assert_eq!(panel.roots.len(), 1);
+        let _ = panel.update(Event::Reload, backend.clone());
+        assert!(panel.pending.is_some());
+        let _ = panel.update(Event::Back, backend.clone());
+        assert!(panel.pending.is_none(), "Escape keeps editing a dirty draft");
+        let _ = panel.update(Event::Back, backend.clone());
+        let (_, effect) = panel.shortcut(Shortcut::Remove, backend);
+        assert!(matches!(effect, Effect::Close { refresh: false }));
+    }
+
+    #[test]
+    fn saving_preserves_the_document_when_application_fails_and_can_be_retried() {
+        let (temp, mut panel) = loaded();
+        let root = temp.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        panel.roots.push(root.to_str().unwrap().into());
+        let backend = Backend::disconnected();
+        let _ = panel.shortcut(Shortcut::Save, backend.clone());
+        assert!(panel.phase == Phase::Saving);
+        let saved = panel.document.as_ref().unwrap().save(panel.roots.clone()).unwrap();
+        let _ = panel.update(Event::Saved(Ok(saved.clone())), backend.clone());
+        assert!(panel.phase == Phase::Applying);
+        let _ = panel.update(Event::Back, backend.clone());
+        assert!(panel.pending.is_none(), "a dispatched save/apply is not discarded halfway");
+        let _ = panel.update(Event::Applied(Err("confirmation lost".into())), backend.clone());
+        assert!(panel.phase == Phase::Ready);
+        assert!(!panel.dirty());
+        assert_eq!(panel.document.as_ref().unwrap().config, saved.config);
+        assert!(panel.message.as_ref().unwrap().0.contains("saved"));
+        let _ = panel.update(Event::Save, backend.clone());
+        let _ = panel.update(Event::Saved(Ok(saved)), backend.clone());
+        let (_, effect) = panel.update(Event::Applied(Ok(false)), backend);
+        assert!(matches!(effect, Effect::Applied));
+    }
+
+    #[test]
+    fn stale_loads_cannot_replace_a_newer_draft_and_empty_scope_is_supported() {
+        let (_temp, mut panel) = loaded();
+        let backend = Backend::disconnected();
+        let old = panel.revision;
+        let _ = panel.update(Event::Reload, backend.clone());
+        assert!(panel.revision > old);
+        let _ = panel.update(Event::Loaded { revision: old, result: Err("old failure".into()) }, backend.clone());
+        assert!(panel.phase == Phase::Loading);
+        assert!(panel.message.is_none());
+        let revision = panel.revision;
+        let doc = Document::load(panel.path.clone()).unwrap();
+        let _ = panel.update(Event::Loaded { revision, result: Ok(doc) }, backend.clone());
+        let _ = panel.update(Event::Save, backend.clone());
+        assert!(panel.phase == Phase::Saving, "zero folders is an explicit valid choice");
+        let _ = panel.update(Event::Saved(Err("changed on disk".into())), backend);
+        assert!(panel.phase == Phase::Ready);
+        assert!(panel.roots.is_empty());
+        assert!(panel.message.as_ref().unwrap().1);
     }
 }

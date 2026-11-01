@@ -1184,9 +1184,13 @@ fn results(s: &Launcher) -> Element<'_, Message> {
             column![text(msg).size(18), text(help).size(13).color(palette::DIM)].spacing(8).align_x(Horizontal::Center);
         if s.scope.file_query(&s.query) && !matches!(s.status, Status::Searching) {
             empty = empty.push(
-                button(text("Check file search status").size(13))
-                    .on_press(Message::ShowSearchStatus)
-                    .style(status_button_style),
+                row![
+                    button(text("Check file search status").size(13))
+                        .on_press(Message::ShowSearchStatus)
+                        .style(status_button_style),
+                    button(text("Choose folders").size(13)).on_press(Message::ShowFolders).style(status_button_style),
+                ]
+                .spacing(8),
             );
         }
         return container(empty).center(Length::Fill).into();
@@ -1916,6 +1920,51 @@ mod tests {
         let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
         assert_eq!(s.search_status, Some(SearchStatusPanel::Loading));
         assert_eq!(s.files.len(), 2);
+    }
+
+    #[test]
+    fn folder_settings_are_modal_and_discard_late_replies_after_reopening() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search_generation = s.generation;
+        let _ = update(&mut s, Message::ShowFolders);
+        let old = s.folder_generation;
+        assert!(s.folder_settings.is_some());
+        assert!(!s.compact);
+        for message in [Message::Query("changed".into()), Message::Scope(Scope::Files), Message::ShowSearchStatus] {
+            let _ = update(&mut s, message);
+        }
+        let _ = command(&mut s, Command::ActivateVisible(0));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.generation, search_generation);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::Files { generation: search_generation, result: Ok(Some(file_hits())) });
+        assert!(s.folder_settings.is_some());
+        assert_eq!(s.files.len(), 2);
+        let _ = command(&mut s, Command::Back);
+        assert!(s.folder_settings.is_none());
+        assert_eq!(s.query, "report");
+        let _ = update(&mut s, Message::ShowFolders);
+        let _ = update(&mut s, Message::Folder { generation: old, event: folders::Event::Back });
+        assert!(s.folder_settings.is_some(), "a late event cannot close a reopened settings view");
+    }
+
+    #[test]
+    fn first_run_defers_file_queries_until_folders_are_applied() {
+        let mut s = search_state();
+        s.deferred_query = Some("report".into());
+        let _ = s.show_folders(true);
+        let _ = update(&mut s, Message::Query("report".into()));
+        assert_eq!(s.generation, 0);
+        assert!(s.query.is_empty());
+        let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
+        assert!(s.folder_settings.is_none());
+        assert!(s.deferred_query.is_none());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.generation, 1);
+        assert!(s.files.is_empty());
+        assert!(matches!(key_message(&Key::Character(",".into()), Modifiers::CTRL), Some(Message::ShowFolders)));
     }
 
     #[test]
