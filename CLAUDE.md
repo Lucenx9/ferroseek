@@ -3,8 +3,8 @@
 FerroSeek is a keyboard-first Linux launcher for applications, files and
 calculations, powered by its Rust filename/path search engine. Prioritize
 the standalone launcher and its daily-use reliability. Keep the engine/CLI
-usable independently, maintain existing KRunner/Noctalia integrations and
-optional MCP, and defer new desktop adapters. These clients share one index.
+usable independently and retain optional MCP. Noctalia/KRunner adapters are
+removed; focus development on the standalone launcher. These clients share one index.
 Design is in `docs/ARCHITECTURE.md`, measured
 results in `docs/BENCHMARKS.md`, installation in `docs/INSTALLATION.md`,
 and historical Baloo/KRunner research in `docs/RESEARCH.md`.
@@ -24,7 +24,7 @@ claims tied to their measured workloads. Do not imply Baloo feature parity.
   - `indexer.rs`: the core; `reconcile_dir` and `resolve` are the only
     places that compare the filesystem with the index
   - `engine.rs`: threads, debounce, pause and duty cycle
-- `crates/daemon` (`ferroseekd`): `runner.rs` (`org.kde.krunner1`),
+- `crates/daemon` (`ferroseekd`): `search.rs` (`io.github.ferroseek.Search1`),
   `control.rs` (`io.github.ferroseek.FerroSeek1`), `open.rs` (launching
   files), `mime.rs` (globs2 → icon).
 - `crates/cli` (`ferroseek`), `crates/bench` (`ferroseek-bench`).
@@ -35,12 +35,9 @@ claims tied to their measured workloads. Do not imply Baloo feature parity.
   launcher (iced + iced_layershell). `model.rs` (rows, selection, keys,
   pure), `backend.rs` (bus thread), `apps.rs` (own .desktop parser),
   `usage.rs` (launch history), `calc.rs`. See `docs/LAUNCHER.md`.
-- `data/`: KRunner `.desktop` file, D-Bus `.service` file, systemd unit
+- `data/`: D-Bus `.service` file and systemd unit
   templates. `scripts/installer.py`: component planning and registration;
   `install_transaction.py`: ownership-safe durable rollback; `package.py`: local archives.
-- `integrations/noctalia/ferroseek`: optional launcher provider. `--noctalia`
-  copies it into the local Noctalia data directory; `--enable` activates it.
-  Installer tests stub all Noctalia IPC and use isolated HOME/XDG roots.
 - `prototype/backend-bench`: the throwaway backend comparison. Not in the
   workspace; keep it as evidence.
 
@@ -80,9 +77,6 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   - there is no blocking module; `zbus::block_on` drives sync code
   - `zruntime::unblock` runs blocking work
 - `gen` is a reserved keyword in edition 2024.
-- The KRunner contract (method signatures, property keys, `.desktop` keys)
-  is pinned to KRunner 6.31 in `docs/RESEARCH.md` §10. Re-verify it when
-  bumping Plasma.
 - Commits end with the `Co-Authored-By` trailer in use in `git log`.
 
 ## Review checkpoint (2026-10-31)
@@ -132,7 +126,7 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - Actual Plasma activation/results/Run/open-parent/live updates/restart and
   repeated installation/uninstallation verified using isolated test data.
   Baloo stayed disabled; no installed test service remains.
-- Reader-pool epoch and database identity checks protect Teardown/recovery.
+- Reader-pool epoch and database identity checks protect Release/recovery.
   Never restore per-Status malloc_trim or blocking async control work.
 - Benchmark --work must be new/empty unless explicitly reusing a matching
   generated corpus. Reuse initial indexing deletes only that work/data.
@@ -155,7 +149,7 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 - `ferroseek-mcp` must stay read-only, stdio-only and opt-in. It must never
   start an indexer, write the index or add a schema change. Its index API
   additions are `Reader::roots()` and `SearchOptions::accept`. The latter
-  must stay `None` for daemon, KRunner and CLI searches. `accept`-only
+  must stay `None` for daemon and CLI searches. `accept`-only
   searches use an exact top-k early stop (name score + MAX_BONUS bound).
   Never truncate them by name score: depth and recency can reorder.
 - Every path leaving the process passes `Policy::visible_under` *and* lies
@@ -193,9 +187,10 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
 ## Modular installer checkpoint
 
 - Installer needs Python 3.11+; shell entrypoints only dispatch. No engine,
-  schema, KRunner protocol or MCP server changes are needed for packaging.
+  schema, search protocol or MCP server changes are needed for packaging.
 - Default is interactive; on Wayland recommend launcher + core, otherwise core.
   `--launcher` installs the main UI; package.py defaults to launcher archives.
+  Noctalia/KRunner flags and payloads are removed.
   Explicit component flags are scriptable. Core is
   required by integrations; additions preserve previously installed components.
 - Never restart on upgrade. --enable and uninstall --stop are explicit actions.
@@ -242,8 +237,8 @@ target/release/ferroseek-bench --files 100000 --work ~/.cache/ferroseek-bench-10
   (sctk's pkg-config probe; CI installs `libxkbcommon-dev` in both jobs).
   `winit-core` is pinned to beta.2 for
   `iced_exdevtools` 0.19.1; revisit when bumping iced_layershell.
-- It never opens the index: files come from the daemon's `Match`/`Run`
-  (D-Bus activation), so `Run` keeps refusing non-indexed paths.
+- It never opens the index: files come from the daemon's `Search`/`Open`
+  (D-Bus activation), so `Open` keeps refusing non-indexed paths.
 - zbus stays on its own thread inside `zbus::block_on`; never await zbus
   futures on iced's executor. Replies carry the query generation.
 - A new query clears old file rows; late results keep the selected target.

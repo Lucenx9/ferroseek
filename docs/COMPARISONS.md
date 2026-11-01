@@ -1,13 +1,13 @@
 # Search tools, comparisons and background
 
 FerroSeek began as an investigation into **Baloo**, but it is an independent
-Linux filename/path indexer, not a Baloo fork or a drop-in replacement for
+Linux launcher with its own filename/path indexer, not a drop-in replacement for
 KDE's search framework. This page summarizes where different tools fit;
 it is **not** a performance ranking.
 
 | Tool | Main use | Important distinction |
 |---|---|---|
-| **FerroSeek** | Indexed filename/path discovery across configured Linux directories | Incremental index with optional CLI, KRunner and MCP; currently no file-content search |
+| **FerroSeek** | Application launching, indexed files and calculations | Incremental index, CLI and optional MCP; currently no file-content search |
 | **Baloo** | KDE file indexing, search integration and metadata/content features | Exposes KDE capabilities and interfaces FerroSeek does not currently implement |
 | **fd** | Filename/path discovery in the live filesystem | Does not require a persistent index for each search |
 | **ripgrep (`rg`)** | Text/regex **inside files**, or filename enumeration with `rg --files` | Content search is not equivalent to FerroSeek's current filename-only search |

@@ -9,7 +9,7 @@ mod control;
 mod mime;
 mod open;
 mod pool;
-mod runner;
+mod search;
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ ferroseekd — FerroSeek file indexing daemon
 USAGE: ferroseekd [--no-dbus] [--version] [--help]
 
 Indexes the roots from $XDG_CONFIG_HOME/ferroseek/config.toml, keeps the
-index current with inotify, and serves the KRunner runner and the control
+index current with inotify, and serves file search, opening and the control
 interface on the session bus as io.github.ferroseek.FerroSeek.
 
   --no-dbus   Run the indexer only (no session bus), e.g. for benchmarks.
@@ -113,12 +113,12 @@ fn main() -> ExitCode {
     let _conn = if use_dbus {
         let pool = Arc::new(pool::Pool::new(paths.index_file()));
         let control = control::Control { engine: engine.clone(), paths: paths.clone() };
-        let runner = runner::Runner::new(pool);
+        let search = search::Search::new(pool);
         let built = zbus::block_on(async {
             zbus::connection::Builder::session()
                 .name(ipc::BUS_NAME)
                 .serve_at(ipc::CONTROL_PATH, control)
-                .serve_at(ipc::RUNNER_PATH, runner)
+                .serve_at(ipc::SEARCH_PATH, search)
                 .build()
                 .await
         });

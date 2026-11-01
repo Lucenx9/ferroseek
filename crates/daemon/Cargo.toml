@@ -1,6 +1,6 @@
 [package]
 name = "ferroseek-daemon"
-description = "FerroSeek daemon: indexing engine, D-Bus control interface and KRunner runner"
+description = "FerroSeek daemon: indexing engine, D-Bus file search, opening and control"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

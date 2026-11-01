@@ -14,17 +14,16 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
     root = Path(tmp)
     runtime = root / 'runtime'; runtime.mkdir(mode=0o700)
     commands = root / 'commands'; commands.mkdir()
-    for name in ['systemctl', 'busctl', 'gdbus', 'cargo', 'noctalia', 'gio']:
+    for name in ['systemctl', 'busctl', 'gdbus', 'cargo']:
         p = commands / name
-        p.write_text('#!/bin/sh\n[ "$1" = --version ] && echo "noctalia v5.4.1"\nexit 0\n'
-                     if name == 'noctalia' else '#!/bin/sh\nexit 1\n')
+        p.write_text('#!/bin/sh\nexit 1\n')
         p.chmod(0o755)
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith('FERROSEEK_')}
     env = dict(clean_env, XDG_RUNTIME_DIR=str(runtime), SOURCE_DATE_EPOCH='0', XDG_CURRENT_DESKTOP='KDE',
                XDG_SESSION_TYPE='wayland', WAYLAND_DISPLAY='wayland-test',
                PATH=str(commands) + ':' + os.environ['PATH'],
                DBUS_SESSION_BUS_ADDRESS='unix:path=/nonexistent-package-test')
-    for component in ['launcher', 'core', 'mcp', 'krunner', 'noctalia', 'full']:
+    for component in ['launcher', 'core', 'mcp', 'full']:
         output = root / component
         args = ['python3', str(repo / 'scripts/package.py'), '--no-build', '--components', component, '--output', str(output)]
         if component == 'launcher':
@@ -47,7 +46,8 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         metadata = json.loads((payload / 'package.json').read_text())
         assert (payload / 'bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         assert (payload / 'bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
-        assert (payload / 'integrations/noctalia/ferroseek/plugin.toml').exists() == (component in ['noctalia', 'full'])
+        assert not (payload / 'integrations').exists()
+        assert not (payload / 'data/ferroseek-krunner.desktop').exists()
         for name, expected in metadata['sha256'].items():
             assert hashlib.sha256((payload / name).read_bytes()).hexdigest() == expected
         home = root / ('home=' + component + ' é $%'); home.mkdir()
@@ -64,9 +64,7 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert r.returncode == 0, (r.stdout, r.stderr)
         assert (home / '.local/bin/ferroseek').exists()
         assert (home / '.local/bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
-        assert (home / '.local/share/krunner/dbusplugins/ferroseek.desktop').exists() == (component in ['krunner', 'full'])
         assert (home / '.local/bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
-        assert (home / '.local/share/noctalia/plugins/ferroseek/plugin.toml').exists() == (component in ['noctalia', 'full'])
         if component == 'core':
             assert subprocess.run([str(script), '--launcher'], env=isolated, capture_output=True).returncode != 0
             assert subprocess.run([str(script), '--mcp'], env=isolated, capture_output=True).returncode != 0
@@ -85,4 +83,4 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert r.returncode == 0, r.stderr
         assert not (home / '.local/bin/ferroseek').exists()
         assert not (home / '.local/bin/ferroseek-launcher').exists()
-print('PASS: six native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')
+print('PASS: four native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')

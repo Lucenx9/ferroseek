@@ -18,7 +18,7 @@ impl Control {
         let mut m: HashMap<String, String> =
             self.engine.status().pairs().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
         // A short-lived reader: status calls must not leave a cached
-        // connection behind (the pool is emptied only by KRunner Teardown).
+        // connection behind (the pool is emptied only by launcher Release).
         let db = self.paths.index_file();
         if let Ok(s) = zruntime::unblock(move || ferroseek_index::Reader::open(&db).and_then(|r| r.stats())).await {
             m.insert("files".into(), s.files.to_string());

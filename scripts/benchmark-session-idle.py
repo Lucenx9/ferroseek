@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure post-KRunner-session idle memory on a private D-Bus session."""
+"""Measure post-launcher-session idle memory on a private D-Bus session."""
 import argparse
 import json
 import os
@@ -22,8 +22,8 @@ env = dict(os.environ, FERROSEEK_CONFIG=str(work/'config.toml'), FERROSEEK_DATA_
 child = subprocess.Popen([str(a.binary.resolve())], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 def call(method, *args, control=False):
     return subprocess.check_output(['gdbus', 'call', '--session', '--dest', 'io.github.ferroseek.FerroSeek',
-        '--object-path', '/io/github/ferroseek/FerroSeek' if control else '/runner', '--method',
-        ('io.github.ferroseek.FerroSeek1.' if control else 'org.kde.krunner1.')+method, *args],
+        '--object-path', '/io/github/ferroseek/FerroSeek' if control else '/io/github/ferroseek/Search', '--method',
+        ('io.github.ferroseek.FerroSeek1.' if control else 'io.github.ferroseek.Search1.')+method, *args],
         stderr=subprocess.DEVNULL, text=True)
 try:
     deadline = time.monotonic()+60
@@ -33,8 +33,8 @@ try:
         except subprocess.CalledProcessError: pass
         assert time.monotonic()<deadline, 'startup timed out'
         time.sleep(.05)
-    assert 'file://' in call('Match', 'report')
-    call('Teardown')
+    assert 'file://' in call('Search', 'report')
+    call('Release')
     time.sleep(12)  # query workers expire after 10 seconds
     status = Path(f'/proc/{child.pid}/status').read_text()
     rollup = Path(f'/proc/{child.pid}/smaps_rollup').read_text()

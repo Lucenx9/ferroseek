@@ -3,7 +3,8 @@
 FerroSeek is a **keyboard-first Linux launcher** for applications, files and
 calculations, powered by its own Rust file search engine. The standalone
 launcher is the main product. The engine and CLI remain independently usable;
-KRunner, Noctalia and MCP remain optional components.
+MCP remains an optional read-only component. Desktop launcher adapters have
+been removed.
 
 The launcher is experimental. Checked items describe implemented work, not a
 published release or verified compatibility with every Linux desktop.
@@ -19,8 +20,8 @@ published release or verified compatibility with every Linux desktop.
   matrix. Current graphical evidence is nested virtual KWin only.
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
-- [ ] Give the launcher a dedicated daemon search interface; remove interference
-  between simultaneous KRunner and launcher queries.
+- [x] Dedicated FerroSeek daemon search/open interface, independent replies for
+  concurrent clients, and removal of Noctalia/KRunner adapters.
 - [ ] Add configuration for appearance, light/dark themes, size and position.
 - [ ] Make initial indexing setup and missing-service/error feedback clear in
   the launcher, including selection of indexing roots.
@@ -35,7 +36,6 @@ See [launcher setup and current limits](LAUNCHER.md).
 - [x] Rust search core, SQLite FTS5 trigram filename index, parent-pointer tree and ranked path/name queries.
 - [x] Inotify-driven incremental indexing, reconciliations, recovery, background throttling and pause/resume.
 - [x] CLI for filename/path search, index maintenance and status, including headless/one-shot use.
-- [x] Optional KRunner D-Bus adapter tested in a KDE Plasma 6 session.
 - [x] Optional, read-only MCP stdio server using the shared index; real Claude Code/Codex protocol tests.
 - [x] MCP `restricted`, `home` and `all_indexed` authorization modes, default sensitive-name rules and bounded results.
 - [x] User-scoped modular installer, dry-run, owned-file checks, rollback, local archive generation and CI smoke tests.
@@ -59,19 +59,6 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 - [ ] Add **optional** bounded plain-text content indexing for TXT/Markdown/source files with separate performance and size benchmarks.
 - [ ] Keep potential PDF/office extractors isolated and optional until justified by measurements.
 - [ ] Investigate initial-scan heap retention, dedicated resume reconciliation, SIGHUP config reload and alternate watch strategies only where supported by evidence.
-
-## Existing integrations: maintenance
-
-- [x] Core CLI and KDE KRunner.
-- [x] Optional Noctalia v5 `/ferro` provider and versioned CLI JSON output;
-  managed installation, activation, partial removal and native archives.
-- [ ] Maintain bug fixes and compatibility for KRunner and Noctalia. Complete
-  remaining [Noctalia desktop validation](NOCTALIA.md).
-
-These integrations reuse the same index. They remain available to users who
-prefer another launcher. New GNOME SearchProvider2, Rofi, dmenu/Fuzzel/Wofi,
-Walker/Elephant and Dolphin/KIO adapters are deferred. They are not requirements
-for the standalone launcher beta.
 
 ## Optional AI agent integration
 
