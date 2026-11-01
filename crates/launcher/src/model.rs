@@ -114,30 +114,48 @@ pub fn calc_item(query: &str) -> Option<Item> {
     })
 }
 
-/// Rows for the empty query: what was opened most, applications by
-/// desktop-file ID and files that still exist.
-pub fn recent_items(apps: &[App], recent: &[(Kind, String)]) -> Vec<Item> {
-    recent
-        .iter()
-        .filter_map(|(kind, key)| match kind {
-            Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
-            Kind::File => {
-                let path = uri::path_from_file_url(key)?;
-                let meta = std::fs::symlink_metadata(&path).ok()?;
-                let name = path.file_name()?.to_string_lossy().into_owned();
-                let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-                let is_dir = meta.is_dir();
-                Some(file_item(&FileHit {
-                    id: key.clone(),
-                    icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
-                    subtext: home_relative(&parent),
-                    name,
-                    path: Some(path),
-                    is_dir,
-                }))
-            }
+/// Valid history rows, resolved lazily so a full home needs no further
+/// filesystem checks.
+fn recent_items<'a>(apps: &'a [App], recent: &'a [(Kind, String)]) -> impl Iterator<Item = Item> + 'a {
+    recent.iter().filter_map(|(kind, key)| match kind {
+        Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
+        Kind::File => {
+            let path = uri::path_from_file_url(key)?;
+            let meta = std::fs::symlink_metadata(&path).ok()?;
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+            let is_dir = meta.is_dir();
+            Some(file_item(&FileHit {
+                id: key.clone(),
+                icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
+                subtext: home_relative(&parent),
+                name,
+                path: Some(path),
+                is_dir,
+            }))
+        }
+    })
+}
+
+/// Valid history rows first, then available applications in catalog order.
+pub fn home_items(apps: &[App], recent: &[(Kind, String)], limit: usize) -> Vec<Item> {
+    let mut seen_apps = vec![false; apps.len()];
+    let mut items: Vec<_> = recent_items(apps, recent)
+        .filter(|item| match item.target {
+            Target::App(i) => !std::mem::replace(&mut seen_apps[i], true),
+            _ => true,
         })
-        .collect()
+        .take(limit)
+        .collect();
+    for (i, seen) in seen_apps.into_iter().enumerate() {
+        if items.len() == limit {
+            break;
+        }
+        if !seen {
+            items.push(app_item(apps, i));
+        }
+    }
+    items
 }
 
 fn home_relative(p: &str) -> String {
@@ -454,9 +472,46 @@ mod tests {
             (Kind::App, "gone.desktop".to_string()),
             (Kind::File, "file:///nonexistent/ferroseek-test".to_string()),
         ];
-        let items = recent_items(&a, &recent);
+        let items: Vec<_> = recent_items(&a, &recent).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);
+    }
+
+    #[test]
+    fn home_filters_stale_history_before_the_limit() {
+        let a = apps();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("valid.txt");
+        std::fs::write(&f, "").unwrap();
+        let recent = [
+            (Kind::App, "gone.desktop".to_string()),
+            (Kind::File, format!("file://{}/gone.txt", dir.path().display())),
+            (Kind::App, "Kate.desktop".to_string()),
+            (Kind::File, format!("file://{}", f.display())),
+        ];
+        let items = home_items(&a, &recent, 2);
+        let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, ["Kate", "valid.txt"]);
+    }
+
+    #[test]
+    fn home_without_history_suggests_available_apps_in_catalog_order() {
+        let a = apps();
+        let items = home_items(&a, &[], 3);
+        let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, ["Firefox", "Files", "Fonts"]);
+        assert_eq!(home_items(&a, &[], usize::MAX).len(), a.len());
+        assert!(home_items(&[], &[], 3).is_empty());
+    }
+
+    #[test]
+    fn home_suggestions_do_not_duplicate_recent_apps_and_respect_zero_limit() {
+        let a = apps();
+        let recent = [(Kind::App, "Files.desktop".to_string()), (Kind::App, "Files.desktop".to_string())];
+        let items = home_items(&a, &recent, 4);
+        let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, ["Files", "Firefox", "Fonts", "Calculator"]);
+        assert!(home_items(&a, &recent, 0).is_empty());
     }
 
     #[test]
