@@ -1059,6 +1059,7 @@ dependencies = [
  "tempfile",
  "winit-core",
  "zbus",
+ "zruntime",
 ]
 
 [[package]]

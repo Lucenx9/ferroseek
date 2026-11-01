@@ -150,6 +150,8 @@ only one status request is sent at a time. Up/Down, Page Up/Page Down,
 Ctrl+Home/Ctrl+End and the mouse wheel scroll the details. If status cannot be
 retrieved, the view shows an error with retry and return controls; missing data
 is not displayed as zero. Applications and calculations remain usable.
+Status calls time out after three seconds so a stalled diagnostic reply cannot
+hold up later file searches or open actions indefinitely. Refresh can retry.
 
 This view does not edit configuration or pause/resume indexing. Folder selection
 and first-run configuration in the launcher remain planned. Install or update
