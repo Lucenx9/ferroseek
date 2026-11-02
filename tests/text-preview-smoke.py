@@ -80,6 +80,9 @@ def main():
     assert preview(raw) == ('raw path', False)
     for name in ('preview-binary.txt', 'preview-invalid.txt', 'preview-control.txt', 'Quarterly Report.pdf'):
         assert 'NotSupported' in call('TextPreview', uri(docs / name), ok=False)
+    for controls in (b'hello\x7fworld', 'hello\u0085world'.encode(), 'hello\u009bworld'.encode()):
+        (docs / 'preview-binary.txt').write_bytes(controls)
+        assert 'NotSupported' in call('TextPreview', uri(docs / 'preview-binary.txt'), ok=False)
     for target in ('bad-url', 'file://host/path', 'file:///bad%00path', 'file:///etc/passwd', uri(docs)):
         call('TextPreview', target, ok=False)
     # Keep the indexed identity unchanged while replacing paths on disk.

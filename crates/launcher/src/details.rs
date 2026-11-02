@@ -83,6 +83,7 @@ impl Panel {
     pub fn command(&mut self, command: Command) -> Effect {
         match command {
             Command::Back => self.event(Event::Back),
+            Command::Activate => self.event(Event::Preview),
             Command::CopyPath => self.event(Event::CopyLocation),
             Command::Up => Effect::Scroll(-48.0),
             Command::Down => Effect::Scroll(48.0),
@@ -102,7 +103,7 @@ impl Panel {
         let header = row![
             text("File details").size(20),
             space::horizontal(),
-            button(text("Preview text").size(12)).on_press(Event::Preview).style(ui::status_button_style),
+            button(ui::hint("Enter", "Preview text")).on_press(Event::Preview).style(ui::status_button_style),
             refresh
         ]
         .align_y(Vertical::Center);

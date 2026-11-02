@@ -95,9 +95,6 @@ fn read_pinned(pinned: &File) -> Result<(String, bool), Error> {
     if before.len() != after.len() || before.mtime() != after.mtime() || before.mtime_nsec() != after.mtime_nsec() {
         return Err(Error::Unavailable);
     }
-    if bytes.iter().any(|byte| *byte < 32 && !matches!(*byte, b'\n' | b'\r' | b'\t')) {
-        return Err(Error::Unsupported("The inspected text contains binary control characters."));
-    }
     let mut truncated = bytes.len() > MAX_BYTES;
     bytes.truncate(MAX_BYTES);
     let text = match std::str::from_utf8(&bytes) {
@@ -107,6 +104,9 @@ fn read_pinned(pinned: &File) -> Result<(String, bool), Error> {
         }
         Err(_) => return Err(Error::Unsupported("The inspected text is not valid UTF-8.")),
     };
+    if text.chars().any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')) {
+        return Err(Error::Unsupported("The inspected text contains binary control characters."));
+    }
     let mut text = text.replace("\r\n", "\n").replace('\r', "\n");
     let chars_end = text.char_indices().nth(MAX_CHARS).map_or(text.len(), |(index, _)| index);
     let lines_end = text.match_indices('\n').nth(MAX_LINES - 1).map_or(text.len(), |(index, _)| index);
@@ -120,6 +120,30 @@ fn read_pinned(pinned: &File) -> Result<(String, bool), Error> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn supported_mime_types_read_text_and_unknown_types_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("fixture");
+        std::fs::write(&path, "synthetic text").unwrap();
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        for mime in [
+            "text/plain",
+            "text/html",
+            "text/markdown",
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/toml",
+            "application/yaml",
+            "application/x-yaml",
+        ] {
+            assert!(matches!(read(&path, inode, mime), Ok((text, false)) if text == "synthetic text"));
+        }
+        for mime in ["", "application/octet-stream", "application/pdf", "image/png"] {
+            assert!(matches!(read(&path, inode, mime), Err(Error::Unsupported(_))));
+        }
+    }
 
     #[test]
     fn a_pinned_file_does_not_follow_a_replaced_path() {

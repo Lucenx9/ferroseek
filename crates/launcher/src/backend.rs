@@ -276,6 +276,10 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
                     .await
                     .map_err(|_| "Text preview timed out. Refresh to try again.".to_string())?;
                 let message = match response {
+                    Err(zbus::Error::FDO(error)) if matches!(error.as_ref(), zbus::fdo::Error::NotSupported(_)) => {
+                        let zbus::fdo::Error::NotSupported(reason) = *error else { unreachable!() };
+                        return Ok(TextPreview::Unsupported(reason));
+                    }
                     Err(zbus::Error::MethodError(name, detail, _))
                         if name.as_str() == "org.freedesktop.DBus.Error.NotSupported" =>
                     {

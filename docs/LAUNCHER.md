@@ -313,7 +313,7 @@ daemon versions are required.
 ## Text preview
 
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
-`preview` or `contents`), or from **File details**. The preview reads only when
+`preview` or `contents`), or press Enter in **File details**. The preview reads only when
 opened or refreshed; selecting another result never reads its contents. The view
 stays on the captured file even if search results change. Esc returns to File
 details when opened there, otherwise to the original search and selected target
@@ -336,7 +336,7 @@ Up/Down, Page Up/Down and Ctrl+Home/End scroll the text. **Refresh** (Ctrl+R)
 retries a failed read or fetches current content; it returns the scroll to the top.
 **Copy path** (Ctrl+Shift+C) copies the captured location, or its lossless file URL
 when the path contains non-UTF-8 bytes. The preview has no editor or content-copy
-command. Esc returns to the file actions for normal opening.
+command. Return to search to open the file normally.
 
 Only indexed regular files are accepted. Symbolic links in any path component,
 changed file identities and unavailable paths are refused. After atomic file

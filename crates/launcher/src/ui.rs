@@ -3079,13 +3079,14 @@ mod tests {
     #[test]
     fn preview_from_details_returns_to_its_parent_before_search() {
         let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
         let _ = update(&mut s, Message::Query("report".into()));
         let search = s.generation;
         let _ = update(&mut s, Message::Files { generation: search, result: Ok(Some(file_hits())) });
         let target = s.selected().unwrap().target.clone();
         let _ = s.perform(Action::Details);
         let details = s.details_generation;
-        let _ = update(&mut s, Message::Details { generation: details, event: details::Event::Preview });
+        let _ = command(&mut s, Command::Activate);
         assert!(s.text_preview.is_some() && s.file_details.is_some());
         // A queued click from the hidden parent cannot dismiss it or start another preview.
         let preview = s.preview_generation;
