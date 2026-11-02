@@ -254,7 +254,7 @@ pub fn expand(p: &str) -> PathBuf {
     if p == "~" {
         home()
     } else if let Some(rest) = p.strip_prefix("~/") {
-        home().join(rest)
+        home().join(rest.trim_start_matches('/'))
     } else {
         PathBuf::from(p)
     }
@@ -366,5 +366,33 @@ mod tests {
         assert!(Config::parse("unknown_key = 1").is_err());
         let d = Config::default();
         assert_eq!(Config::parse(&d.to_toml()).unwrap(), d);
+    }
+
+    #[test]
+    fn repeated_slashes_after_tilde_stay_under_home() {
+        const CHILD: &str = "FERROSEEK_TEST_TILDE_HOME";
+        if std::env::var_os(CHILD).is_some() {
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+            for root in ["~/Documents", "~//Documents", "~///Documents"] {
+                let config = Config::parse(&format!("roots = [{root:?}]")).unwrap();
+                assert_eq!(config.root_paths(), [home.join("Documents")], "{root}");
+            }
+            assert_eq!(normalize(&expand("~//")), home);
+            assert_eq!(expand("/Documents"), PathBuf::from("/Documents"));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::repeated_slashes_after_tilde_stay_under_home", "--nocapture"])
+            .env(CHILD, "1")
+            .env("HOME", temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
