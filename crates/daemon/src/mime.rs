@@ -23,13 +23,19 @@ pub struct MimeDb {
 
 fn data_dirs() -> Vec<std::path::PathBuf> {
     let mut v = vec![];
-    if let Some(h) = std::env::var_os("XDG_DATA_HOME") {
-        v.push(h.into());
-    } else if let Some(h) = std::env::var_os("HOME") {
-        v.push(Path::new(&h).join(".local/share"));
+    // Relative or empty XDG values are invalid and must be ignored.
+    match std::env::var_os("XDG_DATA_HOME").filter(|p| Path::new(p).is_absolute()) {
+        Some(h) => v.push(h.into()),
+        None => {
+            if let Some(h) = std::env::var_os("HOME").filter(|p| Path::new(p).is_absolute()) {
+                v.push(Path::new(&h).join(".local/share"));
+            }
+        }
     }
-    let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    v.extend(sys.split(':').filter(|s| !s.is_empty()).map(Into::into));
+    let sys = std::env::var_os("XDG_DATA_DIRS")
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| std::ffi::OsString::from("/usr/local/share:/usr/share"));
+    v.extend(std::env::split_paths(&sys).filter(|p| p.is_absolute()));
     v
 }
 
@@ -212,5 +218,44 @@ mod tests {
         if Path::new("/usr/share/mime/globs2").exists() {
             assert_eq!(d.mime_for("x.pdf"), Some("application/pdf"));
         }
+    }
+
+    #[test]
+    fn mime_lookup_ignores_relative_xdg_data_directories() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_DATA_DIRS";
+        if std::env::var_os(CASE).is_some() {
+            let db = MimeDb::load();
+            assert_eq!(db.mime_for("notes.probe"), Some("application/x-ferroseek-user"));
+            assert_eq!(db.mime_for("notes.sysprobe"), Some("application/x-ferroseek-system"));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, text) in [
+            ("home/.local/share/mime/globs2", "80:application/x-ferroseek-user:*.probe\n"),
+            ("relative-home/mime/globs2", "90:application/x-ferroseek-cwd:*.probe\n"),
+            ("system/mime/globs2", "50:application/x-ferroseek-system:*.sysprobe\n"),
+            ("relative-sys/mime/globs2", "90:application/x-ferroseek-relsys:*.sysprobe\n"),
+        ] {
+            let file = temp.path().join(relative);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, text).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mime::tests::mime_lookup_ignores_relative_xdg_data_directories"])
+            .current_dir(temp.path())
+            .env(CASE, "1")
+            .env("HOME", temp.path().join("home"))
+            .env("XDG_DATA_HOME", "relative-home")
+            .env("XDG_DATA_DIRS", format!("relative-sys:{}", temp.path().join("system").display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
