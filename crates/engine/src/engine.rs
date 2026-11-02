@@ -371,9 +371,13 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                     ix.rebuild()?;
                 }
                 Some(Msg::Roots(roots, reply)) => {
-                    pending.clear();
-                    first_event = None;
                     let applied = ix.replace_roots(roots);
+                    // Aliases and nested additions can leave the effective scope
+                    // unchanged. In that case no scan replaces debounced events.
+                    if !matches!(&applied, Ok(false)) {
+                        pending.clear();
+                        first_event = None;
+                    }
                     let _ = reply.send(applied.as_ref().map(|_| ()).map_err(ToString::to_string));
                     applied?;
                     refresh_counts(&ix, status);
@@ -474,5 +478,82 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
     refresh_counts(&ix, status);
     if let Err(e) = ix.into_writer().close() {
         log::error!("closing index failed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inotify::{DIR_MASK, IN_ATTRIB, IN_CREATE, IN_DELETE};
+    use ferroseek_index::{Query, Reader, SearchOptions};
+
+    #[test]
+    fn equivalent_folder_scope_preserves_debounced_creates_deletes_and_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("removed.txt"), "old").unwrap();
+        std::fs::write(root.join("modified.txt"), "old").unwrap();
+        let paths = Paths { config_file: temp.path().join("config.toml"), data_dir: temp.path().join("data") };
+        paths.ensure_data_dir().unwrap();
+        let cfg = Config {
+            roots: vec![root.to_str().unwrap().into()],
+            debounce_ms: 200,
+            max_cpu_percent: 100,
+            reconcile_interval_minutes: 0,
+            ..Config::default()
+        };
+        let ino = Inotify::new().unwrap();
+        let status = Arc::new(Status::default());
+        let ix = Indexer::new(
+            open_writer(&paths).unwrap(),
+            rules(&cfg, &paths),
+            cfg.root_paths(),
+            Some(ino.clone()),
+            status.clone(),
+        );
+        let (tx, rx) = mpsc::sync_channel(CHANNEL_BATCHES);
+        let worker = {
+            let paths = paths.clone();
+            let cfg = cfg.clone();
+            let status = status.clone();
+            std::thread::spawn(move || run_indexer(ix, rx, &cfg, &paths, status))
+        };
+        let until = Instant::now() + Duration::from_secs(5);
+        while status.state() != State::Idle && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(status.state(), State::Idle);
+        let wd = ino.add_watch(&root, DIR_MASK).unwrap();
+        std::fs::write(root.join("created.txt"), "new").unwrap();
+        std::fs::remove_file(root.join("removed.txt")).unwrap();
+        std::fs::write(root.join("modified.txt"), "changed metadata").unwrap();
+        // Inject a known FIFO batch before the scope request: no watcher timing
+        // race or periodic/full scan can hide a discarded event in this test.
+        tx.send(Msg::Events(vec![
+            RawEvent { wd, mask: IN_CREATE, cookie: 0, name: b"created.txt".to_vec() },
+            RawEvent { wd, mask: IN_DELETE, cookie: 0, name: b"removed.txt".to_vec() },
+            RawEvent { wd, mask: IN_ATTRIB, cookie: 0, name: b"modified.txt".to_vec() },
+        ]))
+        .unwrap();
+        let nested =
+            cfg.with_roots(vec![root.to_str().unwrap().into(), root.join("nested").to_str().unwrap().into()]).unwrap();
+        assert_eq!(nested.root_paths(), cfg.root_paths());
+        let (reply, received) = mpsc::channel();
+        tx.send(Msg::Roots(nested.root_paths(), reply)).unwrap();
+        received.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while status.events.load(Relaxed) < 3 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let events = status.events.load(Relaxed);
+        tx.send(Msg::Stop).unwrap();
+        worker.join().unwrap();
+        assert_eq!(events, 3, "equivalent scope must not drop the pending batch");
+        let reader = Reader::open(&paths.index_file()).unwrap();
+        let search = |name| reader.search(&Query::parse(name), &SearchOptions::default()).unwrap();
+        assert_eq!(search("created").len(), 1);
+        assert!(search("removed").is_empty());
+        assert_eq!(search("modified")[0].size, "changed metadata".len() as u64);
     }
 }
