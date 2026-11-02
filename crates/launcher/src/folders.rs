@@ -357,14 +357,14 @@ impl Panel {
 
     pub fn view(&self) -> Element<'_, Event> {
         let editable = self.phase == Phase::Ready && self.pending.is_none() && self.document.is_some();
-        let mut reload = button(ui::hint("Ctrl+R", "Reload")).style(ui::status_button_style);
+        let mut reload = button(ui::hint("Ctrl+R", "Reload")).padding([6, 8]).style(ui::status_button_style);
         if !self.busy() && self.phase != Phase::Loading {
             reload = reload.on_press(Event::Reload);
         }
         let header =
             container(row![text("Search folders").size(20), space::horizontal(), reload].align_y(Vertical::Center))
                 .height(58)
-                .padding([0, 16])
+                .padding(iced::padding::left(16).right(8))
                 .align_y(Vertical::Center);
         let mut body = column![].spacing(10).padding(16);
         if self.phase == Phase::Loading {
@@ -392,7 +392,11 @@ impl Panel {
                     .color(palette::ACCENT),
                 );
             }
-            let mut input = text_input("Absolute path or ~/Documents", &self.input).id(input_id()).size(14).padding(8);
+            let mut input = text_input("Absolute path or ~/Documents", &self.input)
+                .id(input_id())
+                .size(14)
+                .padding(8)
+                .style(ui::field_style);
             let mut add = button(ui::hint("Enter", "Add folder")).style(ui::status_button_style);
             if editable {
                 input = input.on_input(Event::Input);
@@ -493,9 +497,10 @@ impl Panel {
                 .spacing(12),
             );
         }
-        let mut save = button(ui::hint("Ctrl+S", "Save & apply")).style(ui::status_button_style);
-        let mut back =
-            button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" })).style(ui::status_button_style);
+        let mut save = button(ui::hint("Ctrl+S", "Save & apply")).padding([4, 8]).style(ui::status_button_style);
+        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" }))
+            .padding([4, 8])
+            .style(ui::status_button_style);
         if self.phase == Phase::Ready && self.document.is_some() && self.pending.is_none() {
             save = save.on_press(Event::Save);
         }
@@ -504,9 +509,10 @@ impl Panel {
         }
         let footer = container(row![back, space::horizontal(), save].align_y(Vertical::Center))
             .height(34)
-            .padding([0, 10])
+            .padding([0, 8])
             .align_y(Vertical::Center);
-        container(column![header, scrollable(body).id(scroll_id()).height(Length::Fill), footer])
+        let body = scrollable(body).id(scroll_id()).height(Length::Fill);
+        container(column![header, ui::divider(), body, ui::divider(), footer])
             .padding(8)
             .height(Length::Fill)
             .width(Length::Fill)

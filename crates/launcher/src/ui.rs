@@ -12,7 +12,7 @@ use iced::mouse::{self, ScrollDelta};
 use iced::widget::{
     self, Id, button, column, container, image, mouse_area, row, scrollable, space, stack, svg, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme};
+use iced::{Background, Border, Color, Element, Length, Shadow, Subscription, Task, Theme, Vector, padding};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
@@ -56,6 +56,8 @@ pub(crate) mod palette {
     pub const ACCENT: Color = Color::from_rgb8(0xe0, 0x70, 0x3a);
     pub const SELECTED: Color = Color::from_rgba8(0xe0, 0x70, 0x3a, 0.18);
     pub const ERROR: Color = Color::from_rgb8(0xe8, 0x6a, 0x6a);
+    /// Floating layers above the surface, such as the action panel.
+    pub const RAISED: Color = Color::from_rgb8(0x22, 0x23, 0x29);
 }
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
@@ -968,7 +970,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         Scope::Files => "Search indexed files…",
     };
     let input =
-        text_input(placeholder, &s.query).id(search_id()).on_input(Message::Query).size(20).padding([14, 12]).style(
+        text_input(placeholder, &s.query).id(search_id()).on_input(Message::Query).size(20).padding([14, 8]).style(
             |_, _| text_input::Style {
                 background: Background::Color(Color::TRANSPARENT),
                 border: Border::default(),
@@ -1001,7 +1003,12 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         .style(status_button_style);
     let folders =
         button(text("Folders").size(11)).on_press(Message::ShowFolders).padding([6, 8]).style(status_button_style);
-    let header = container(row![input, scopes, index_status, folders].spacing(4).align_y(Vertical::Center))
+    // A hairline separates the result filter from the two screens it does not affect.
+    let separator = container(space())
+        .width(1)
+        .height(16)
+        .style(|_| container::Style { background: Some(Background::Color(palette::BORDER)), ..Default::default() });
+    let header = container(row![input, scopes, separator, index_status, folders].spacing(4).align_y(Vertical::Center))
         .padding([0, 8])
         .height(INPUT_HEIGHT)
         .align_y(Vertical::Center);
@@ -1014,13 +1021,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     }
     body = body.push(footer(s));
 
-    let surface =
-        container(body).padding([PAD, PAD]).width(Length::Fill).height(Length::Fill).style(|_| container::Style {
-            background: Some(Background::Color(palette::SURFACE)),
-            border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
-            text_color: Some(palette::TEXT),
-            ..Default::default()
-        });
+    let surface = container(body).padding(PAD).width(Length::Fill).height(Length::Fill).style(surface_style);
 
     crate::shortcuts::capture_numbered(match (&s.panel, s.selected()) {
         (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target)].into(),
@@ -1037,7 +1038,7 @@ pub(crate) fn surface_style(_: &Theme) -> container::Style {
     }
 }
 
-fn divider<'a>() -> Element<'a, Message> {
+pub(crate) fn divider<'a, M: 'a>() -> Element<'a, M> {
     container(space::horizontal())
         .height(1)
         .width(Length::Fill)
@@ -1053,6 +1054,25 @@ fn index_summary(status: &SearchStatus) -> (&'static str, &'static str) {
         "paused" => ("Indexing paused", "File changes are not indexed while the service is paused."),
         "stopping" => ("File search is stopping", "Return to search and retry when the service is available."),
         _ => ("Unrecognized search status", "Update the launcher and search service together, then refresh."),
+    }
+}
+
+/// Editable fields: quiet until focused, then outlined in the accent.
+pub(crate) fn field_style(_: &Theme, status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: Background::Color(palette::FAINT),
+        border: Border {
+            color: match status {
+                text_input::Status::Focused { .. } => palette::ACCENT,
+                _ => palette::BORDER,
+            },
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        icon: palette::DIM,
+        placeholder: palette::DIM,
+        value: palette::TEXT,
+        selection: palette::SELECTED,
     }
 }
 
@@ -1087,7 +1107,7 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     let header =
         container(row![text("File search status").size(20), space::horizontal(), refresh].align_y(Vertical::Center))
             .height(INPUT_HEIGHT)
-            .padding([0, 16])
+            .padding(padding::left(16).right(PAD))
             .align_y(Vertical::Center);
     let mut content = column![].spacing(12).padding(16);
     match status {
@@ -1148,18 +1168,13 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
         .align_y(Vertical::Center),
     )
     .height(FOOTER_HEIGHT)
-    .padding([0, 10])
+    .padding(padding::left(16).right(PAD))
     .align_y(Vertical::Center);
     container(column![header, divider(), detail, divider(), footer])
         .padding(PAD)
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(palette::SURFACE)),
-            border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
-            text_color: Some(palette::TEXT),
-            ..Default::default()
-        })
+        .style(surface_style)
         .into()
 }
 
@@ -1231,19 +1246,23 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     if s.panel.is_none() {
         content = content.push(numbered_hint(slot));
     }
-    let content = content.spacing(12).align_y(Vertical::Center).padding([0, 12]);
-    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT - 16.0).style(move |_| container::Style {
+    let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
+    // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
+    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT / 2.0).style(move |_| container::Style {
         background: selected.then_some(Background::Color(palette::ACCENT)),
-        border: Border { radius: 2.0.into(), ..Default::default() },
+        border: Border { radius: 1.5.into(), ..Default::default() },
         ..Default::default()
     });
-    let row = container(row![bar, content].align_y(Vertical::Center)).height(ROW_HEIGHT).width(Length::Fill).style(
-        move |_| container::Style {
+    let bar = container(bar).padding(padding::left(4));
+    let row = container(row![bar, content].align_y(Vertical::Center))
+        .height(ROW_HEIGHT)
+        .width(Length::Fill)
+        .align_y(Vertical::Center)
+        .style(move |_| container::Style {
             background: selected.then_some(Background::Color(palette::SELECTED)),
             border: Border { radius: 9.0.into(), ..Default::default() },
             ..Default::default()
-        },
-    );
+        });
     mouse_area(row)
         .on_press(Message::Selected(item.target.clone()))
         .on_double_click(Message::Clicked(item.target.clone()))
@@ -1257,7 +1276,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         return container(text(UNCONFIRMED_OPEN).size(12).color(palette::ERROR))
             .width(Length::Fill)
             .height(FOOTER_HEIGHT)
-            .padding([0, 10])
+            .padding([0, 16])
             .align_y(Vertical::Center)
             .into();
     }
@@ -1292,12 +1311,14 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             ),
         );
     } else {
-        hints = hints.push(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" }));
+        // Same inset as the Actions button, so the last hint keeps the right edge.
+        hints = hints
+            .push(container(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" })).padding([3, 6]));
     }
     container(
         row![text(msg).size(12).color(color).wrapping(text::Wrapping::None), space::horizontal(), hints]
             .align_y(Vertical::Center)
-            .padding([0, 10]),
+            .padding(padding::left(16).right(10)),
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
@@ -1324,9 +1345,15 @@ fn numbered_hint(slot: usize) -> Element<'static, Message> {
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
-    let input =
-        text_input("Search actions…", &p.query).id(actions_id()).on_input(Message::ActionQuery).size(14).padding(8);
-    let mut col = column![text(ellipsize_end(&p.title, 32)).size(12).color(palette::DIM), input].spacing(4);
+    let input = text_input("Search actions…", &p.query)
+        .id(actions_id())
+        .on_input(Message::ActionQuery)
+        .size(14)
+        .padding([8, 10])
+        .style(field_style);
+    // Title, field, rows and footer share the rows' 10 px text inset.
+    let title = container(text(ellipsize_end(&p.title, 32)).size(12).color(palette::DIM)).padding([0, 10]);
+    let mut col = column![title, input].spacing(4);
     let actions = p.filtered_actions();
     if actions.is_empty() {
         col = col.push(container(text("No matching actions").size(13).color(palette::DIM)).padding(10));
@@ -1359,8 +1386,9 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 .interaction(mouse::Interaction::Pointer),
         );
     }
-    let mut footer =
-        row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })].align_y(Vertical::Center);
+    let mut footer = row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })]
+        .align_y(Vertical::Center)
+        .padding([4, 10]);
     if actions.len() > VISIBLE_ROWS {
         let window = p.cursor.window(actions.len());
         footer = footer.push(space::horizontal()).push(
@@ -1369,9 +1397,11 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     }
     col = col.push(footer);
     let panel = container(col).width(360).padding(8).style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x22, 0x23, 0x29))),
+        background: Some(Background::Color(palette::RAISED)),
         border: Border { color: palette::BORDER, width: 1.0, radius: 10.0.into() },
         text_color: Some(palette::TEXT),
+        // Lifts the panel off the identical results behind it.
+        shadow: Shadow { color: Color::from_rgba8(0, 0, 0, 0.45), offset: Vector::new(0.0, 6.0), blur_radius: 18.0 },
         ..Default::default()
     });
     container(panel)
