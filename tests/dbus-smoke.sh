@@ -102,6 +102,11 @@ echo "== Applications for an indexed file"
 url="file://$T/root/Documents/Quarterly%20Report.pdf"
 out=$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Applications "$url")
 [[ "$out" == *"document-viewer.desktop"* && "$out" == *"Document Viewer"* ]] || fail "declared NoDisplay file handler missing"
+echo "== Open with an explicitly selected application"
+call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.OpenWith "$url" "document-viewer.desktop" "selected-token" >/dev/null
+for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
+[[ "$(cat "$T/open-log")" == "$(printf 'selected-token\n2\n--document\n%s' "$T/root/Documents/Quarterly Report.pdf")" ]] || fail "selected handler did not receive one file argument and token"
+rm "$T/open-log"
 echo "== Live update"
 echo x > "$T/root/brand-new-file.txt"
 for _ in $(seq 100); do
