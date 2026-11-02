@@ -1254,7 +1254,7 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
                 return s.back_folder_search();
             }
             let clear = update(s, Message::Query(String::new()));
-            Task::batch([clear, widget::operation::focus(search_id())])
+            return Task::batch([clear, widget::operation::focus(search_id())]);
         }
         Command::Back => {
             if s.query.is_empty() {
@@ -2573,6 +2573,191 @@ mod tests {
         let _ = command(&mut s, Command::Back);
         assert!(s.query.is_empty());
         let _ = command(&mut s, Command::Back);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.selected().unwrap().target, target);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    fn search_folder_hit(path: &str) -> FileHit {
+        FileHit {
+            id: format!("file://{path}"),
+            path: Some(path.into()),
+            name: std::path::Path::new(path).file_name().unwrap().to_string_lossy().into(),
+            icon: "folder".into(),
+            subtext: "/synthetic".into(),
+            is_dir: true,
+        }
+    }
+
+    #[test]
+    fn nested_folder_search_rejects_stale_replies_and_back_buttons() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let root_generation = s.generation;
+        let parent = search_folder_hit("/synthetic/Reports");
+        let _ = update(&mut s, Message::Files { generation: root_generation, result: Ok(Some(vec![parent.clone()])) });
+        let root_target = Target::File(parent.clone());
+        s.cursor.select_target(&root_target, &s.items);
+        let _ = command(&mut s, Command::SearchFolder);
+        let parent_back = s.scope_generation;
+        let _ = update(&mut s, Message::Files { generation: root_generation, result: Ok(Some(file_hits())) });
+        assert!(s.items.is_empty());
+        let _ = update(&mut s, Message::Scope(Scope::All));
+        let _ = command(&mut s, Command::NextScope);
+        assert_eq!(s.scope, Scope::Files);
+        let _ = update(&mut s, Message::Query("=2+3".into()));
+        assert!(s.items.is_empty(), "folder searches cannot become calculator queries");
+        let parent_query = s.generation;
+        let child = search_folder_hit("/synthetic/Reports/Child");
+        let _ = update(&mut s, Message::Files { generation: parent_query, result: Ok(Some(vec![child.clone()])) });
+        let _ = command(&mut s, Command::SearchFolder);
+        assert_eq!(s.search_folder.as_ref(), Some(&child));
+        let _ = update(&mut s, Message::FolderBack { generation: parent_back });
+        assert_eq!(s.search_folder.as_ref(), Some(&child));
+        let _ = update(&mut s, Message::Files { generation: parent_query, result: Ok(Some(file_hits())) });
+        assert!(s.items.is_empty());
+        let _ = update(&mut s, Message::Query("child".into()));
+        let old = s.generation;
+        let _ = update(&mut s, Message::Files { generation: old, result: Err("unavailable".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let pending_child = s.generation;
+        assert!(pending_child > old);
+        let _ = update(&mut s, Message::Files { generation: old, result: Err("late".into()) });
+        assert_eq!(s.status, Status::Searching);
+        let _ = command(&mut s, Command::BackFolder);
+        assert_eq!(s.search_folder.as_ref(), Some(&parent));
+        assert_eq!(s.query, "=2+3");
+        assert_eq!(s.selected().unwrap().target, Target::File(child));
+        let _ = update(&mut s, Message::Files { generation: pending_child, result: Ok(Some(file_hits())) });
+        assert_eq!(s.items.len(), 1);
+        let _ = command(&mut s, Command::BackFolder);
+        assert!(s.search_folder.is_none());
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.selected().unwrap().target, root_target);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn applying_folder_configuration_restores_the_original_global_query() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(
+            &mut s,
+            Message::Files { generation, result: Ok(Some(vec![search_folder_hit("/synthetic/Reports")])) },
+        );
+        s.cursor.select_target(&Target::File(search_folder_hit("/synthetic/Reports")), &s.items);
+        let _ = command(&mut s, Command::SearchFolder);
+        let _ = update(&mut s, Message::Query("local query".into()));
+        let stale = s.generation;
+        let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
+        assert!(s.search_folder.is_none() && s.folder_search_history.is_empty());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        let _ = update(&mut s, Message::Files { generation: stale, result: Ok(Some(file_hits())) });
+        assert!(s.files.is_empty());
+    }
+
+    #[test]
+    fn empty_folder_queries_do_not_show_global_recent_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("global-recent.txt");
+        std::fs::write(&file, "fixture").unwrap();
+        let mut s = search_state();
+        s.usage.record(Kind::File, &format!("file://{}", file.display()), "", usage::now());
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query(String::new()));
+        assert!(!s.items.is_empty());
+        let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports"));
+        assert!(s.items.is_empty());
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(Vec::new())) });
+        assert!(s.items.is_empty());
+    }
+
+    #[test]
+    fn folder_search_keys_pass_through_the_focused_widget_and_subscription() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let folder = search_folder_hit("/synthetic/Reports");
+        let target = Target::File(folder.clone());
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![folder])) });
+        s.cursor.select_target(&target, &s.items);
+        for (key, code, modifiers, typed) in [
+            (Key::Named(keyboard::key::Named::ArrowRight), Code::ArrowRight, Modifiers::CTRL, None),
+            (Key::Character("n".into()), Code::KeyN, Modifiers::empty(), Some("n")),
+            (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL, None),
+            (Key::Named(keyboard::key::Named::ArrowLeft), Code::ArrowLeft, Modifiers::ALT, None),
+        ] {
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers,
+                text: typed.map(Into::into),
+                repeat: false,
+            });
+            let messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(720.0, 500.0);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                let layout = Layout::new(&node);
+                widget.operate(
+                    &mut tree,
+                    layout,
+                    &renderer,
+                    &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()),
+                );
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+                    layout,
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                widget.update(
+                    &mut tree,
+                    &event,
+                    layout,
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                if let Some(message) = on_event(event, shell.event_status(), iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+                messages
+            };
+            assert_eq!(messages.len(), 1);
+            for message in messages {
+                let _ = update(&mut s, message);
+            }
+            if code == Code::ArrowRight {
+                assert!(s.query.is_empty() && s.search_folder.is_some());
+            }
+            if code == Code::KeyN || code == Code::KeyR {
+                assert_eq!(s.query, "n");
+            }
+            assert!(s.opening.is_none());
+        }
+        assert!(s.search_folder.is_none());
         assert_eq!(s.query, "report");
         assert_eq!(s.scope, Scope::All);
         assert_eq!(s.selected().unwrap().target, target);

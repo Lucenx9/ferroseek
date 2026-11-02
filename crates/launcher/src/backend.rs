@@ -532,6 +532,15 @@ mod tests {
             }
         }
 
+        async fn search_within(&self, folder: &str, query: &str) -> zbus::fdo::Result<Vec<FileResult>> {
+            self.0.send((folder.into(), query.into())).unwrap();
+            match folder {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("unavailable directory".into())),
+                _ => self.search(query).await,
+            }
+        }
+
         async fn search(&self, query: &str) -> zbus::fdo::Result<Vec<FileResult>> {
             match query {
                 "stall" => return std::future::pending().await,
@@ -818,6 +827,46 @@ mod tests {
             };
             iced::futures::future::join(
                 serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
+        });
+    }
+
+    #[test]
+    fn folder_queries_capture_scope_and_text_and_never_fall_back_to_global_search() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (tx, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                let folder = "file:///synthetic/Reports%20%C3%A8";
+                assert!(backend.clone().search_within(folder.into(), "a/b report".into()).await.unwrap().is_some());
+                assert_eq!(requests.try_recv().unwrap(), (folder.into(), "a/b report".into()));
+                assert!(backend.clone().search_within("reject".into(), "report".into()).await.is_err());
+                assert_eq!(requests.try_recv().unwrap().0, "reject");
+                assert_eq!(
+                    backend.clone().search_within("stall".into(), "report".into()).await.unwrap_err(),
+                    SEARCH_TIMED_OUT
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "stall");
+                assert!(requests.try_recv().is_err(), "no implicit retries");
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { search: Duration::from_millis(40), ..Timeouts::default() }),
                 verify,
             )
             .await;
