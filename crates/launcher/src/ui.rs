@@ -24,6 +24,7 @@ use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
+use crate::open_with;
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -184,6 +185,8 @@ pub struct Launcher {
     clicks: ClickTracker,
     panel: Option<Panel>,
     search_status: Option<SearchStatusPanel>,
+    application_picker: Option<open_with::Panel>,
+    application_generation: u64,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -200,6 +203,8 @@ pub enum Message {
     Query(String),
     Scope(Scope),
     ActionQuery(String),
+    ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
+    OpenWith { generation: u64, event: open_with::Event },
     ShowSearchStatus,
     ShowFolders,
     FolderShortcut(folders::Shortcut),
@@ -283,6 +288,8 @@ fn boot() -> (Launcher, Task<Message>) {
         clicks: ClickTracker::default(),
         panel: None,
         search_status: None,
+        application_picker: None,
+        application_generation: 0,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -408,6 +415,7 @@ impl Launcher {
             && self.items.is_empty()
             && self.search_status.is_none()
             && self.folder_settings.is_none()
+            && self.application_picker.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -424,7 +432,8 @@ impl Launcher {
     fn perform(&mut self, action: Action) -> Task<Message> {
         self.clicks = ClickTracker::default();
         let Some(item) = self.selected().cloned() else { return Task::none() };
-        let opens = matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal);
+        let opens =
+            matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
         if opens && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
         }
@@ -454,6 +463,12 @@ impl Launcher {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
                 Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened)
+            }
+            (Action::OpenWith, Target::File(file)) if !file.is_dir && file.path.is_some() => {
+                self.panel = None;
+                self.application_picker = Some(open_with::Panel::new(file.clone()));
+                let load = self.request_applications();
+                Task::batch([load, self.resize(), widget::operation::focus(open_with::input_id())])
             }
             (Action::CopyPath, Target::File(f)) => match &f.path {
                 Some(p) => self.copy(p.to_string_lossy().into_owned(), "path"),
@@ -577,6 +592,48 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn request_applications(&mut self) -> Task<Message> {
+        let Some(panel) = &self.application_picker else { return Task::none() };
+        let id = panel.file.id.clone();
+        self.application_generation += 1;
+        let generation = self.application_generation;
+        Task::perform(self.backend.clone().applications(id), move |result| Message::ApplicationsLoaded {
+            generation,
+            result,
+        })
+    }
+
+    fn application_effect(&mut self, effect: open_with::Effect) -> Task<Message> {
+        match effect {
+            open_with::Effect::None => Task::none(),
+            open_with::Effect::Focus => widget::operation::focus(open_with::input_id()),
+            open_with::Effect::Close => {
+                if let Some(panel) = self.application_picker.take() {
+                    self.cursor.select_target(&Target::File(panel.file), &self.items);
+                }
+                self.application_generation += 1;
+                Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            open_with::Effect::Reload => {
+                if self.opening.is_some() || !self.application_picker.as_mut().is_some_and(|panel| panel.loading()) {
+                    return Task::none();
+                }
+                Task::batch([self.request_applications(), widget::operation::focus(open_with::input_id())])
+            }
+            open_with::Effect::Open(app) => {
+                if self.opening.is_some() || self.unconfirmed_open {
+                    return Task::none();
+                }
+                let Some(panel) = &mut self.application_picker else { return Task::none() };
+                let id = panel.file.id.clone();
+                panel.opening();
+                self.opening = Some((id.clone(), self.query.clone()));
+                self.status = Status::Notice("Opening…".into());
+                Task::perform(self.backend.clone().run_with(id, app), Message::Opened)
+            }
+        }
+    }
+
     fn refresh_search_status(&mut self) -> Task<Message> {
         if matches!(self.search_status, Some(SearchStatusPanel::Loading)) {
             return Task::none();
@@ -626,6 +683,22 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.application_picker.is_some()
+        && matches!(
+            message,
+            Message::Query(_)
+                | Message::Scope(_)
+                | Message::ActionQuery(_)
+                | Message::Selected(_)
+                | Message::Clicked(_)
+                | Message::ContextMenu(_)
+                | Message::PanelClicked { .. }
+                | Message::ShowSearchStatus
+                | Message::ShowFolders
+        )
+    {
+        return Task::none();
+    }
     if s.folder_settings.is_some()
         && matches!(
             message,
@@ -657,6 +730,29 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::ApplicationsLoaded { generation, result } => {
+            if generation == s.application_generation {
+                if let Some(panel) = &mut s.application_picker {
+                    panel.loaded(result, &mut s.icons);
+                    return widget::operation::focus(open_with::input_id());
+                }
+            }
+            Task::none()
+        }
+        Message::OpenWith { generation, event } => {
+            if generation != s.application_generation {
+                return Task::none();
+            }
+            if s.opening.is_some() && !matches!(event, open_with::Event::Back) {
+                return Task::none();
+            }
+            let Some(panel) = &mut s.application_picker else { return Task::none() };
+            let effect = panel.event(event);
+            s.application_effect(effect)
+        }
+        Message::RefreshSearchStatus if s.application_picker.is_some() => {
+            s.application_effect(open_with::Effect::Reload)
+        }
         Message::ShowFolders => {
             if let Some(panel) = &mut s.folder_settings {
                 let (task, effect) = panel.update(folders::Event::Back, s.backend.clone());
@@ -787,6 +883,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
+            if let Some(panel) = &mut s.application_picker {
+                if s.opening.is_none() {
+                    panel.wheel(if dy > 0.0 { -1 } else { 1 });
+                }
+                return Task::none();
+            }
             if s.search_status.is_some() || s.folder_settings.is_some() {
                 return Task::none(); // the status scrollable handles its own wheel events
             }
@@ -858,6 +960,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                     Status::Error(UNCONFIRMED_OPEN.into())
                 }
             };
+            if let Some(panel) = &mut s.application_picker
+                && let Status::Error(error) = &s.status
+            {
+                panel.failed(error.clone());
+            }
             s.resize()
         }
         Message::Ui(UiEvent::Toggle) => iced::exit(),
@@ -869,6 +976,13 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.application_picker {
+        if s.opening.is_some() && cmd != Command::Back {
+            return Task::none();
+        }
+        let effect = panel.command(cmd);
+        return s.application_effect(effect);
+    }
     if let Some(panel) = &mut s.folder_settings {
         let (task, effect) = panel.command(cmd, s.backend.clone());
         return s.finish_folders(task, effect);
@@ -960,6 +1074,10 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.application_picker {
+        let generation = s.application_generation;
+        return panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event });
+    }
     if let Some(panel) = &s.folder_settings {
         let generation = s.folder_generation;
         return panel.view().map(move |event| Message::Folder { generation, event });
@@ -1472,6 +1590,8 @@ mod tests {
             clicks: ClickTracker::default(),
             panel: None,
             search_status: None,
+            application_picker: None,
+            application_generation: 0,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
