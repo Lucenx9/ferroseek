@@ -92,7 +92,11 @@ pub fn path_from_url(u: &str) -> Option<PathBuf> {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' {
-            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            let hex = b.get(i + 1..i + 3)?;
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return None;
+            }
+            let hex = std::str::from_utf8(hex).ok()?;
             out.push(u8::from_str_radix(hex, 16).ok()?);
             i += 3;
         } else {
@@ -110,7 +114,8 @@ pub fn path_from_url(u: &str) -> Option<PathBuf> {
 fn subtext(path: &Path, home: &Path) -> String {
     let parent = path.parent().unwrap_or(Path::new("/"));
     match parent.strip_prefix(home) {
-        Ok(rel) if !home.as_os_str().is_empty() => {
+        // `/` is a prefix of every absolute path. It is not a home directory.
+        Ok(rel) if !home.as_os_str().is_empty() && home.parent().is_some() => {
             if rel.as_os_str().is_empty() {
                 "~".to_string()
             } else {
@@ -358,6 +363,10 @@ mod tests {
         assert!(path_from_url("https://x/y").is_none());
         assert!(path_from_url("file:///a%00b").is_none());
         assert!(path_from_url("file:///a%zz").is_none());
+        for escape in ["%+1", "%+A", "%-1", "%gg", "%1", "%"] {
+            assert!(path_from_url(&format!("file:///tmp/file{escape}")).is_none(), "accepted {escape}");
+        }
+        assert_eq!(path_from_url("file:///tmp/%2b%41").unwrap(), Path::new("/tmp/+A"));
     }
 
     #[test]
@@ -366,5 +375,7 @@ mod tests {
         assert_eq!(subtext(Path::new("/home/u/a.txt"), h), "~");
         assert_eq!(subtext(Path::new("/home/u/d/a.txt"), h), "~/d");
         assert_eq!(subtext(Path::new("/srv/a.txt"), h), "/srv");
+        assert_eq!(subtext(Path::new("/etc/passwd"), Path::new("/")), "/etc");
+        assert_eq!(subtext(Path::new("/passwd"), Path::new("/")), "/");
     }
 }
