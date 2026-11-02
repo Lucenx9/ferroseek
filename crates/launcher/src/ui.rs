@@ -163,6 +163,15 @@ impl Panel {
     }
 }
 
+struct FolderSearchFrame {
+    query: String,
+    scope: Scope,
+    folder: Option<FileHit>,
+    files: Vec<FileHit>,
+    cursor: Cursor,
+    selected: Option<Target>,
+}
+
 pub struct Launcher {
     backend: Backend,
     apps: Vec<App>,
@@ -176,6 +185,9 @@ pub struct Launcher {
     icons: Icons,
     query: String,
     scope: Scope,
+    search_folder: Option<FileHit>,
+    folder_search_history: Vec<FolderSearchFrame>,
+    scope_generation: u64,
     app_hits: Vec<(usize, u32)>,
     /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
@@ -206,6 +218,7 @@ pub enum Message {
     Query(String),
     Scope(Scope),
     ActionQuery(String),
+    FolderBack { generation: u64 },
     DetailsLoaded { generation: u64, result: Result<crate::backend::FileDetails, String> },
     Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
@@ -285,6 +298,9 @@ fn boot() -> (Launcher, Task<Message>) {
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
         scope: Scope::All,
+        search_folder: None,
+        folder_search_history: Vec::new(),
+        scope_generation: 0,
         app_hits: Vec::new(),
         files: Vec::new(),
         items: Vec::new(),
@@ -365,7 +381,11 @@ impl Launcher {
     /// instead of jumping to the first row.
     fn rebuild(&mut self, keep_selection: bool) {
         let previous = keep_selection.then(|| self.selected().map(|i| i.target.clone())).flatten();
-        self.items = if self.query.trim().is_empty() {
+        self.items = if self.search_folder.is_some() {
+            let mut files = self.files.clone();
+            model::order_files(&mut files, |file| self.usage.boost(Kind::File, &file.id, &self.query, usage::now()));
+            model::build_items(&[], &[], &files)
+        } else if self.query.trim().is_empty() {
             model::home_items(
                 &self.apps,
                 &self.usage.recent(usage::now(), usize::MAX),
@@ -418,7 +438,8 @@ impl Launcher {
 
     fn resize(&mut self) -> Task<Message> {
         // Not while searching: rows would collapse and reappear per key.
-        let compact = self.query.trim().is_empty()
+        let compact = self.search_folder.is_none()
+            && self.query.trim().is_empty()
             && self.items.is_empty()
             && self.search_status.is_none()
             && self.folder_settings.is_none()
@@ -442,7 +463,7 @@ impl Launcher {
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens =
             matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
-        if (opens || action == Action::Details) && self.opening.is_some() {
+        if (opens || matches!(action, Action::Details | Action::SearchFolder)) && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
         }
         if opens && self.unconfirmed_open {
@@ -471,6 +492,9 @@ impl Launcher {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
                 Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened)
+            }
+            (Action::SearchFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
+                self.enter_folder_search(folder.clone())
             }
             (Action::Details, Target::File(file)) if !file.is_dir && file.path.is_some() => {
                 self.panel = None;
@@ -606,6 +630,81 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn request_files(&self) -> Task<Message> {
+        let (backend, query, folder, generation) = (
+            self.backend.clone(),
+            self.query.clone(),
+            self.search_folder.as_ref().map(|folder| folder.id.clone()),
+            self.generation,
+        );
+        Task::perform(
+            async move {
+                if let Some(folder) = folder {
+                    backend.search_within(folder, query).await
+                } else {
+                    backend.search(query).await
+                }
+            },
+            move |result| Message::Files { generation, result },
+        )
+    }
+
+    fn enter_folder_search(&mut self, folder: FileHit) -> Task<Message> {
+        if self.folder_search_history.len() >= 32 {
+            self.status = Status::Error("Return to a previous folder before narrowing further.".into());
+            return Task::none();
+        }
+        self.folder_search_history.push(FolderSearchFrame {
+            query: self.query.clone(),
+            scope: self.scope,
+            folder: self.search_folder.take(),
+            files: self.files.clone(),
+            cursor: self.cursor,
+            selected: self.selected().map(|item| item.target.clone()),
+        });
+        self.search_folder = Some(folder);
+        self.scope_generation += 1;
+        self.scope = Scope::Files;
+        let query = update(self, Message::Query(String::new()));
+        Task::batch([query, widget::operation::focus(search_id())])
+    }
+
+    fn restore_folder_search(&mut self, frame: FolderSearchFrame) {
+        self.query = frame.query;
+        self.scope = frame.scope;
+        self.search_folder = frame.folder;
+        self.files = frame.files;
+        self.generation += 1;
+        self.scope_generation += 1;
+        self.panel = None;
+        self.status = Status::Idle;
+        self.app_hits = if self.scope.includes_apps() && !calc::is_explicit(&self.query) {
+            model::match_apps(&self.apps, &self.query, |app| {
+                self.usage.boost(Kind::App, &app.id, &self.query, usage::now())
+            })
+        } else {
+            Vec::new()
+        };
+        self.rebuild(false);
+        self.cursor = frame.cursor;
+        self.cursor.select(self.cursor.selected, self.items.len());
+        if let Some(target) = frame.selected {
+            self.cursor.select_target(&target, &self.items);
+        }
+    }
+
+    fn back_folder_search(&mut self) -> Task<Message> {
+        let Some(frame) = self.folder_search_history.pop() else { return Task::none() };
+        self.restore_folder_search(frame);
+        let refresh = if self.search_folder.is_some() || self.scope.file_query(&self.query) {
+            self.status = Status::Searching;
+            self.request_files()
+        } else {
+            Task::none()
+        };
+        Task::batch([refresh, self.resize(), widget::operation::focus(search_id())])
+    }
+
     fn request_file_details(&mut self) -> Task<Message> {
         let Some(panel) = &self.file_details else { return Task::none() };
         let id = panel.file.id.clone();
@@ -721,6 +820,10 @@ impl Launcher {
             folders::Effect::Applied => {
                 self.folder_settings = None;
                 self.folder_generation += 1;
+                let root = self.folder_search_history.drain(..).next();
+                if let Some(root) = root {
+                    self.restore_folder_search(root);
+                }
                 let query = self.deferred_query.take().unwrap_or_else(|| self.query.clone());
                 let search = update(self, Message::Query(query));
                 self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
@@ -737,6 +840,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             Message::Query(_)
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
+                | Message::FolderBack { .. }
                 | Message::Selected(_)
                 | Message::Clicked(_)
                 | Message::ContextMenu(_)
@@ -753,6 +857,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             Message::Query(_)
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
+                | Message::FolderBack { .. }
                 | Message::Selected(_)
                 | Message::Clicked(_)
                 | Message::ContextMenu(_)
@@ -769,6 +874,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             Message::Query(_)
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
+                | Message::FolderBack { .. }
                 | Message::Selected(_)
                 | Message::Clicked(_)
                 | Message::ContextMenu(_)
@@ -778,6 +884,13 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::FolderBack { generation } => {
+            if generation == s.scope_generation {
+                s.back_folder_search()
+            } else {
+                Task::none()
+            }
+        }
         Message::DetailsLoaded { generation, result } => {
             if generation == s.details_generation
                 && let Some(panel) = &mut s.file_details
@@ -863,6 +976,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             Task::batch([load, s.resize()])
         }
         Message::RefreshSearchStatus if s.search_status.is_some() => s.refresh_search_status(),
+        Message::RefreshSearchStatus if s.search_folder.is_some() => {
+            let query = s.query.clone();
+            update(s, Message::Query(query))
+        }
         Message::RefreshSearchStatus => Task::none(),
         Message::CloseSearchStatus => {
             s.search_status = None;
@@ -886,29 +1003,22 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             let (usage, now) = (&s.usage, usage::now());
             let q = s.query.as_str();
             // An explicit calculator query stays in that mode while incomplete.
-            let calculator = calc::is_explicit(q);
+            let calculator = s.search_folder.is_none() && calc::is_explicit(q);
             s.app_hits = if calculator || !s.scope.includes_apps() {
                 Vec::new()
             } else {
                 model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
             };
-            let file_query = s.scope.file_query(q);
+            let file_query = s.search_folder.is_some() || s.scope.file_query(q);
             // Results of the previous query must not stay actionable while
             // this one is searched.
             s.files.clear();
             s.status = if file_query { Status::Searching } else { Status::Idle };
             s.rebuild(false);
-            let search = if file_query {
-                let generation = s.generation;
-                Task::perform(s.backend.clone().search(s.query.clone()), move |result| Message::Files {
-                    generation,
-                    result,
-                })
-            } else {
-                Task::none()
-            };
+            let search = if file_query { s.request_files() } else { Task::none() };
             Task::batch([search, s.resize()])
         }
+        Message::Scope(_) if s.search_folder.is_some() => Task::none(),
         Message::Scope(scope) => {
             s.panel = None;
             let search = if s.scope == scope {
@@ -1073,6 +1183,11 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             _ => Task::none(),
         };
     }
+    match cmd {
+        Command::SearchFolder => return s.perform(Action::SearchFolder),
+        Command::BackFolder => return s.back_folder_search(),
+        _ => {}
+    }
     if matches!(cmd, Command::NextScope | Command::PreviousScope) {
         let scope = s.scope.cycle(cmd == Command::NextScope);
         return update(s, Message::Scope(scope));
@@ -1133,6 +1248,14 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
                 return widget::operation::focus(actions_id());
             }
         }
+        Command::SearchFolder | Command::BackFolder => unreachable!("handled before action navigation"),
+        Command::Back if s.search_folder.is_some() => {
+            if s.query.is_empty() {
+                return s.back_folder_search();
+            }
+            let clear = update(s, Message::Query(String::new()));
+            Task::batch([clear, widget::operation::focus(search_id())])
+        }
         Command::Back => {
             if s.query.is_empty() {
                 return iced::exit();
@@ -1164,22 +1287,28 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     if let Some(status) = &s.search_status {
         return search_status_view(status);
     }
-    let placeholder = match s.scope {
-        Scope::All => "Search applications and files…",
-        Scope::Applications => "Search applications…",
-        Scope::Files => "Search indexed files…",
+    let placeholder = if s.search_folder.is_some() {
+        "Search this folder and subfolders…"
+    } else {
+        match s.scope {
+            Scope::All => "Search applications and files…",
+            Scope::Applications => "Search applications…",
+            Scope::Files => "Search indexed files…",
+        }
     };
-    let input =
-        text_input(placeholder, &s.query).id(search_id()).on_input(Message::Query).size(20).padding([14, 8]).style(
-            |_, _| text_input::Style {
-                background: Background::Color(Color::TRANSPARENT),
-                border: Border::default(),
-                icon: palette::DIM,
-                placeholder: palette::DIM,
-                value: palette::TEXT,
-                selection: palette::SELECTED,
-            },
-        );
+    let input = text_input(placeholder, &s.query)
+        .id(search_id())
+        .on_input(Message::Query)
+        .size(if s.search_folder.is_some() { 16 } else { 20 })
+        .padding(if s.search_folder.is_some() { [3, 8] } else { [14, 8] })
+        .style(|_, _| text_input::Style {
+            background: Background::Color(Color::TRANSPARENT),
+            border: Border::default(),
+            icon: palette::DIM,
+            placeholder: palette::DIM,
+            value: palette::TEXT,
+            selection: palette::SELECTED,
+        });
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
         let selected = s.scope == scope;
         choices.push(button(text(scope.to_string()).size(11)).on_press(Message::Scope(scope)).padding([6, 8]).style(
@@ -1208,10 +1337,31 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         .width(1)
         .height(16)
         .style(|_| container::Style { background: Some(Background::Color(palette::BORDER)), ..Default::default() });
-    let header = container(row![input, scopes, separator, index_status, folders].spacing(4).align_y(Vertical::Center))
-        .padding([0, 8])
-        .height(INPUT_HEIGHT)
-        .align_y(Vertical::Center);
+    let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
+        let generation = s.scope_generation;
+        let path = folder.path.as_deref().and_then(|path| path.to_str()).unwrap_or(&folder.id);
+        let location = widget::tooltip(
+            text(ellipsize_middle(path, 62)).size(11).color(palette::DIM),
+            container(text(path).size(12)).padding(8).style(surface_style),
+            widget::tooltip::Position::Bottom,
+        );
+        column![
+            row![
+                button(hint("Alt+←", "Back")).on_press(Message::FolderBack { generation }).style(status_button_style),
+                location,
+                space::horizontal(),
+                button(hint("Ctrl+R", "Refresh")).on_press(Message::RefreshSearchStatus).style(status_button_style)
+            ]
+            .spacing(6)
+            .align_y(Vertical::Center),
+            input
+        ]
+        .spacing(2)
+        .into()
+    } else {
+        row![input, scopes, separator, index_status, folders].spacing(4).align_y(Vertical::Center).into()
+    };
+    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {
@@ -1382,6 +1532,15 @@ fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
         let (msg, help) = match &s.status {
             Status::Searching => ("Searching…", ""),
+            Status::Error(_) if s.search_folder.is_some() => {
+                ("Folder search unavailable", "Refresh to retry, or return to your previous search.")
+            }
+            _ if s.search_folder.is_some() && s.query.trim().chars().count() < MIN_FILE_QUERY => {
+                ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
+            }
+            _ if s.search_folder.is_some() => {
+                ("No matching indexed files", "Try another name or return to your previous search.")
+            }
             Status::Error(_) if s.scope == Scope::Files => {
                 ("File search unavailable", "Switch to Applications to search installed apps.")
             }
@@ -1484,7 +1643,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching => ("Searching…".to_string(), palette::DIM),
-        Status::Idle if calc::is_explicit(&s.query) => ("Calculator".to_string(), palette::DIM),
+        Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
+            ("Calculator".to_string(), palette::DIM)
+        }
         Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
         Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
         Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
@@ -1512,8 +1673,19 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         );
     } else {
         // Same inset as the Actions button, so the last hint keeps the right edge.
-        hints = hints
-            .push(container(hint("Esc", if s.query.is_empty() { "Close" } else { "Clear search" })).padding([3, 6]));
+        hints = hints.push(
+            container(hint(
+                "Esc",
+                if !s.query.is_empty() {
+                    "Clear search"
+                } else if s.search_folder.is_some() {
+                    "Previous search"
+                } else {
+                    "Close"
+                },
+            ))
+            .padding([3, 6]),
+        );
     }
     container(
         row![text(msg).size(12).color(color).wrapping(text::Wrapping::None), space::horizontal(), hints]
@@ -1661,6 +1833,9 @@ mod tests {
             icons: Icons::disabled(),
             query: String::new(),
             scope: Scope::All,
+            search_folder: None,
+            folder_search_history: Vec::new(),
+            scope_generation: 0,
             app_hits: Vec::new(),
             files: Vec::new(),
             items: Vec::new(),
