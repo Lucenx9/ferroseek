@@ -28,6 +28,7 @@ def main():
         return set(re.findall(r"'(file://[^']*)'", result.stdout))
 
     documents = root / 'root/Documents'
+    assert uri(documents / 'notes-2024.md') in call('ListDirectory', uri(documents))
     assert uri(documents / 'Quarterly Report.pdf') in call('SearchWithin', uri(documents), 'report')
     folder = documents / 'Scoped folder è:2026'
     sibling = documents / 'Scoped folder è:2026-archive'
