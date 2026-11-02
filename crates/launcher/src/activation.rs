@@ -397,9 +397,7 @@ mod tests {
                             let name = b"xdg_activation_v1\0";
                             global.extend_from_slice(&(name.len() as u32).to_ne_bytes());
                             global.extend_from_slice(name);
-                            while global.len() % 4 != 0 {
-                                global.push(0);
-                            }
+                            global.resize(global.len().next_multiple_of(4), 0);
                             global.extend_from_slice(&1_u32.to_ne_bytes());
                             let registry = u32::from_ne_bytes(body[..4].try_into().unwrap());
                             let mut message = registry.to_ne_bytes().to_vec();
