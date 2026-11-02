@@ -32,6 +32,24 @@ impl Search {
             home: std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default(),
         }
     }
+    async fn indexed_file(&self, match_id: &str) -> zbus::fdo::Result<PathBuf> {
+        let path = path_from_url(match_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid file URL".into()))?;
+        let pool = self.pool.clone();
+        let p = path.clone();
+        zruntime::unblock(move || {
+            let known =
+                pool.with(|r| r.lookup(&p)).map_err(|_| zbus::fdo::Error::Failed("Index is unavailable".into()))?;
+            if !known.is_some_and(|(_, meta)| meta.kind == Kind::File) {
+                return Err(zbus::fdo::Error::AccessDenied("path is not a regular indexed file".into()));
+            }
+            if !std::fs::symlink_metadata(&p).is_ok_and(|meta| meta.is_file()) {
+                return Err(zbus::fdo::Error::AccessDenied("file is no longer available".into()));
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(path)
+    }
 }
 
 /// `file://` URL with every byte outside RFC 3986 unreserved/`/` escaped,
@@ -111,6 +129,25 @@ impl Search {
                 .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
             let mime = mime.get_or_init(MimeDb::load);
             Ok(hits.iter().map(|h| to_result(h, mime, &home)).collect())
+        })
+        .await
+    }
+
+    /// Installed handlers declaring the indexed file's MIME type.
+    async fn applications(&self, match_id: String) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        let path = self.indexed_file(&match_id).await?;
+        let mime = self.mime.clone();
+        zruntime::unblock(move || {
+            let db = mime.get_or_init(MimeDb::load);
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let Some(mime_type) = db.mime_for(&name) else { return Ok(Vec::new()) };
+            let apps = ferroseek_desktop::apps::file_handlers(
+                &ferroseek_desktop::apps::data_dirs(),
+                &ferroseek_desktop::apps::current_locales(),
+                &ferroseek_desktop::apps::current_desktops(),
+                &[mime_type.to_string()],
+            );
+            Ok(apps.into_iter().map(|app| (app.id, app.name, app.icon.unwrap_or_default())).collect())
         })
         .await
     }
