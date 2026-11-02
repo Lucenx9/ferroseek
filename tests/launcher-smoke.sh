@@ -83,6 +83,14 @@ mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XD
     "$XDG_RUNTIME_DIR" "$XDG_CONFIG_DIRS" "$XDG_DATA_DIRS"
 chmod 700 "$XDG_RUNTIME_DIR"
 unset XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID
+# Share only read-only graphics/MIME assets, never the system application catalog.
+mkdir -p "$XDG_DATA_DIRS/icons"
+for theme in breeze breeze-dark hicolor; do
+    [[ -d "/usr/share/icons/$theme" ]] || fail "required icon theme missing: $theme"
+    ln -s "/usr/share/icons/$theme" "$XDG_DATA_DIRS/icons/$theme"
+done
+[[ -d /usr/share/mime ]] || fail "shared MIME data not installed"
+ln -s /usr/share/mime "$XDG_DATA_DIRS/mime"
 printf '[Icons]\nTheme=breeze-dark\n' > "$XDG_CONFIG_HOME/kdeglobals"
 printf '[Desktop Entry]\nType=Application\nName=Report Viewer\nComment=Synthetic test entry\nIcon=document-preview\nExec=true\n' \
     > "$XDG_DATA_HOME/applications/test.report-viewer.desktop"
@@ -147,7 +155,7 @@ fi
 
 # KDE's compositor/capture resources and authorization metadata are system data;
 # the launcher and daemon retain their separate synthetic application catalog.
-XDG_DATA_DIRS=/usr/local/share:/usr/share \
+XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share \
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
     kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
 KPID=$!
@@ -175,7 +183,7 @@ for q in "${QUERIES[@]}"; do
     for _ in $(seq 100); do has_owner io.github.ferroseek.Launcher && break; sleep 0.05; done
     sleep 1.5
     kill -0 "$LPID" 2>/dev/null || fail "launcher exited for query '$q'"
-    XDG_DATA_DIRS=/usr/local/share:/usr/share \
+    XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share \
         timeout 15 spectacle -b -n -f -o "$OUT/query-$i.png" > "$OUT/query-$i.png.log" 2>&1 || fail "screenshot failed"
     [[ -s "$OUT/query-$i.png" ]] || fail "capture tool returned without an image; inspect query-$i.png.log"
     echo "== '$q': $OUT/query-$i.png"
