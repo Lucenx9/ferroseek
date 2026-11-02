@@ -1067,12 +1067,13 @@ mod tests {
         assert_eq!(secondary_action(&calculator), Some(Action::UseResult));
         assert_eq!(secondary_action(&f), Some(Action::Reveal));
         assert_eq!(secondary_action(&actions_for(&Target::App(0), false)), None);
-        for target in [Target::App(0), Target::File(file("a", false))] {
-            let add = actions_for(&target, false);
+        for (target, favorite_slot) in [(Target::App(0), 3), (Target::File(file("a", false)), 5)] {
+            let mut add = actions_for(&target, false);
             let remove = actions_for(&target, true);
-            assert_eq!(add.last(), Some(&Action::AddFavorite));
-            assert_eq!(remove.last(), Some(&Action::RemoveFavorite));
-            assert_eq!(&add[..add.len() - 1], &remove[..remove.len() - 1]);
+            assert_eq!(add[favorite_slot], Action::AddFavorite);
+            assert_eq!(remove[favorite_slot], Action::RemoveFavorite);
+            add[favorite_slot] = Action::RemoveFavorite;
+            assert_eq!(add, remove, "toggling favorites changes no other action or numbered position");
         }
     }
 

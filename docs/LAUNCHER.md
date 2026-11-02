@@ -215,6 +215,38 @@ and Ctrl+S can safely retry. Applying times out after 30 seconds; older daemons
 without this method must be updated. The screen cannot close during saving or
 application; after a failure, Esc returns to search and refreshes its file results.
 
+## Open with a selected application
+
+For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
+Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
+or a click. Typing filters application names and desktop IDs; the ID beneath
+its name helps distinguish similarly named apps. Page Up/Down, Ctrl+Home/End
+and the mouse wheel navigate longer lists.
+
+The chooser stays bound to the original file while results finish loading.
+Esc clears a nonempty application filter; Esc again returns to the same search
+query, scope and file selection when that file is still present. Ctrl+R reloads
+the application list. Loading, empty and error states are distinct; a failed
+read can be retried. The list is requested only when opening or reloading this
+view, rather than on each filter keystroke.
+
+Choosing an application is a one-time action. It does not change MIME defaults
+or save a preferred application. The daemon checks that the file is still
+indexed and available and that the chosen desktop ID is still eligible before
+launching it. Failures keep the chooser available; a launch with an uncertain
+reply uses the same duplicate-open protection as normal file opening. History
+is recorded only after daemon acknowledgement.
+
+Compatibility: this first version lists installed desktop entries declaring the
+file's detected MIME type and accepting a standalone `%f`, `%F`, `%u` or `%U`
+argument. It includes `NoDisplay` document handlers, honours hidden-entry masks,
+visibility and `TryExec`, and never accepts a caller-supplied command. Type
+detection uses filename metadata from shared-mime-info and does not read file
+contents. Unrecognized types, folders and symbolic links are not supported by
+the chooser; normal **Open** remains available. Desktop association preference
+overrides and applications with only D-Bus activation are not included. Install
+matching launcher and daemon versions for this interface.
+
 ## Favorites
 
 Use **Add to favorites** or **Remove from favorites** in an app or file's action

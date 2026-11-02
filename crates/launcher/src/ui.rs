@@ -1872,7 +1872,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 6);
+        assert_eq!(panel.actions.len(), 7);
     }
 
     #[test]
@@ -2121,6 +2121,111 @@ mod tests {
         assert_eq!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()), 0);
         let _ = update(&mut s, Message::Opened(Ok(())));
         assert!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()) > 0);
+    }
+
+    fn picker_state() -> Launcher {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::OpenWith);
+        s
+    }
+
+    fn picker_choices(count: usize) -> Vec<crate::backend::ApplicationChoice> {
+        (0..count)
+            .map(|i| crate::backend::ApplicationChoice {
+                id: format!("editor-{i:02}.desktop"),
+                name: format!("Editor {i:02}"),
+                icon: String::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn picker_escape_restores_search_and_ignores_closed_or_reopened_generations() {
+        let mut s = picker_state();
+        let old = s.application_generation;
+        let target = s.selected().unwrap().target.clone();
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(12)) });
+        let _ = update(&mut s, Message::OpenWith { generation: old, event: open_with::Event::Query("07".into()) });
+        let _ = command(&mut s, Command::Back);
+        assert!(s.application_picker.as_ref().unwrap().query.is_empty());
+        let _ = command(&mut s, Command::Back);
+        assert!(s.application_picker.is_none());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        assert_eq!(s.selected().unwrap().target, target);
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Err("late".into()) });
+        assert!(s.application_picker.is_none());
+        let _ = s.perform(Action::OpenWith);
+        let current = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(12)) });
+        let _ = update(
+            &mut s,
+            Message::OpenWith { generation: old, event: open_with::Event::Open("editor-00.desktop".into()) },
+        );
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: current, result: Ok(picker_choices(12)) });
+        let _ = update(&mut s, Message::OpenWith { generation: current, event: open_with::Event::Query("07".into()) });
+        let _ = update(
+            &mut s,
+            Message::OpenWith { generation: current, event: open_with::Event::Open("editor-00.desktop".into()) },
+        );
+        assert!(s.opening.is_none(), "a filtered-out pointer choice must not dispatch");
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_some());
+    }
+
+    #[test]
+    fn picker_read_errors_can_retry_but_unconfirmed_dispatch_cannot_duplicate() {
+        let mut s = picker_state();
+        let old = s.application_generation;
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.application_generation, old, "one list request at a time");
+        let _ =
+            update(&mut s, Message::ApplicationsLoaded { generation: old, result: Err("service unavailable".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let generation = s.application_generation;
+        assert!(generation > old);
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(Vec::new()) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_some());
+        let _ = update(&mut s, Message::Opened(Err(RunError::Unconfirmed("connection lost".into()))));
+        assert!(s.unconfirmed_open);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = command(&mut s, Command::Back);
+        let _ = s.perform(Action::OpenWith);
+        assert!(s.application_picker.is_none(), "close and reopen the process before retrying an uncertain launch");
+    }
+
+    #[test]
+    fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
+        let file = file_hits().remove(0);
+        let mut panel = open_with::Panel::new(file);
+        panel.loaded(Ok(picker_choices(12)), &mut Icons::disabled());
+        let _ = panel.command(Command::Last);
+        assert!(
+            matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-06.desktop")
+        );
+        assert!(matches!(panel.command(Command::ActivateVisible(6)), open_with::Effect::None));
+        let _ = panel.event(open_with::Event::Query("07".into()));
+        assert!(
+            matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-07.desktop")
+        );
     }
 
     #[test]
