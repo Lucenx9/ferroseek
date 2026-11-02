@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Real keyboard/focus checks and diagnostic latency samples in virtual KWin."""
+import ast
 import json
 import math
 import os
 from pathlib import Path
 import platform
+import re
 import select
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -67,8 +70,21 @@ def main():
     samples = []
     activation_log = out / "activation-target.jsonl"
     profile = os.environ.get("FERROSEEK_SMOKE_PROFILE", "us-1x")
-    assert profile in ["us-1x", "fr-1x"], "unknown launcher profile"
+    assert profile in ["us-1x", "fr-1x", "us-1.5x"], "unknown launcher profile"
     layout = "fr" if profile == "fr-1x" else "us"
+    requested_scale = 1.5 if profile == "us-1.5x" else 1.0
+    support = ast.literal_eval(subprocess.check_output([
+        "gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/KWin",
+        "--method", "org.kde.KWin.supportInformation"], text=True, timeout=5))[0]
+    (out / "kwin-support.txt").write_text(support)
+    screen_count = re.findall(r"(?m)^Number of Screens: (\d+)\s*$", support)
+    geometries = re.findall(r"(?m)^Geometry: (-?\d+),(-?\d+),(\d+)x(\d+)\s*$", support)
+    scales = re.findall(r"(?m)^Scale: ([0-9.]+)\s*$", support)
+    assert screen_count == ["1"] and len(geometries) == len(scales) == 1, "expected exactly one observed output"
+    geometry = [int(value) for value in geometries[0]]
+    observed_scale = float(scales[0])
+    assert geometry == [0, 0, 1280, 800], "unexpected logical output geometry"
+    assert observed_scale == requested_scale, "requested scale differs from actual compositor scale"
     character_keys = dict(zip("abcdefghijklmnopqrstuvwxyz", [
         30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
         49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44]))
@@ -94,6 +110,10 @@ def main():
     def capture(name):
         subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
                        check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        png = (out / name).read_bytes()
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", png[16:24]) == (int(1280 * observed_scale), int(800 * observed_scale)), \
+            "screenshot must capture the configured output at native resolution"
 
     def owner(name="io.github.ferroseek.Launcher"):
         result = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
@@ -344,7 +364,8 @@ def main():
         report = {"schema": 1, "environment": {"platform": platform.platform(),
                   "cpu": subprocess.check_output(["lscpu"], text=True),
                   "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
-                  "profile": profile, "keyboard_layout": layout},
+                  "profile": profile, "keyboard_layout": layout,
+                  "output": {"logical_geometry": geometry, "scale": observed_scale}},
                   "corpus_files": 10007, "first_trial": samples[0], "samples": samples,
                   "repeat_first_frame": summary([s["first_frame_us"] for s in samples[1:]]),
                   "repeat_query_frame": summary([s["query_frame_us"] for s in samples[1:]]),

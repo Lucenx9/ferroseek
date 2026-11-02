@@ -14,8 +14,9 @@ set -euo pipefail
 
 export FERROSEEK_SMOKE_PROFILE=${FERROSEEK_SMOKE_PROFILE:-us-1x}
 case "$FERROSEEK_SMOKE_PROFILE" in
-    us-1x) SMOKE_LAYOUT=us ;;
-    fr-1x) SMOKE_LAYOUT=fr ;;
+    us-1x) SMOKE_LAYOUT=us; SMOKE_SCALE=1 ;;
+    fr-1x) SMOKE_LAYOUT=fr; SMOKE_SCALE=1 ;;
+    us-1.5x) SMOKE_LAYOUT=us; SMOKE_SCALE=1.5 ;;
     *) echo "FAIL: unknown launcher profile: $FERROSEEK_SMOKE_PROFILE" >&2; exit 1 ;;
 esac
 
@@ -141,7 +142,7 @@ else
 fi
 
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
-    kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
+    kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
