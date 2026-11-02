@@ -302,7 +302,7 @@ impl Action {
             // The panel resolves application actions using their localized names.
             return None;
         }
-        let title = self.label().to_lowercase();
+        let title = matcher::fold(self.label());
         if tokens.iter().map(String::as_str).eq(title.split_whitespace()) {
             return Some(matcher::EXACT);
         }
