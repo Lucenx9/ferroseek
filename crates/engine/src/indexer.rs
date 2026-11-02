@@ -261,6 +261,8 @@ impl Indexer {
         // Moved out of every watched directory: resolves to a delete.
         dirty.extend(from.into_values());
 
+        // Take earlier suspects first: failures from this batch must wait.
+        let previous = st.retry_previous();
         let mut seen = HashSet::new();
         for (dir, name) in dirty {
             if seen.insert((dir, name.clone())) {
@@ -270,7 +272,7 @@ impl Indexer {
         // Suspects from earlier batches: by now the rename that made their
         // parent path stale has normally been applied.
         let mut fallback = false;
-        for (dir, name, tries) in std::mem::take(&mut st.retry_previous()) {
+        for (dir, name, tries) in previous {
             if tries >= MAX_RETRIES {
                 fallback = true;
             } else {

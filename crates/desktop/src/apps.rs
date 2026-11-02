@@ -514,9 +514,17 @@ pub fn expand_exec(exec: &str, icon: Option<&str>, name: &str, file: &Path) -> R
     // 2. Field codes. A standalone code that expands to nothing removes the
     //    argument; `%i` expands to two arguments.
     let mut argv = Vec::new();
+    let mut documents = 0;
     for arg in raw {
         match arg.as_str() {
-            "%f" | "%F" | "%u" | "%U" | "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => continue,
+            "%f" | "%F" | "%u" | "%U" => {
+                documents += 1;
+                if documents > 1 {
+                    return Err(ExecError::InvalidFieldCode);
+                }
+                continue;
+            }
+            "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => continue,
             "%i" => {
                 if let Some(i) = icon {
                     argv.push("--icon".to_string());
@@ -537,13 +545,14 @@ pub fn expand_exec(exec: &str, icon: Option<&str>, name: &str, file: &Path) -> R
                 Some('%') => out.push('%'),
                 Some('c') => out.push_str(name),
                 Some('k') => out.push_str(&file.to_string_lossy()),
-                Some('i') => {
-                    if let Some(i) = icon {
-                        out.push_str(i);
+                Some('f' | 'u') => {
+                    documents += 1;
+                    if documents > 1 {
+                        return Err(ExecError::InvalidFieldCode);
                     }
                 }
-                // Embedded file/URL and deprecated codes expand to nothing.
-                Some('f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
+                // Multi-argument codes must stand alone. Deprecated codes vanish.
+                Some('d' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
                 _ => return Err(ExecError::InvalidFieldCode),
             }
         }
@@ -723,6 +732,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(app.keywords, ["folder\\", "next", "semi;colon", "space word"]);
+    }
+
+    #[test]
+    fn application_and_action_exec_reject_multiple_document_codes_and_embedded_lists() {
+        for exec in
+            ["prog %f %u", "prog %F %F", "prog --file=%f %U", "prog --files=%F", "prog --urls=%U", "prog --icon=%i"]
+        {
+            let app = p(&format!("[Desktop Entry]\nType=Application\nName=Probe\nExec={exec}\nActions=new;\n[Desktop Action new]\nName=New\nExec={exec}\n")).unwrap();
+            assert_eq!(app.argv(), Err(ExecError::InvalidFieldCode), "Exec={exec}");
+            assert!(app.actions.is_empty(), "invalid action Exec={exec}");
+            assert_eq!(
+                crate::launch::command_line(&app, false, None).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+        let app = p("[Desktop Entry]\nType=Application\nName=Probe\nExec=prog %%f --file=%f\n").unwrap();
+        assert_eq!(app.argv().unwrap(), ["prog", "%f", "--file="]);
     }
 
     #[test]
