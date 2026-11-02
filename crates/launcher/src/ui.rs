@@ -2372,6 +2372,38 @@ mod tests {
         assert!(matches!(panel.command(Command::CopyPath), details::Effect::Copy(url) if url == file.id));
     }
 
+    #[test]
+    fn search_in_folder_action_preserves_the_original_query_scope_and_target() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut folder = file_hits().remove(0);
+        folder.id = "file:///synthetic/Reports".into();
+        folder.path = Some("/synthetic/Reports".into());
+        folder.name = "Reports".into();
+        folder.is_dir = true;
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![folder.clone()])) });
+        let target = Target::File(folder);
+        s.cursor.select_target(&target, &s.items);
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("within".into()));
+        let actions = s.panel.as_ref().unwrap().filtered_actions();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label(), "Search in folder");
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.scope, Scope::Files);
+        assert!(s.query.is_empty());
+        assert!(s.items.is_empty(), "global suggestions must not appear inside a folder");
+        let _ = update(&mut s, Message::Query("nested".into()));
+        let _ = command(&mut s, Command::Back);
+        assert!(s.query.is_empty());
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::All);
+        assert_eq!(s.selected().unwrap().target, target);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn picker_state() -> Launcher {
         let mut s = search_state();
         let _ = update(&mut s, Message::Scope(Scope::Files));
