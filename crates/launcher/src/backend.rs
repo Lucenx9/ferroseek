@@ -1039,6 +1039,51 @@ mod tests {
     }
 
     #[test]
+    fn search_intent_order_survives_reversed_future_polling() {
+        use iced::futures::FutureExt;
+
+        for listing in [false, true] {
+            let (_temp, _bus, address) = private_bus();
+            zbus::block_on(async {
+                let (observed, requests) = std::sync::mpsc::channel();
+                let _service = zbus::connection::Builder::address(address.trim())
+                    .name(DAEMON_BUS_NAME)
+                    .serve_at(SEARCH_PATH, SearchService(observed))
+                    .build()
+                    .await
+                    .unwrap();
+                let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+                let (tx, rx) = mpsc::unbounded();
+                let backend = Backend { tx };
+                let older = backend.clone().search_within("obsolete".into(), "report".into());
+                let newer = if listing {
+                    backend.clone().list_directory("latest".into()).map(|result| result.map(|_| true)).boxed_local()
+                } else {
+                    backend
+                        .clone()
+                        .search_within("latest".into(), "report".into())
+                        .map(|result| result.map(|files| files.is_some()))
+                        .boxed_local()
+                };
+                drop(backend);
+                // Prime both completions in reverse order before serving the queue.
+                // Scheduling must not change which UI intent supersedes the other.
+                let replies = iced::futures::future::join(newer, older);
+                iced::futures::pin_mut!(replies);
+                assert!(iced::futures::poll!(&mut replies).is_pending());
+                let (_, (newer, older)) =
+                    iced::futures::future::join(serve(conn, rx, Timeouts::default()), replies).await;
+                assert!(newer.unwrap(), "latest intent was discarded (listing={listing})");
+                assert!(older.unwrap().is_none(), "obsolete intent survived (listing={listing})");
+                assert_eq!(
+                    requests.try_iter().collect::<Vec<_>>(),
+                    [("latest".into(), if listing { "list" } else { "report" }.into())]
+                );
+            });
+        }
+    }
+
+    #[test]
     fn queued_searches_and_lists_coalesce_without_crossing_open_requests() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
