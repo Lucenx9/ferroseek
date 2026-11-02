@@ -312,6 +312,10 @@ daemon versions are required.
 
 ## Text preview
 
+![Text preview](assets/launcher-text-preview.png)
+
+Rendered in a private virtual KWin session with a synthetic file.
+
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
 `preview` or `contents`), or press Enter in **File details**. The preview reads only when
 opened or refreshed; selecting another result never reads its contents. The view
@@ -325,7 +329,7 @@ YAML, determined by the system MIME filename database. Unknown types, binary
 control characters (including terminal ESC sequences, DEL and C1) and invalid UTF-8
 in the inspected prefix have a distinct
 unsupported state. Empty files are identified explicitly. PDF, images and other
-rich previews are not available.
+rich previews are not available. Glyph coverage depends on installed desktop fonts.
 
 Reads inspect at most 64 KiB plus one truncation-detection byte. Display is limited
 to 16,384 Unicode characters and 200 logical lines, whichever limit is reached
