@@ -3171,6 +3171,26 @@ mod tests {
         assert!(s.usage.recent(usage::now(), 8).is_empty());
     }
 
+    #[test]
+    fn an_explicit_preview_follows_keyboard_selection_without_leaving_the_results() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        assert!(s.text_preview.is_none());
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = command(&mut s, Command::Down);
+        assert_eq!(s.selected().unwrap().target, Target::File(files[1].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        assert!(s.preview_generation > old);
+        assert_eq!(s.query, "report");
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn picker_state() -> Launcher {
         let mut s = search_state();
         let _ = update(&mut s, Message::Scope(Scope::Files));
