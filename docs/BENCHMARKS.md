@@ -1,6 +1,7 @@
 # FerroSeek benchmarks
 
-All numbers here were measured on this machine with the commands shown.
+Sections 1–11 describe measurements on the machine below with the commands shown.
+Section 12 uses a separate CI environment, identified alongside its results.
 Nothing has been extrapolated. **No Baloo comparison has been run yet.**
 Baloo is disabled on this machine, and the owner asked that it stay
 disabled. The protocol for a controlled comparison is in
@@ -617,3 +618,66 @@ See [the isolated access-mode comparison](benchmarks/mcp-access-modes/README.md)
 for five process repetitions on 20,000 synthetic files, independent result
 oracles, stdio round trips, and resource measurements. This is a selective
 warm-cache regression check, not a new million-file or desktop benchmark.
+
+## 12. Launcher interaction latency
+
+The isolated graphical harness measures the release launcher and real daemon
+together. It generates 10,007 synthetic files, waits for indexing to finish,
+and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and
+a private bus with no activation services. Launcher processes use `--private`,
+so history and favorites are disabled; application matching includes one synthetic
+entry and the runner's installed desktop entries. A separate test window establishes
+keyboard input before the launcher and receives input again after it closes.
+Test-only Wayland fake input types `report` into the real search widget, edits
+the action filter and returns to the main field. No UI messages are injected.
+
+```sh
+cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon
+export XDG_RUNTIME_DIR=$(mktemp -d)
+LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 \
+  xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
+```
+
+The workflow `Launcher interaction` installs the Linux test dependencies and
+retains PNGs, per-process diagnostic logs and `latency.json`. The JSON records
+the OS, CPU, KWin version and every sample. There are 20 process launches by
+default (`FERROSEEK_SMOKE_TRIALS=2…100`); the first is reported separately and
+the remaining 19 use nearest-rank p50/p95 and maximum. Neither set claims cold
+caches: no caches are dropped and the daemon remains warm between launches.
+
+- **First redraw:** entry into launcher `main` to its first redraw event;
+  excludes process creation before `main`, and may precede initial results.
+- **Query redraw:** receipt of the final typed-character edit to a redraw
+  event after current results are applied. Includes application matching,
+  backend queueing, D-Bus/search, result processing and the redraw callback;
+  excludes injected-key dispatch before receipt and compositor presentation.
+- Superseded or hidden queries, failures and stale results do not count as successful
+  query samples. Pending redraw callbacks older than result application are
+  excluded. Logging and callbacks introduce measurement overhead.
+
+This workload is a repeatable diagnostic baseline, not a desktop speed claim
+or a CI speed threshold. It does not cover physical displays, multiple monitors,
+scaling, IMEs, application activation tokens, or existing target-window focus.
+The signal is `RedrawRequested`, before drawing completes; it does not measure
+completed rendering or monitor presentation.
+
+### First recorded run — 2026-11-02
+
+[Source and complete run](https://github.com/Lucenx9/ferroseek/actions/runs/41495909474):
+commit `14652bb`, GitHub Ubuntu 24.04 runner, 4 vCPUs (AMD EPYC 9V45),
+Linux 7.0.0-1017-azure, glibc 2.39, KWin 5.27.11 with llvmpipe, rustc 1.99.1,
+release profile with thin LTO and one daemon throughout the 20 opens.
+This environment differs from sections 1–11.
+
+| Diagnostic signal | First process (ms) | Subsequent p50 (ms, n=19) | Subsequent p95/max (ms, n=19) |
+|---|---:|---:|---:|
+| `main` → first redraw event | 263.89 | 142.70 | 165.85 |
+| Final character edit → results redraw event | 8.30 | 17.47 | 31.07 |
+
+[Raw samples and environment](benchmarks/launcher-interaction-2026-11-02.json)
+retain the exact microsecond values. Independently checked every sample and
+percentile against the 20 process logs. All opens verified 15 actual daemon
+file results, editing after asynchronous results, and background input after
+closing. The first also verified filter clearing, menu closure and main-field
+editing after those transitions. Inspected the three original screenshots.
+No startup optimization or cross-machine speed comparison is established.

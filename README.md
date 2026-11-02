@@ -93,7 +93,9 @@ Themes and layout configuration are planned. Application focus depends on the
 compositor because the UI cannot yet supply an XDG activation token.
 
 The next priorities are real desktop validation, reliable activation, clear
-appearance settings and measured startup/search latency. Window switching, clipboard
+appearance settings and latency checks on real desktops. A first
+[virtual KWin diagnostic baseline](docs/BENCHMARKS.md#12-launcher-interaction-latency)
+is available. Window switching, clipboard
 history, web search and a plugin API are not implemented. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools

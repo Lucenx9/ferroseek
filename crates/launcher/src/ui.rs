@@ -27,6 +27,7 @@ use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
 use crate::preview;
+use crate::timing;
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -224,6 +225,7 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
     Scope(Scope),
@@ -355,11 +357,15 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
-    Subscription::batch([event::listen_with(on_event), Subscription::run(ui_events)])
+    let events = if timing::enabled() { event::listen_raw(on_event) } else { event::listen_with(on_event) };
+    Subscription::batch([events, Subscription::run(ui_events)])
 }
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
+        Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
+            Some(Message::TimingFrame(at))
+        }
         // Read regardless of capture: the search field keeps focus and
         // swallows Escape, but navigation keys must still reach the list.
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => key_message(&key, modifiers),
@@ -1021,6 +1027,15 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::TimingFrame(at) = message {
+        let visible = s.panel.is_none()
+            && s.file_details.is_none()
+            && s.application_picker.is_none()
+            && s.folder_settings.is_none()
+            && s.search_status.is_none();
+        timing::frame(at, s.generation, visible);
+        return Task::none();
+    }
     if (s.application_picker.is_some() || s.file_details.is_some())
         && matches!(
             message,
@@ -1236,6 +1251,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.panel = None;
             s.query = q;
             s.generation += 1;
+            timing::begin(s.generation);
             let (usage, now) = (&s.usage, usage::now());
             let q = s.query.as_str();
             // An explicit calculator query stays in that mode while incomplete.
@@ -1252,6 +1268,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.folder_more = false;
             s.status = if file_query { Status::Searching } else { Status::Idle };
             s.rebuild(false);
+            if !file_query {
+                timing::ready(s.generation, s.items.len(), s.files.len(), true);
+            }
             let search = if file_query { s.request_files() } else { Task::none() };
             Task::batch([search, s.resize()])
         }
@@ -1270,6 +1289,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::ActionQuery(q) => {
             if let Some(panel) = &mut s.panel {
                 panel.filter(q);
+                timing::event("action_input");
             }
             Task::none()
         }
@@ -1287,6 +1307,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             if generation != s.generation {
                 return Task::none(); // a newer query is in flight
             }
+            let success = result.is_ok();
             match result {
                 Ok(Some(files)) => {
                     s.files = files;
@@ -1306,6 +1327,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             let had_panel = s.panel.is_some();
             s.rebuild(true);
+            timing::ready(generation, s.items.len(), s.files.len(), success);
             let focus =
                 if had_panel && s.panel.is_none() { widget::operation::focus(search_id()) } else { Task::none() };
             Task::batch([s.resize(), focus, s.sync_preview()])
@@ -1487,10 +1509,12 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             Command::Last => p.cursor.move_by(action_count as isize, action_count),
             Command::Back if !p.query.is_empty() => {
                 p.filter(String::new());
+                timing::event("action_filter_cleared");
                 return widget::operation::focus(actions_id());
             }
             Command::Back | Command::ToggleActions => {
                 s.panel = None;
+                timing::event("actions_closed");
                 return widget::operation::focus(search_id());
             }
             _ => {}

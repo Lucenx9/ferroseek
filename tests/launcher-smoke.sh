@@ -21,6 +21,11 @@ QUERIES=("$@")
 for tool in kwin_wayland spectacle dbus-run-session gdbus; do
     command -v "$tool" >/dev/null || { echo "SKIP: $tool not installed"; exit 0; }
 done
+if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+    for tool in python3 wayland-scanner cc pkg-config; do
+        command -v "$tool" >/dev/null || { echo "FAIL: $tool not installed"; exit 1; }
+    done
+fi
 
 if [[ "${FERROSEEK_SMOKE_ISOLATED:-}" != 1 ]]; then
     CONF=$(mktemp /tmp/ferroseek-launcher-bus-XXXXXX.conf)
@@ -51,9 +56,13 @@ XML
 fi
 
 T=$(mktemp -d /tmp/ferroseek-launcher-smoke-XXXXXX)
+mkdir -p "$OUT"
 cleanup() {
     kill ${LPID:-} ${DPID:-} ${KPID:-} 2>/dev/null || true
     wait 2>/dev/null || true
+    if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+        cp "$T"/*.log "$OUT/" 2>/dev/null || true
+    fi
     rm -rf "$T"
 }
 trap cleanup EXIT
@@ -73,6 +82,18 @@ for f in "Documents/Reports 2026/Quarterly Report.pdf" "Documents/Reports 2026/b
     "Projects/ferro-notes/report.rs" "Pictures/report-cover.png"; do
     echo x > "$R/$f"
 done
+if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+    python3 - "$R" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+for directory in range(100):
+    folder = root / f"Bench-{directory:03}"
+    folder.mkdir()
+    for item in range(100):
+        (folder / f"report-{item:03}.txt").write_text("Synthetic report\n")
+PY
+fi
 printf 'roots = ["%s"]\ndebounce_ms = 20\n' "$R" > "$T/ferroseek.toml"
 # Launch history for the empty-query view: a synthetic app and file.
 mkdir -p "$XDG_STATE_HOME/ferroseek"
@@ -88,17 +109,37 @@ has_owner() {
 }
 for _ in $(seq 100); do has_owner io.github.ferroseek.FerroSeek && break; sleep 0.05; done
 has_owner io.github.ferroseek.FerroSeek || fail "test daemon did not start"
-sleep 0.5 # initial index of the tiny tree
+if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+    for _ in $(seq 200); do
+        status=$(gdbus call --session --dest io.github.ferroseek.FerroSeek \
+            --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status)
+        [[ "$status" == *"'state': 'idle'"* && "$status" == *"'files': '10007'"* ]] && break
+        sleep 0.05
+    done
+    [[ "$status" == *"'state': 'idle'"* && "$status" == *"'files': '10007'"* ]] || fail "synthetic index not ready"
+else
+    sleep 0.5 # initial index of the tiny tree
+fi
 
 SOCK=wayland-ferroseek-smoke-$$
-kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
+KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT=us \
+    kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
 sleep 1.5
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
-mkdir -p "$OUT"
+if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+    XML=/usr/share/plasma-wayland-protocols/fake-input.xml
+    [[ -f "$XML" ]] || fail "plasma-wayland-protocols/fake-input.xml not installed"
+    wayland-scanner client-header "$XML" "$T/fake-input-client-protocol.h"
+    wayland-scanner private-code "$XML" "$T/fake-input-protocol.c"
+    cc -std=c11 -Wall -Wextra -Werror -I"$T" tests/launcher-input.c "$T/fake-input-protocol.c" \
+        $(pkg-config --cflags --libs wayland-client) -o "$T/launcher-input"
+    python3 tests/launcher-interaction.py "$BIN_DIR/ferroseek-launcher" "$OUT" "$T/launcher-input"
+    exit
+fi
 i=0
 for q in "${QUERIES[@]}"; do
     i=$((i + 1))

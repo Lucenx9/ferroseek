@@ -1,0 +1,40 @@
+name: Launcher interaction
+on:
+  pull_request:
+    paths:
+      - 'crates/launcher/**'
+      - 'crates/daemon/**'
+      - 'crates/index/**'
+      - 'crates/engine/**'
+      - 'crates/config/**'
+      - 'crates/desktop/**'
+      - 'tests/launcher-*'
+      - '.github/workflows/launcher-interaction.yml'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+  workflow_dispatch:
+jobs:
+  keyboard-and-latency:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated graphical test dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev dbus libglib2.0-bin kwin-wayland kde-spectacle xvfb xauth qtwayland5 fonts-dejavu-core libwayland-dev libwayland-bin plasma-wayland-protocols python3-pyqt5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon
+      - name: Exercise real keyboard input in virtual KWin
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_LOGGING_RULES='*.debug=false'
+          export FERROSEEK_SMOKE_INTERACTION=1
+          xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: launcher-interaction
+          path: target/launcher-interaction

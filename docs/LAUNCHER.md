@@ -473,3 +473,36 @@ private session bus whose activation directory is empty (so neither the
 real daemon nor desktop portals can be started). It saves one screenshot per
 query and checks that a second invocation closes the first. It skips when
 `kwin_wayland` or `spectacle` is missing.
+
+For real keyboard input and focus checks in the disposable compositor:
+
+```sh
+FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/launcher-interaction
+```
+
+This mode also requires Python 3 with PyQt5, a C compiler, `wayland-scanner`,
+Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
+refuses sockets outside the isolated smoke-test namespace. This mode uses a US
+keymap and permits the test input interface only in disposable KWin. Twenty opens
+verify typing after the first redraw without clicking, editing after asynchronous
+results, action-filter focus and return to the main input, Escape/toggle and
+input returning to a background test application. PNGs, diagnostic logs and
+`latency.json` remain in the output directory. It does not verify activation of
+an existing target application, other compositors, physical keyboards or IMEs.
+
+### Local timing diagnostics
+
+`FERROSEEK_LAUNCHER_TIMINGS=1 ferroseek-launcher` writes JSON records to stderr.
+It is disabled by default, adds no persistent log, and records only event names,
+generations, result/file counts and monotonic microsecond durations. Queries, paths,
+application names and file contents are omitted. Redirect stderr explicitly
+to retain a diagnostic session.
+
+`first_frame` measures from entry into `main` to the first redraw event;
+`query_ready` ends when current query results are applied, and `query_frame`
+ends at a subsequent redraw event. Superseded, hidden and failed queries have separate
+events and do not become successful frame samples. An old queued redraw cannot
+complete newer results. These signals request a redraw; they do **not measure
+completed drawing, compositor presentation or physical input-to-display latency**.
+Diagnostics can affect the timing they observe. See
+[the benchmark method](BENCHMARKS.md#12-launcher-interaction-latency).

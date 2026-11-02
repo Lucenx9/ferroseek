@@ -18,6 +18,7 @@ mod model;
 mod open_with;
 mod preview;
 mod shortcuts;
+mod timing;
 mod ui;
 mod uri;
 mod usage;
@@ -45,6 +46,7 @@ folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Esc clears the
 query and then closes.";
 
 fn main() -> ExitCode {
+    timing::init();
     let mut initial_query = String::new();
     let mut private = false;
     let mut args = std::env::args().skip(1);
