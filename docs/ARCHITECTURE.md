@@ -207,6 +207,26 @@ applications and stores local launch history. File queries and opens use the
 daemon on the session bus. CLI and optional MCP use the same index; neither
 maintains another index.
 
+Application results and declared actions capture the app, action and query
+before asynchronous submission. `activation::Activation` installs an independent
+event queue on the exact Wayland connection injected through
+`iced_layershell::Settings::with_connection`. Additional keyboard/pointer listeners
+observe focus surfaces and input serials; key contents are unused. A display-sync
+callback wakes the worker and orders already queued input before token creation.
+The worker requests a fresh `xdg_activation_v1` token and destroys its request
+object after completion. Seat capability/global changes release listeners and
+invalidate departed context. There is no idle polling or second Wayland client.
+
+The token wait is bounded to one second without awaiting zbus on iced's executor.
+Unsupported or unavailable context degrades to ordinary opening. The shared
+desktop commands clear inherited startup context and forward only the new
+nonempty token through the child environment, preserving argv, terminal, working
+directory and scope behavior. The receiving app consumes it; the compositor
+controls focus. A successful spawn is submission acknowledgement, not a focus
+report. An abort-on-drop application task cancels deferred work when the launcher
+closes, while the existing single-open gate prevents duplicates. Already submitted
+commands cannot be undone. File open/reveal routing is unchanged.
+
 ```text
 launcher -> daemon Search1 -> shared index <- indexing engine
 CLI -----------------------> same index

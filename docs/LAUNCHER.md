@@ -127,6 +127,37 @@ Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.
 `Terminal=true` entries run in `xdg-terminal-exec` or a known terminal.
 
+## Application activation
+
+Opening an application or one of its declared actions requests fresh Wayland
+activation context from the launcher's focused surface and current input.
+The footer shows **Opening application…**. You can keep searching while it
+waits; the chosen application, action and original query stay captured, and
+further open commands are ignored until submission completes.
+
+Token acquisition waits at most one second. If the protocol, suitable seat or
+focus context is unavailable, the worker fails, or the deadline expires, the
+ordinary command still runs without activation context. Desktop launch commands
+remove inherited `XDG_ACTIVATION_TOKEN` and `DESKTOP_STARTUP_ID`, then supply only
+this operation's nonempty token. Token values and key contents are not logged.
+
+The receiving application and compositor decide whether to create a window,
+raise an existing instance, or decline focus. FerroSeek does not select a
+particular application window. Launch submission records application history
+only after the command starts successfully; that acknowledgement does not prove
+focus. A submission error leaves the launcher and action menu usable for retry.
+
+Esc retains its normal clear-query/close sequence. Closing with Esc or the
+instance toggle cancels a deferred launcher-side submission. An application
+already submitted to the system may still open; closing cannot undo that.
+
+The adapter uses an independent queue on iced's shared Wayland connection;
+it needs no window-manager permissions or desktop configuration changes. See
+[the architecture](ARCHITECTURE.md#launcher-and-engine-boundaries). Virtual KWin
+checks use synthetic applications and assert real keyboard input in the chosen
+window. Physical desktops, other compositors, multiple seats and target toolkits
+remain to be validated.
+
 ## Slow or disconnected search services
 
 File search calls wait up to five seconds, and file open/reveal calls up to
@@ -453,9 +484,10 @@ ferroseek-launcher
 
 ## Limitations
 
-- No XDG activation token is passed to launched applications:
-  `iced_layershell` 0.19 does not expose the layer surface needed to request
-  one. Focus of the new window is left to the compositor's policy.
+- Fresh activation context currently covers application results and declared
+  actions. Indexed file open/reveal and Open with do not yet request it in the
+  launcher. Applications still need a usable `Exec`; D-Bus-only entries and
+  explicit application-window switching are unsupported.
 - The window is 720 px wide normally and 980 px while the preview sidebar is visible, near the
   top of the active output. Its size/position are not configurable; there is no
   light theme yet.
@@ -480,15 +512,19 @@ For real keyboard input and focus checks in the disposable compositor:
 FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/launcher-interaction
 ```
 
-This mode also requires Python 3 with PyQt5, a C compiler, `wayland-scanner`,
+This mode also requires Python 3 with PyQt5 and GTK 4 introspection bindings,
+a C compiler, `wayland-scanner`,
 Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
 refuses sockets outside the isolated smoke-test namespace. This mode uses a US
 keymap and permits the test input interface only in disposable KWin. Twenty opens
 verify typing after the first redraw without clicking, editing after asynchronous
 results, action-filter focus and return to the main input, Escape/toggle and
 input returning to a background test application. PNGs, diagnostic logs and
-`latency.json` remain in the output directory. It does not verify activation of
-an existing target application, other compositors, physical keyboards or IMEs.
+`latency.json` remain in the output directory. It also opens a synthetic
+single-instance application, moves input to another test app, and reactivates
+the existing target. Token presence and activation acknowledgement are followed
+by actual text input in the target; an acknowledgement alone is insufficient.
+Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Local timing diagnostics
 
