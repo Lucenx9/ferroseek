@@ -1958,6 +1958,52 @@ mod tests {
     }
 
     #[test]
+    fn open_with_filters_choices_and_dispatches_the_captured_file() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search_generation = s.generation;
+        let files = file_hits();
+        let captured = files[0].clone();
+        let _ = update(&mut s, Message::Files { generation: search_generation, result: Ok(Some(files.clone())) });
+        let _ = update(&mut s, Message::Selected(Target::File(captured.clone())));
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("open with".into()));
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.application_picker.is_some());
+        assert!(s.opening.is_none());
+        let generation = s.application_generation;
+        let _ = update(
+            &mut s,
+            Message::ApplicationsLoaded {
+                generation,
+                result: Ok(vec![
+                    crate::backend::ApplicationChoice {
+                        id: "one.desktop".into(),
+                        name: "Editor One".into(),
+                        icon: String::new(),
+                    },
+                    crate::backend::ApplicationChoice {
+                        id: "two.desktop".into(),
+                        name: "Editor Two".into(),
+                        icon: String::new(),
+                    },
+                ]),
+            },
+        );
+        let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
+        let _ = update(&mut s, Message::Query("offscreen input".into()));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        let _ = update(&mut s, Message::OpenWith { generation, event: crate::open_with::Event::Query("two".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref(), Some(&(captured.id.clone(), "report".into())));
+        assert_eq!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()), 0);
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()) > 0);
+    }
+
+    #[test]
     fn folder_settings_are_modal_and_discard_late_replies_after_reopening() {
         let mut s = search_state();
         let _ = update(&mut s, Message::Query("report".into()));
