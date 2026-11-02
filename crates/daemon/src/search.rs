@@ -178,14 +178,9 @@ impl Search {
                 &uri,
                 (!token.is_empty()).then_some(token.as_str()),
             )
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound
-                | std::io::ErrorKind::PermissionDenied
-                | std::io::ErrorKind::InvalidInput
-                | std::io::ErrorKind::InvalidData
-                | std::io::ErrorKind::NotADirectory => zbus::fdo::Error::SpawnExecFailed(e.to_string()),
-                _ => zbus::fdo::Error::Failed(e.to_string()),
-            })?;
+            // A preparation/spawn error returns before a child is handed back.
+            // The selected application has not executed; an explicit retry is safe.
+            .map_err(|e| zbus::fdo::Error::SpawnExecFailed(e.to_string()))?;
             // From here the child may already have opened the document, so a
             // reaper failure must remain an unconfirmed dispatch to the client.
             std::thread::Builder::new()

@@ -475,6 +475,11 @@ mod tests {
             )])
         }
 
+        async fn open_with(&self, id: &str, application: &str, _token: &str) -> zbus::fdo::Result<()> {
+            self.0.send((id.into(), application.into())).unwrap();
+            Err(zbus::fdo::Error::SpawnExecFailed("test executable rejection".into()))
+        }
+
         async fn open(&self, id: &str, action: &str, _token: &str) -> zbus::fdo::Result<()> {
             self.0.send((id.into(), action.into())).unwrap();
             match action {
@@ -675,6 +680,13 @@ mod tests {
                     Err(RunError::Failed(_))
                 ));
                 assert_eq!(opened_rx.try_recv().unwrap().1, "reject");
+                for application in ["first.desktop", "second.desktop"] {
+                    assert!(matches!(
+                        backend.run_with("file:///synthetic/report.txt".into(), application.into()).await,
+                        Err(RunError::Failed(_))
+                    ));
+                    assert_eq!(opened_rx.try_recv().unwrap().1, application);
+                }
                 let open = backend.run("file:///synthetic/report.txt".into(), "stall");
                 let disconnect = async {
                     let runtime = zruntime::SharedRuntime::current().unwrap();
