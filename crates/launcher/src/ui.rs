@@ -208,6 +208,7 @@ pub struct Launcher {
     window_width: u32,
     text_preview: Option<preview::Panel>,
     preview_generation: u64,
+    preview_request: Option<crate::backend::PreviewRequest>,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -327,6 +328,7 @@ fn boot() -> (Launcher, Task<Message>) {
         window_width: WIDTH,
         text_preview: None,
         preview_generation: 0,
+        preview_request: None,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -744,6 +746,16 @@ impl Launcher {
         (self.selected().map(|item| item.target.clone()), self.preview_visible())
     }
 
+    fn cancel_preview(&mut self, clear: bool) {
+        if let Some(request) = self.preview_request.take() {
+            request.cancel();
+        }
+        self.preview_generation += 1;
+        if clear {
+            self.text_preview = None;
+        }
+    }
+
     fn sync_preview(&mut self) -> Task<Message> {
         if !self.preview_visible() {
             return Task::none();
@@ -753,8 +765,8 @@ impl Launcher {
             _ => None,
         });
         let Some(file) = file else {
-            if self.text_preview.take().is_some() {
-                self.preview_generation += 1;
+            if self.text_preview.is_some() || self.preview_request.is_some() {
+                self.cancel_preview(true);
             }
             return Task::none();
         };
@@ -788,9 +800,14 @@ impl Launcher {
     fn request_preview(&mut self) -> Task<Message> {
         let Some(panel) = &self.text_preview else { return Task::none() };
         let id = panel.file.id.clone();
+        if let Some(previous) = self.preview_request.take() {
+            previous.cancel();
+        }
+        let request = crate::backend::PreviewRequest::default();
+        self.preview_request = Some(request.clone());
         self.preview_generation += 1;
         let generation = self.preview_generation;
-        Task::perform(self.backend.clone().text_preview(id), move |result| Message::PreviewLoaded {
+        Task::perform(self.backend.clone().text_preview(id, request), move |result| Message::PreviewLoaded {
             generation,
             result,
         })
@@ -802,8 +819,7 @@ impl Launcher {
             preview::Effect::None => Task::none(),
             preview::Effect::Close => {
                 self.preview_enabled = false;
-                self.text_preview = None;
-                self.preview_generation += 1;
+                self.cancel_preview(true);
                 Task::batch([self.resize(), widget::operation::focus(search_id())])
             }
             preview::Effect::Refresh => Task::batch([
@@ -951,8 +967,13 @@ impl Launcher {
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     let previous = s.preview_context();
+    let query_boundary = matches!(&message, Message::Query(_));
     let task = update_inner(s, message);
-    if previous != s.preview_context() {
+    if previous.1 && !s.preview_visible() && s.preview_enabled {
+        let loading = s.preview_request.is_some();
+        s.cancel_preview(loading);
+    }
+    if previous != s.preview_context() || query_boundary {
         let preview = s.sync_preview();
         Task::batch([task, preview, s.resize()])
     } else {
@@ -1020,6 +1041,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 && let Some(panel) = &mut s.text_preview
             {
                 panel.loaded(result);
+                s.preview_request = None;
             }
             Task::none()
         }
@@ -1162,6 +1184,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
         }
         Message::Query(q) => {
+            if s.preview_enabled {
+                s.cancel_preview(true);
+            }
             s.clicks = ClickTracker::default();
             // Editing the main field leaves the action panel and starts a new search.
             s.panel = None;
@@ -1327,6 +1352,10 @@ fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     let previous = s.preview_context();
     let task = command_inner(s, cmd);
+    if previous.1 && !s.preview_visible() && s.preview_enabled {
+        let loading = s.preview_request.is_some();
+        s.cancel_preview(loading);
+    }
     if previous != s.preview_context() {
         let preview = s.sync_preview();
         Task::batch([task, preview, s.resize()])
@@ -2094,6 +2123,7 @@ mod tests {
             window_width: WIDTH,
             text_preview: None,
             preview_generation: 0,
+            preview_request: None,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
@@ -3224,13 +3254,15 @@ mod tests {
         let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
         let _ = s.perform(Action::Preview);
         let read = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: read, result: preview_data("ready") });
         let _ = update(&mut s, Message::ShowSearchStatus);
         assert!(!s.preview_visible());
+        let paused = s.preview_generation;
         let _ = update(&mut s, Message::ResultsWheel(-1.0));
-        assert_eq!(s.preview_generation, read);
+        assert_eq!(s.preview_generation, paused);
         let _ = update(&mut s, Message::CloseSearchStatus);
         assert!(s.preview_visible());
-        assert_eq!(s.preview_generation, read, "returning to the same target reuses its current read");
+        assert_eq!(s.preview_generation, paused, "returning to the same target reuses its completed data");
         let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
         assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
         let _ = command(&mut s, Command::Activate);
@@ -3256,6 +3288,137 @@ mod tests {
         assert_eq!(s.query, "report");
         assert!(s.opening.is_none());
         assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    fn pointer_messages(s: &Launcher, point: iced::Point, events: Vec<mouse::Event>) -> Vec<Message> {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::{Rectangle, Size};
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut element = view(s);
+        let widget = element.as_widget_mut();
+        let mut tree = Tree::new(&*widget);
+        let bounds = Size::new(s.window_width as f32, full_height() as f32);
+        let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+        let mut messages = Vec::new();
+        for event in events {
+            let event = Event::Mouse(event);
+            let status = {
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                shell.event_status()
+            };
+            if let Some(message) = on_event(event, status, iced::window::Id::unique()) {
+                messages.push(message);
+            }
+        }
+        messages
+    }
+
+    #[test]
+    fn sidebar_pointer_and_wheel_events_keep_text_and_result_navigation_separate() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        let _ = s.perform(Action::Preview);
+        let read = s.preview_generation;
+        let _ = update(
+            &mut s,
+            Message::PreviewLoaded { generation: read, result: preview_data(&"synthetic line\n".repeat(100)) },
+        );
+        let wheel = || mouse::Event::WheelScrolled { delta: ScrollDelta::Lines { x: 0.0, y: -1.0 } };
+        let messages = pointer_messages(&s, iced::Point::new(650.0, 200.0), vec![wheel()]);
+        assert!(messages.is_empty(), "the text scrollable captures its wheel without changing selection");
+        assert_eq!(s.selected().unwrap().target, Target::File(files[0].clone()));
+        let messages = pointer_messages(&s, iced::Point::new(120.0, 100.0), vec![wheel()]);
+        assert!(matches!(&messages[..], [Message::ResultsWheel(y)] if *y == -1.0), "one route per list wheel event");
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.selected().unwrap().target, Target::File(files[1].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        let messages = pointer_messages(
+            &s,
+            iced::Point::new(120.0, 95.0),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(messages.iter().any(|message| matches!(message, Message::Selected(_))));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.selected().unwrap().target, Target::File(files[0].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[0].id);
+        assert!(s.opening.is_none(), "one click selects without opening");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn hiding_or_disabling_preview_invalidates_pending_bus_requests() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::Preview);
+        let first = s.preview_request.clone().unwrap();
+        let _ = command(&mut s, Command::Down);
+        assert!(!first.is_active(), "old queued selections cannot start later");
+        let second = s.preview_request.clone().unwrap();
+        let old = s.preview_generation;
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(!second.is_active());
+        assert!(s.text_preview.is_none());
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("hidden") });
+        assert!(s.text_preview.is_none());
+        let _ = update(&mut s, Message::CloseSearchStatus);
+        let resumed = s.preview_request.clone().unwrap();
+        assert!(resumed.is_active());
+        let _ = command(&mut s, Command::Back);
+        assert!(!resumed.is_active());
+        assert!(!s.preview_enabled && s.text_preview.is_none());
+    }
+
+    #[test]
+    fn a_new_query_invalidates_text_even_when_home_selects_the_same_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("report.txt");
+        std::fs::write(&path, "synthetic contents").unwrap();
+        let file = FileHit {
+            id: format!("file://{}", path.display()),
+            name: "report.txt".into(),
+            path: Some(path),
+            icon: String::new(),
+            subtext: String::new(),
+            is_dir: false,
+        };
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![file.clone()])) });
+        let _ = s.perform(Action::AddFavorite);
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("old text") });
+        let _ = update(&mut s, Message::Query(String::new()));
+        assert!(matches!(&s.selected().unwrap().target, Target::File(selected) if selected.id == file.id));
+        let fresh = s.preview_generation;
+        assert!(fresh > old);
+        assert!(s.preview_request.as_ref().unwrap().is_active());
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("stale") });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, fresh, "stale content cannot replace the new loading state");
     }
 
     fn preview_data(text: &str) -> Result<crate::backend::PreviewData, String> {

@@ -280,7 +280,9 @@ read of a pinned inode, not an atomic snapshot of concurrently written content.
 The launcher follows the selected regular file only while the explicitly enabled
 sidebar is visible. Disabled preview, non-file selections and modal screens start
 no content reads. A new query clears stale text; closing the sidebar invalidates
-responses and stops reads on later navigation. Per-read generations bind text,
+responses and stops reads on later navigation. Request-validity tokens cancel
+queued previews before either RPC starts when the target changes or preview is
+hidden; already dispatched filesystem work can finish. Per-read generations bind text,
 metadata and widget events to the current target. Stable identities survive result
 reordering without rereading. No selected file is opened as a side effect.
 
