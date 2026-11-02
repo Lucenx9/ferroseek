@@ -17,17 +17,29 @@ published release or verified compatibility with every Linux desktop.
 - [x] Managed `--launcher` installation/removal and launcher archives including
   the engine and CLI; guided setup recommends the launcher on Wayland.
 - [ ] Validate real desktop sessions and publish an explicit compositor support
-  matrix. Current graphical evidence is nested virtual KWin only.
+  matrix, including multiple monitors, display scaling and keyboard layouts.
+  Current graphical evidence is nested virtual KWin only.
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
 - [x] Dedicated FerroSeek daemon search/open interface, independent replies for
   concurrent clients, and removal of Noctalia/KRunner adapters.
-- [ ] Add configuration for appearance, light/dark themes, size and position.
+- [ ] Add file details and **Open with** actions; preserve the selected file
+  while loading details or available applications. Add bounded previews for
+  selected supported formats with explicit loading, unsupported and error states.
+- [ ] Navigate into folders and back without losing the previous query,
+  search scope or selection.
+- [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,
+  size and position. Keep focus, navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon
   together before choosing further performance work.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
+
+Delivery order: verify desktop focus/activation and measure end-to-end latency;
+then file details and Open with; folder navigation; quicklinks and keyword
+commands. Each interaction change needs keyboard, pointer, long-label and
+asynchronous/error checks, plus inspection of rendered UI.
 
 See [launcher setup and current limits](LAUNCHER.md).
 
@@ -55,10 +67,25 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 ## Search engine improvements
 
 - [ ] Improve broad/short-path fallback latency and the mixed-query p95 while preserving correctness and low memory use.
+- [ ] Evaluate bounded typo tolerance for filename queries against relevance
+  fixtures and latency measurements. Existing application fuzzy matching does
+  not establish typo tolerance for indexed file search.
 - [ ] Consider indexed or query-time metadata filters for type, extension, size and modification date, measured against the existing baseline.
 - [ ] Add **optional** bounded plain-text content indexing for TXT/Markdown/source files with separate performance and size benchmarks.
 - [ ] Keep potential PDF/office extractors isolated and optional until justified by measurements.
 - [ ] Investigate initial-scan heap retention, dedicated resume reconciliation, SIGHUP config reload and alternate watch strategies only where supported by evidence.
+
+## Daily commands and later extensions
+
+These are planned capabilities, not available launcher features. Complete the
+file/application workflow and desktop validation before expanding the platform.
+
+- [ ] Add user-defined aliases, quicklinks to URLs/folders and keyword-based web
+  searches, with editable targets and predictable argument handling.
+- [ ] Add searchable clipboard history and reusable text snippets as opt-in
+  features, with clear retention/deletion controls and explicit desktop support.
+- [ ] Evaluate user-defined script commands before designing workflows or a
+  general extension API; keep execution explicit and separate from search.
 
 ## Optional AI agent integration
 
