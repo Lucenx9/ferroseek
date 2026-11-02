@@ -1,6 +1,7 @@
 # FerroSeek benchmarks
 
-All numbers here were measured on this machine with the commands shown.
+Sections 1–11 describe measurements on the machine below with the commands shown.
+Section 12 uses a separate CI environment, identified alongside its results.
 Nothing has been extrapolated. **No Baloo comparison has been run yet.**
 Baloo is disabled on this machine, and the owner asked that it stay
 disabled. The protocol for a controlled comparison is in
@@ -617,3 +618,41 @@ See [the isolated access-mode comparison](benchmarks/mcp-access-modes/README.md)
 for five process repetitions on 20,000 synthetic files, independent result
 oracles, stdio round trips, and resource measurements. This is a selective
 warm-cache regression check, not a new million-file or desktop benchmark.
+
+## 12. Launcher interaction latency
+
+The isolated graphical harness measures the release launcher and real daemon
+together. It generates 10,007 synthetic files, waits for indexing to finish,
+and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and
+a private bus with no activation services. A separate test window establishes
+keyboard input before the launcher and receives input again after it closes.
+Test-only Wayland fake input types `report` into the real search widget, edits
+the action filter and returns to the main field. No UI messages are injected.
+
+```sh
+cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon
+export XDG_RUNTIME_DIR=$(mktemp -d)
+LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 \
+  xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
+```
+
+The workflow `Launcher interaction` installs the Linux test dependencies and
+retains PNGs, per-process diagnostic logs and `latency.json`. The JSON records
+the OS, CPU, KWin version and every sample. There are 20 process launches by
+default (`FERROSEEK_SMOKE_TRIALS=2…100`); the first is reported separately and
+the remaining 19 use nearest-rank p50/p95 and maximum. Neither set claims cold
+caches: no caches are dropped and the daemon remains warm between launches.
+
+- **First redraw:** entry into launcher `main` to its first redraw event;
+  excludes process creation before `main`, and may precede initial results.
+- **Query redraw:** receipt of the final typed-character edit to a redraw
+  event after current results are applied. Includes application matching,
+  backend queueing, D-Bus/search, result processing and the redraw callback;
+  excludes injected-key dispatch before receipt and compositor presentation.
+- Superseded queries, failures and stale results do not count as successful
+  query samples. Pending redraw callbacks older than result application are
+  excluded. Logging and callbacks introduce measurement overhead.
+
+This workload is a repeatable diagnostic baseline, not a desktop speed claim
+or a CI speed threshold. It does not cover physical displays, multiple monitors,
+scaling, IMEs, application activation tokens, or existing target-window focus.
