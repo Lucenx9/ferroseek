@@ -107,7 +107,7 @@ os.replace(temp, out)
     for invalid_program in ('#!/nonexistent/ferroseek-test-interpreter\n', 'invalid executable format\n'):
         helper.write_text(invalid_program)
         refused = call('OpenWith', url, 'matrix-handler.desktop', '', ok=False)
-        assert 'SpawnExecFailed' in refused.stderr, 'a known pre-dispatch error was reported as uncertain'
+        assert 'org.freedesktop.DBus.Error.Spawn.ExecFailed' in refused.stderr, refused.stderr
     helper.write_bytes(saved_helper)
     # A stub user scope records separate launches without contacting systemd.
     scope_log = root / 'selected-scopes.jsonl'
