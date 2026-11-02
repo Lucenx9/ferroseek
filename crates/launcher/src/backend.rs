@@ -373,10 +373,14 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            let _ = reply.send(run(conn, "Open", &id, &action, timeouts.open).await);
+            if !reply.is_canceled() {
+                let _ = reply.send(run(conn, "Open", &id, &action, timeouts.open).await);
+            }
         }
         Request::RunWith { id, app, reply } => {
-            let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+            if !reply.is_canceled() {
+                let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+            }
         }
         Request::TextPreview { id, validity, reply } => {
             if !validity.is_active() {
