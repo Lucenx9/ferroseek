@@ -152,6 +152,49 @@ impl Search {
         .await
     }
 
+    /// Open one indexed file with a current installed handler, without
+    /// modifying the desktop's default application association.
+    async fn open_with(&self, match_id: String, application_id: String, token: String) -> zbus::fdo::Result<()> {
+        let path = self.indexed_file(&match_id).await?;
+        let mime = self.mime.clone();
+        zruntime::unblock(move || {
+            let db = mime.get_or_init(MimeDb::load);
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let mime_type = db
+                .mime_for(&name)
+                .ok_or_else(|| zbus::fdo::Error::InvalidArgs("File type is not recognized".into()))?;
+            let app = ferroseek_desktop::apps::file_handlers(
+                &ferroseek_desktop::apps::data_dirs(),
+                &ferroseek_desktop::apps::current_locales(),
+                &ferroseek_desktop::apps::current_desktops(),
+                &[mime_type.to_string()],
+            )
+            .into_iter()
+            .find(|app| app.id == application_id)
+            .ok_or_else(|| {
+                zbus::fdo::Error::InvalidArgs(
+                    "Application is no longer available for this file. Reload the application list.".into(),
+                )
+            })?;
+            let uri = file_url(&path);
+            let mut child = ferroseek_desktop::launch::launch_file(
+                &app,
+                &path,
+                &uri,
+                (!token.is_empty()).then_some(token.as_str()),
+            )
+            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            std::thread::Builder::new()
+                .name("reap-selected-opener".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                })
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            Ok(())
+        })
+        .await
+    }
+
     async fn open(
         &self,
         #[zbus(connection)] conn: &zbus::Connection,
