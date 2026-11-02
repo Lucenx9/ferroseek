@@ -427,6 +427,24 @@ fn filters_select_candidates_before_applying_the_budget() {
 }
 
 #[test]
+fn candidates_from_an_earlier_stage_do_not_use_a_later_budget() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    // The exact match is also the first prefix row; the 299 weak prefix rows
+    // fill the rest of the 300-row prefix budget only if it is counted twice.
+    tx.upsert(root, b"fo", file(2)).unwrap();
+    for i in 0..299 {
+        tx.upsert(root, format!("fo0-weak-prefix-match-{i:03}.txt").as_bytes(), file(i + 3)).unwrap();
+    }
+    tx.upsert(root, b"fob", file(1000)).unwrap();
+    tx.commit().unwrap();
+    let hits = Reader::open(&db).unwrap().search(&Query::parse("fo"), &SearchOptions::default()).unwrap();
+    assert_eq!(names(&hits)[..2], ["fo", "fob"]);
+}
+
+#[test]
 fn path_only_queries_find_descendants_without_requiring_parent_name_in_filename() {
     let (_t, db) = setup();
     let (mut w, _) = Writer::open(&db).unwrap();
