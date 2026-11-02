@@ -144,12 +144,14 @@ impl Usage {
         let r = with_lock(&path, true, || {
             // The file is authoritative: another instance may have added
             // uses, or the history may have been forgotten, since load.
-            self.entries = read_entries(&path);
-            add_use(&mut self.entries, kind, key, query.as_deref(), now);
-            write_entries(&path, &self.entries)
+            let mut entries = try_read_entries(&path)?;
+            add_use(&mut entries, kind, key, query.as_deref(), now);
+            write_entries(&path, &entries)?;
+            Ok(entries)
         });
-        if let Err(e) = r {
-            log::warn!("cannot save launcher history {}: {e}", path.display());
+        match r {
+            Ok(entries) => self.entries = entries,
+            Err(e) => log::warn!("cannot save launcher history {}: {e}", path.display()),
         }
     }
 
@@ -359,6 +361,40 @@ mod tests {
         Usage::forget(&p).unwrap();
         Usage::forget(&p).unwrap();
         assert!(Usage::load(Some(p)).entries.is_empty());
+    }
+
+    #[test]
+    fn recording_preserves_unreadable_history_and_cached_ranking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-usage");
+        let mut usage = Usage::load(Some(path.clone()));
+        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        let before = usage.entries.clone();
+        let mut damaged = std::fs::read(&path).unwrap();
+        damaged.extend_from_slice(b"app\t1\t100\tinvalid-\xff\n");
+        std::fs::write(&path, &damaged).unwrap();
+
+        usage.record(Kind::App, "new.desktop", "new", 100);
+
+        assert_eq!(std::fs::read(&path).unwrap(), damaged, "a failed read must not overwrite existing history");
+        assert_eq!(usage.entries, before, "a failed update must preserve cached ranking");
+    }
+
+    #[test]
+    fn recording_preserves_cached_ranking_when_writing_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-usage");
+        let mut usage = Usage::load(Some(path.clone()));
+        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        let before = usage.entries.clone();
+        let disk = std::fs::read(&path).unwrap();
+        let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+        std::fs::create_dir(temporary).unwrap();
+
+        usage.record(Kind::App, "new.desktop", "new", 100);
+
+        assert_eq!(std::fs::read(&path).unwrap(), disk);
+        assert_eq!(usage.entries, before, "a failed write must preserve cached ranking");
     }
 
     #[test]
