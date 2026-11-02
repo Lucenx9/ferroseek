@@ -656,3 +656,26 @@ caches: no caches are dropped and the daemon remains warm between launches.
 This workload is a repeatable diagnostic baseline, not a desktop speed claim
 or a CI speed threshold. It does not cover physical displays, multiple monitors,
 scaling, IMEs, application activation tokens, or existing target-window focus.
+The signal is `RedrawRequested`, before drawing completes; it does not measure
+completed rendering or monitor presentation.
+
+### First recorded run — 2026-11-02
+
+[Source and complete run](https://github.com/Lucenx9/ferroseek/actions/runs/41495909474):
+commit `14652bb`, GitHub Ubuntu 24.04 runner, 4 vCPUs (AMD EPYC 9V45),
+Linux 7.0.0-1017-azure, glibc 2.39, KWin 5.27.11 with llvmpipe, rustc 1.99.1,
+release profile with thin LTO and one daemon throughout the 20 opens.
+This environment differs from sections 1–11.
+
+| Diagnostic signal | First process (ms) | Subsequent p50 (ms, n=19) | Subsequent p95/max (ms, n=19) |
+|---|---:|---:|---:|
+| `main` → first redraw event | 263.89 | 142.70 | 165.85 |
+| Final character edit → results redraw event | 8.30 | 17.47 | 31.07 |
+
+[Raw samples and environment](benchmarks/launcher-interaction-2026-11-02.json)
+retain the exact microsecond values. Independently checked every sample and
+percentile against the 20 process logs. All opens verified 15 actual daemon
+file results, editing after asynchronous results, and background input after
+closing. The first also verified filter clearing, menu closure and main-field
+editing after those transitions. Inspected the three original screenshots.
+No startup optimization or cross-machine speed comparison is established.

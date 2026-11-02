@@ -40,6 +40,9 @@ published release or verified compatibility with every Linux desktop.
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon
   together before choosing further performance work.
+  A [first diagnostic baseline](BENCHMARKS.md#12-launcher-interaction-latency)
+  covers real keyboard input and redraw events in virtual KWin; physical
+  presentation and real desktop measurements remain open.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;

@@ -482,10 +482,9 @@ FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/laun
 
 This mode also requires Python 3 with PyQt5, a C compiler, `wayland-scanner`,
 Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
-refuses sockets outside the isolated smoke-test namespace. Twenty opens verify
-typing with a US keymap; this disposable KWin permits the test input interface.
-The real desktop's interface permissions are never changed. The checks cover
-typing after the first redraw without clicking, editing after asynchronous
+refuses sockets outside the isolated smoke-test namespace. This mode uses a US
+keymap and permits the test input interface only in disposable KWin. Twenty opens
+verify typing after the first redraw without clicking, editing after asynchronous
 results, action-filter focus and return to the main input, Escape/toggle and
 input returning to a background test application. PNGs, diagnostic logs and
 `latency.json` remain in the output directory. It does not verify activation of
@@ -503,6 +502,7 @@ to retain a diagnostic session.
 `query_ready` ends when current query results are applied, and `query_frame`
 ends at a subsequent redraw event. Superseded, hidden and failed queries have separate
 events and do not become successful frame samples. An old queued redraw cannot
-complete newer results. These are application redraw signals, **not compositor
-presentation or physical input-to-display latency**. Diagnostics can affect the
-timing they observe. See [the benchmark method](BENCHMARKS.md#12-launcher-interaction-latency).
+complete newer results. These signals request a redraw; they do **not measure
+completed drawing, compositor presentation or physical input-to-display latency**.
+Diagnostics can affect the timing they observe. See
+[the benchmark method](BENCHMARKS.md#12-launcher-interaction-latency).
