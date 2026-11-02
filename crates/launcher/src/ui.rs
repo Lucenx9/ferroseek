@@ -26,6 +26,7 @@ use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
+use crate::preview;
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -202,6 +203,8 @@ pub struct Launcher {
     application_generation: u64,
     file_details: Option<details::Panel>,
     details_generation: u64,
+    text_preview: Option<preview::Panel>,
+    preview_generation: u64,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -220,6 +223,8 @@ pub enum Message {
     Scope(Scope),
     ActionQuery(String),
     FolderBack { generation: u64 },
+    PreviewLoaded { generation: u64, result: Result<crate::backend::TextPreview, String> },
+    Preview { generation: u64, event: preview::Event },
     DetailsLoaded { generation: u64, result: Result<crate::backend::FileDetails, String> },
     Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
@@ -314,6 +319,8 @@ fn boot() -> (Launcher, Task<Message>) {
         application_generation: 0,
         file_details: None,
         details_generation: 0,
+        text_preview: None,
+        preview_generation: 0,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -446,6 +453,7 @@ impl Launcher {
             && self.folder_settings.is_none()
             && self.application_picker.is_none()
             && self.file_details.is_none()
+            && self.text_preview.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -464,7 +472,9 @@ impl Launcher {
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens =
             matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
-        if (opens || matches!(action, Action::Details | Action::SearchFolder)) && self.opening.is_some() {
+        if (opens || matches!(action, Action::Details | Action::Preview | Action::SearchFolder))
+            && self.opening.is_some()
+        {
             return Task::none(); // one open at a time; the launcher exits after it
         }
         if opens && self.unconfirmed_open {
@@ -496,6 +506,9 @@ impl Launcher {
             }
             (Action::SearchFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
                 self.enter_folder_search(folder.clone())
+            }
+            (Action::Preview, Target::File(file)) if !file.is_dir && file.path.is_some() => {
+                self.start_preview(file.clone())
             }
             (Action::Details, Target::File(file)) if !file.is_dir && file.path.is_some() => {
                 self.panel = None;
@@ -711,6 +724,54 @@ impl Launcher {
         ])
     }
 
+    fn start_preview(&mut self, file: FileHit) -> Task<Message> {
+        self.panel = None;
+        self.text_preview = Some(preview::Panel::new(file));
+        let load = self.request_preview();
+        Task::batch([load, self.resize()])
+    }
+
+    fn request_preview(&mut self) -> Task<Message> {
+        let Some(panel) = &self.text_preview else { return Task::none() };
+        let id = panel.file.id.clone();
+        self.preview_generation += 1;
+        let generation = self.preview_generation;
+        Task::perform(self.backend.clone().text_preview(id), move |result| Message::PreviewLoaded {
+            generation,
+            result,
+        })
+    }
+
+    fn preview_effect(&mut self, effect: preview::Effect) -> Task<Message> {
+        use widget::operation::{AbsoluteOffset, RelativeOffset};
+        match effect {
+            preview::Effect::None => Task::none(),
+            preview::Effect::Close => {
+                if let Some(panel) = self.text_preview.take() {
+                    self.cursor.select_target(&Target::File(panel.file), &self.items);
+                }
+                self.preview_generation += 1;
+                if self.file_details.is_some() {
+                    self.resize()
+                } else {
+                    Task::batch([self.resize(), widget::operation::focus(search_id())])
+                }
+            }
+            preview::Effect::Refresh => Task::batch([
+                self.request_preview(),
+                widget::operation::snap_to(preview::scroll_id(), RelativeOffset::START),
+            ]),
+            preview::Effect::Copy(location) => iced::clipboard::write(location),
+            preview::Effect::Scroll(y) => {
+                widget::operation::scroll_by(preview::scroll_id(), AbsoluteOffset { x: 0.0, y })
+            }
+            preview::Effect::Edge(end) => widget::operation::snap_to(
+                preview::scroll_id(),
+                if end { RelativeOffset::END } else { RelativeOffset::START },
+            ),
+        }
+    }
+
     fn request_file_details(&mut self) -> Task<Message> {
         let Some(panel) = &self.file_details else { return Task::none() };
         let id = panel.file.id.clone();
@@ -732,6 +793,10 @@ impl Launcher {
                 }
                 self.details_generation += 1;
                 Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            details::Effect::Preview => {
+                let Some(panel) = &self.file_details else { return Task::none() };
+                self.start_preview(panel.file.clone())
             }
             details::Effect::Refresh => self.request_file_details(),
             details::Effect::Copy(location) => iced::clipboard::write(location),
@@ -840,7 +905,7 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
-    if (s.application_picker.is_some() || s.file_details.is_some())
+    if (s.application_picker.is_some() || s.file_details.is_some() || s.text_preview.is_some())
         && matches!(
             message,
             Message::Query(_)
@@ -893,6 +958,28 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::PreviewLoaded { generation, result } => {
+            if generation == s.preview_generation
+                && let Some(panel) = &mut s.text_preview
+            {
+                panel.loaded(result);
+            }
+            Task::none()
+        }
+        Message::Preview { generation, event } => {
+            if generation != s.preview_generation {
+                return Task::none();
+            }
+            let Some(panel) = &mut s.text_preview else { return Task::none() };
+            let effect = panel.event(event);
+            s.preview_effect(effect)
+        }
+        Message::RefreshSearchStatus if s.text_preview.is_some() => {
+            let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
+            s.preview_effect(effect)
+        }
+        Message::Wheel(_) if s.text_preview.is_some() => Task::none(),
+        Message::Details { .. } if s.text_preview.is_some() => Task::none(),
         Message::FolderBack { generation } => {
             if generation == s.scope_generation {
                 s.back_folder_search()
@@ -1171,6 +1258,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.text_preview {
+        let effect = panel.command(cmd);
+        return s.preview_effect(effect);
+    }
     if let Some(panel) = &mut s.file_details {
         let effect = panel.command(cmd);
         return s.details_effect(effect);
@@ -1287,6 +1378,10 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.text_preview {
+        let generation = s.preview_generation;
+        return panel.view(s.file_details.is_some()).map(move |event| Message::Preview { generation, event });
+    }
     if let Some(panel) = &s.file_details {
         let generation = s.details_generation;
         return panel.view().map(move |event| Message::Details { generation, event });
@@ -1875,6 +1970,8 @@ mod tests {
             application_generation: 0,
             file_details: None,
             details_generation: 0,
+            text_preview: None,
+            preview_generation: 0,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
@@ -2155,7 +2252,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 8);
+        assert_eq!(panel.actions.len(), 9);
     }
 
     #[test]

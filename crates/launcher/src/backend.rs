@@ -22,6 +22,24 @@ pub struct FileDetails {
     pub modified: i64,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub enum TextPreview {
+    Text { text: String, truncated: bool },
+    Unsupported(String),
+}
+
+// File contents must not leak into diagnostic messages.
+impl std::fmt::Debug for TextPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text { text, truncated } => {
+                f.debug_struct("TextPreview").field("bytes", &text.len()).field("truncated", truncated).finish()
+            }
+            Self::Unsupported(reason) => f.debug_tuple("Unsupported").field(reason).finish(),
+        }
+    }
+}
+
 /// The daemon (mirrors `ferroseek_engine::ipc`; checked by a test).
 pub const DAEMON_BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
 pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
@@ -126,6 +144,7 @@ enum Request {
     Search { query: String, folder: Option<String>, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
+    TextPreview { id: String, reply: oneshot::Sender<Result<TextPreview, String>> },
     FileDetails { id: String, reply: oneshot::Sender<Result<FileDetails, String>> },
     RunWith { id: String, app: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
@@ -245,6 +264,32 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
         }
         Request::RunWith { id, app, reply } => {
             let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+        }
+        Request::TextPreview { id, reply } => {
+            let result = async {
+                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+                let response = runtime
+                    .timeout(
+                        timeouts.status,
+                        conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "TextPreview", &(id,)),
+                    )
+                    .await
+                    .map_err(|_| "Text preview timed out. Refresh to try again.".to_string())?;
+                let message = match response {
+                    Err(zbus::Error::MethodError(name, detail, _))
+                        if name.as_str() == "org.freedesktop.DBus.Error.NotSupported" =>
+                    {
+                        return Ok(TextPreview::Unsupported(
+                            detail.unwrap_or_else(|| "This file type has no text preview.".into()),
+                        ));
+                    }
+                    other => other.map_err(|e| e.to_string())?,
+                };
+                let (text, truncated) = message.body().deserialize().map_err(|e| e.to_string())?;
+                Ok(TextPreview::Text { text, truncated })
+            }
+            .await;
+            let _ = reply.send(result);
         }
         Request::FileDetails { id, reply } => {
             let result = async {
@@ -429,6 +474,12 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn text_preview(self, id: String) -> Result<TextPreview, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.unbounded_send(Request::TextPreview { id, reply }).map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
     pub async fn file_details(self, id: String) -> Result<FileDetails, String> {
         let (reply, rx) = oneshot::channel();
         self.tx.unbounded_send(Request::FileDetails { id, reply }).map_err(|_| "bus thread stopped".to_string())?;

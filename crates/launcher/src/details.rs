@@ -13,6 +13,7 @@ pub enum Event {
     Back,
     Refresh,
     CopyLocation,
+    Preview,
 }
 
 pub enum Effect {
@@ -20,6 +21,7 @@ pub enum Effect {
     Close,
     Refresh,
     Copy(String),
+    Preview,
     Scroll(f32),
     Edge(bool),
 }
@@ -62,6 +64,7 @@ impl Panel {
     pub fn event(&mut self, event: Event) -> Effect {
         match event {
             Event::Back => Effect::Close,
+            Event::Preview => Effect::Preview,
             Event::Refresh if !matches!(self.state, State::Loading) => {
                 self.state = State::Loading;
                 self.notice = None;
@@ -96,7 +99,13 @@ impl Panel {
         if !matches!(self.state, State::Loading) {
             refresh = refresh.on_press(Event::Refresh);
         }
-        let header = row![text("File details").size(20), space::horizontal(), refresh].align_y(Vertical::Center);
+        let header = row![
+            text("File details").size(20),
+            space::horizontal(),
+            button(text("Preview text").size(12)).on_press(Event::Preview).style(ui::status_button_style),
+            refresh
+        ]
+        .align_y(Vertical::Center);
         let (location, url) = self.location();
         let copy = if url { "Copy file URL" } else { "Copy path" };
         let mut body = column![

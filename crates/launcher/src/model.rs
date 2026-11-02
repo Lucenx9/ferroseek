@@ -260,6 +260,7 @@ pub enum Action {
     Open,
     OpenWith,
     Details,
+    Preview,
     SearchFolder,
     Reveal,
     CopyPath,
@@ -280,6 +281,7 @@ impl Action {
             Action::Open => "Open",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
+            Action::Preview => "Preview text",
             Action::SearchFolder => "Search in folder",
             Action::Reveal => "Show in folder",
             Action::CopyPath => "Copy path",
@@ -307,6 +309,7 @@ impl Action {
         let aliases: &[&str] = match self {
             Self::OpenWith => &["application", "choose app", "handler"],
             Self::Details => &["info", "properties", "size", "modified"],
+            Self::Preview => &["read", "contents"],
             Self::SearchFolder => &["within", "directory search", "inside", "subfolders"],
             Self::Reveal => &["reveal", "directory", "parent"],
             Self::CopyName => &["filename", "title"],
@@ -331,6 +334,7 @@ impl Action {
             Action::CopyName
             | Action::OpenWith
             | Action::Details
+            | Action::Preview
             | Action::ResetRanking
             | Action::AddFavorite
             | Action::RemoveFavorite
@@ -359,6 +363,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: false, .. })) {
         actions.push(Action::OpenWith);
         actions.push(Action::Details);
+        actions.push(Action::Preview);
     }
     actions
 }
@@ -1070,7 +1075,8 @@ mod tests {
                 Action::ResetRanking,
                 Action::AddFavorite,
                 Action::OpenWith,
-                Action::Details
+                Action::Details,
+                Action::Preview
             ]
         );
         let mut odd = file("a", false);
