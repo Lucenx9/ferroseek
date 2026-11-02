@@ -137,7 +137,42 @@ if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
     wayland-scanner private-code "$XML" "$T/fake-input-protocol.c"
     cc -std=c11 -Wall -Wextra -Werror -I"$T" tests/launcher-input.c "$T/fake-input-protocol.c" \
         $(pkg-config --cflags --libs wayland-client) -o "$T/launcher-input"
-    python3 tests/launcher-interaction.py "$BIN_DIR/ferroseek-launcher" "$OUT" "$T/launcher-input"
+    # THROWAWAY experiment: real layer focus and ordered worker wakeup only.
+    # Nonempty tokens do not establish validity or target-window activation.
+    "$BIN_DIR/examples/activation-context-prototype" > "$T/activation-prototype.log" 2>&1 &
+    LPID=$!
+    for _ in $(seq 200); do
+        grep -q 'context=true surface_alive=true seat_alive=true' "$T/activation-prototype.log" && break
+        kill -0 "$LPID" 2>/dev/null || fail "activation prototype exited before keyboard focus"
+        sleep 0.05
+    done
+    grep -q 'context=true surface_alive=true seat_alive=true' "$T/activation-prototype.log" \
+        || fail "shared connection did not observe the layer's focused surface and seat"
+    for expected in 1 2; do
+        # Another real Enter after idle must wake the worker without later input.
+        sleep 0.3
+        "$T/launcher-input" 28 -28
+        for _ in $(seq 200); do
+            completed=$(grep -c 'done=true token_received=true' "$T/activation-prototype.log" || true)
+            [[ "$completed" -ge "$expected" ]] && break
+            kill -0 "$LPID" 2>/dev/null || fail "activation prototype exited awaiting token $expected"
+            sleep 0.05
+        done
+        [[ "$completed" == "$expected" ]] || fail "expected token completion $expected, observed $completed"
+    done
+    grep -q 'barrier=true protocol=true context=true' "$T/activation-prototype.log" \
+        || fail "sync callback did not observe activation protocol and input context"
+    timeout 15 spectacle -b -n -f -o "$OUT/activation-context-prototype.png" > /dev/null 2>&1 \
+        || fail "activation prototype screenshot failed"
+    "$T/launcher-input" 1 -1
+    for _ in $(seq 100); do
+        kill -0 "$LPID" 2>/dev/null || break
+        sleep 0.05
+    done
+    kill -0 "$LPID" 2>/dev/null && fail "Escape did not close activation prototype"
+    wait "$LPID" || fail "activation prototype exit status $?"
+    LPID=
+    echo "OK: actual layer surface/seat context and two Enter-triggered token replies; target focus untested"
     exit
 fi
 i=0
