@@ -532,7 +532,8 @@ It cannot discover host application/service directories or a user-manager socket
 Before input, KWin's support information must report one 1280×800 logical output
 at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
 1920×1200 at 1.5×. Ordinary typing and the unshifted Digit1 symbol (`1` or `&`)
-verify that the requested keyboard layout actually applies.
+verify that the requested keyboard layout actually applies. Expected and observed
+probe text are retained in `keyboard-preflight.json` and the schema 2 report.
 
 Twenty measured opens wait for the first redraw and actual Wayland keyboard Enter
 before typing, without clicking or an arbitrary delay. They verify editing after

@@ -135,8 +135,13 @@ def main():
         type_text("z")  # Establish ordinary input before launcher assertions.
         wait_for(lambda: {"text": "z"} in records(probe_log), "initial probe input")
         tap(2)  # Unshifted physical Digit1 proves the compositor's active layout.
-        symbol = "&" if os.environ.get("FERROSEEK_SMOKE_PROFILE") == "fr-1x" else "1"
-        wait_for(lambda: {"text": "z" + symbol} in records(probe_log), "requested keyboard layout is active")
+        symbol = "&" if profile == "fr-1x" else "1"
+        observed = wait_for(lambda: next((r["text"] for r in records(probe_log)
+                                        if isinstance(r.get("text"), str) and len(r["text"]) == 2), None),
+                            "unshifted Digit1 reached the input probe")
+        keyboard_preflight = {"expected": "z" + symbol, "observed": observed}
+        (out / "keyboard-preflight.json").write_text(json.dumps(keyboard_preflight, indent=2) + "\n")
+        assert observed == keyboard_preflight["expected"], "requested keyboard layout is not active"
         chord(29, character_keys["a"])  # Logical Ctrl+A in the active layout
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
@@ -246,6 +251,15 @@ def main():
                     capture("activation-action-numbered-selection.png")
                     chord(29, 2)  # Physical Ctrl+Digit1, regardless of its printed symbol.
                 elif mode == "numbered":
+                    capture("activation-numbered-selection.png")
+                    # Ordinary editing proves this instance's main widget owns focus.
+                    tap(14)
+                    wait_for(lambda: len([r for r in records(log) if r.get("event") == "query_start"])
+                             == query_edits + 1, "numbered main field accepts Backspace")
+                    type_text("n")  # Restore the preset query, activation.
+                    wait_for(lambda: len([r for r in records(log) if r.get("event") == "query_start"])
+                             == query_edits + 2, "numbered main field accepts ordinary typing")
+                    query_edits += 2
                     chord(29, 2)
                 elif mode == "pointer":
                     capture("activation-pointer-selection.png")
@@ -383,6 +397,7 @@ def main():
                   "cpu": subprocess.check_output(["lscpu"], text=True),
                   "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
                   "profile": profile, "keyboard_layout": layout,
+                  "keyboard_preflight": keyboard_preflight,
                   "output": {"logical_geometry": geometry, "scale": observed_scale}},
                   "corpus_files": 10007, "first_trial": samples[0], "samples": samples,
                   "repeat_first_frame": summary([s["first_frame_us"] for s in samples[1:]]),
