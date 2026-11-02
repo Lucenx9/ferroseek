@@ -31,6 +31,25 @@ SH
 chmod +x "$T/bin/xdg-open"
 export PATH="$T/bin:$PATH" XDG_RUNTIME_DIR="$T/runtime" TEST_OPEN_LOG="$T/open-log"
 
+# Handler discovery must use only isolated application/MIME data.
+export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_CONFIG_DIRS="$T/empty-config" \
+    XDG_DATA_HOME="$T/home/.local/share" XDG_DATA_DIRS="$T/empty-data" XDG_CURRENT_DESKTOP=KDE
+mkdir -p "$XDG_DATA_HOME/applications" "$XDG_DATA_HOME/mime" "$XDG_CONFIG_HOME" "$XDG_CONFIG_DIRS" "$XDG_DATA_DIRS"
+printf '50:application/pdf:*.pdf\n' > "$XDG_DATA_HOME/mime/globs2"
+cat > "$XDG_DATA_HOME/applications/document-viewer.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Document Viewer
+Icon=application-pdf
+NoDisplay=true
+MimeType=application/pdf;
+Exec=$T/bin/selected-opener --document %f
+EOF
+cat > "$T/bin/selected-opener" <<'SH'
+#!/bin/sh
+printf '%s\n' "$XDG_ACTIVATION_TOKEN" "$#" "$1" "$2" > "$TEST_OPEN_LOG"
+SH
+chmod +x "$T/bin/selected-opener"
 export FERROSEEK_CONFIG="$T/config.toml" FERROSEEK_DATA_DIR="$T/data" FERROSEEK_LOG=debug
 "$BIN" 2> "$T/daemon.log" &
 PID=$!
@@ -79,6 +98,10 @@ echo "$out"
 [[ "$out" == *"file://$T/root/Documents/Quarterly%20Report.pdf"* ]] || fail "match id is not a file URL"
 [[ "$out" == *"application-pdf"* ]] || fail "icon"
 
+echo "== Applications for an indexed file"
+url="file://$T/root/Documents/Quarterly%20Report.pdf"
+out=$(call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Applications "$url")
+[[ "$out" == *"document-viewer.desktop"* && "$out" == *"Document Viewer"* ]] || fail "declared NoDisplay file handler missing"
 echo "== Live update"
 echo x > "$T/root/brand-new-file.txt"
 for _ in $(seq 100); do
