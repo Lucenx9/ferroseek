@@ -2545,6 +2545,9 @@ mod tests {
         let _ = update(&mut s, Message::ShowSearchStatus);
         let _ = command(&mut s, Command::Activate);
         assert!(s.opening.is_none());
+        assert!(s.text_preview.is_some(), "Enter previews the captured file");
+        let _ = command(&mut s, Command::Back);
+        assert!(s.text_preview.is_none() && s.file_details.is_some());
         assert!(s.folder_settings.is_none() && s.search_status.is_none());
         let _ = update(&mut s, Message::DetailsLoaded { generation: old, result: Err("unavailable".into()) });
         let _ = update(&mut s, Message::RefreshSearchStatus);
