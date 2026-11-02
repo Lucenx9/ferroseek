@@ -137,6 +137,15 @@ def main():
                              "action filter owns focus")
                     assert len([r for r in records(log) if r.get("event") == "query_start"]) == 7
                     capture("interaction-actions.png")
+                    # Cursor blinks repaint only damaged regions; the panel must
+                    # keep its raised background in every frame, not just full redraws.
+                    from PyQt5.QtGui import QImage
+                    for blink in range(4):
+                        time.sleep(0.3)
+                        capture(f"interaction-actions-blink-{blink}.png")
+                        color = QImage(str(out / f"interaction-actions-blink-{blink}.png")).pixelColor(900, 634)
+                        assert color.getRgb()[:3] == (0x22, 0x23, 0x29), \
+                            f"action panel background {color.getRgb()[:3]} after a partial redraw"
                     tap(1)  # Escape clears the filter
                     wait_for(lambda: any(r.get("event") == "action_filter_cleared" for r in records(log)),
                              "Escape cleared the action filter")
