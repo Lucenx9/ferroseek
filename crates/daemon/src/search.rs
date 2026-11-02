@@ -132,6 +132,39 @@ fn to_result(h: &Hit, mime: &MimeDb, home: &Path) -> FileResult {
 
 #[zbus::interface(name = "io.github.ferroseek.Search1")]
 impl Search {
+    /// Search strictly below a currently indexed directory. The path is kept
+    /// separate from user query syntax, including spaces and non-UTF-8 bytes.
+    async fn search_within(&self, folder_id: String, query: String) -> zbus::fdo::Result<Vec<FileResult>> {
+        let path =
+            path_from_url(&folder_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid folder URL".into()))?;
+        let (pool, mime, home) = (self.pool.clone(), self.mime.clone(), self.home.clone());
+        zruntime::unblock(move || {
+            let hits = pool
+                .with(|reader| {
+                    let indexed = reader.lookup(&path)?.is_some_and(|(_, meta)| meta.kind == Kind::Dir);
+                    if !indexed || !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                        return Ok(None);
+                    }
+                    if query.trim().chars().count() < 2 {
+                        return Ok(Some(Vec::new()));
+                    }
+                    reader
+                        .search(
+                            &Query::parse(&query),
+                            &SearchOptions { limit: SEARCH_LIMIT, within: Some(path.clone()), ..Default::default() },
+                        )
+                        .map(Some)
+                })
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+            let hits = hits.ok_or_else(|| {
+                zbus::fdo::Error::AccessDenied("Folder is no longer an available indexed directory".into())
+            })?;
+            let mime = mime.get_or_init(MimeDb::load);
+            Ok(hits.iter().map(|hit| to_result(hit, mime, &home)).collect())
+        })
+        .await
+    }
+
     async fn search(&self, query: String) -> zbus::fdo::Result<Vec<FileResult>> {
         if query.trim().chars().count() < 2 {
             return Ok(Vec::new());

@@ -23,6 +23,7 @@ been published yet.
 - Run application actions such as new or private windows from the actions menu,
   when the application's `.desktop` file declares them.
 - Find files and folders by name or path in configured indexing roots.
+- Search inside a selected indexed folder and its subfolders; return to the previous search.
 - Inspect an indexed file's full location, type, current size and modification time.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
@@ -78,8 +79,9 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
+| Alt+Right / Alt+Left | Search in the selected folder / return to the previous search |
 | Ctrl+Shift+C | Copy a file path |
-| Esc | Close actions, clear the query, then close the launcher |
+| Esc | Clear the action filter, close actions, clear the query, return from folder search, then close |
 
 More navigation keys and history settings are in the [launcher guide](docs/LAUNCHER.md).
 

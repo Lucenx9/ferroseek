@@ -186,6 +186,7 @@ gdbus introspect --session --dest "$SVC" --object-path /io/github/ferroseek/Sear
 
 python3 "$(dirname "$0")/open-with-smoke.py" "$T"
 python3 "$(dirname "$0")/file-details-smoke.py" "$T"
+python3 "$(dirname "$0")/folder-search-smoke.py" "$T"
 
 echo "== Save and apply folder scope without restarting"
 mkdir "$T/reconfigured:2026"

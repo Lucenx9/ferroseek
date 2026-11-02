@@ -123,7 +123,7 @@ pub enum UiEvent {
 }
 
 enum Request {
-    Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
+    Search { query: String, folder: Option<String>, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
     FileDetails { id: String, reply: oneshot::Sender<Result<FileDetails, String>> },
@@ -236,8 +236,8 @@ async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>,
 
 async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
     match req {
-        Request::Search { query, reply } => {
-            let r = search(conn, &query, timeouts.search).await;
+        Request::Search { query, folder, reply } => {
+            let r = search(conn, &query, folder.as_deref(), timeouts.search).await;
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
@@ -388,14 +388,37 @@ fn to_status((state, files, dirs, queued_dirs, watch_limit_hit, errors, roots): 
     SearchStatus { state, files, dirs, queued_dirs, watch_limit_hit, errors, roots }
 }
 
-async fn search(conn: &zbus::Connection, query: &str, timeout: Duration) -> Result<Vec<FileHit>, String> {
+async fn search(
+    conn: &zbus::Connection,
+    query: &str,
+    folder: Option<&str>,
+    timeout: Duration,
+) -> Result<Vec<FileHit>, String> {
     // Calling the daemon's name D-Bus-activates it when it is not running.
     let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
-    let msg = runtime
-        .timeout(timeout, conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Search", &(query,)))
-        .await
-        .map_err(|_| SEARCH_TIMED_OUT.to_string())?
-        .map_err(|e| e.to_string())?;
+    let msg = if let Some(folder) = folder {
+        runtime
+            .timeout(
+                timeout,
+                conn.call_method(
+                    Some(DAEMON_BUS_NAME),
+                    SEARCH_PATH,
+                    Some(SEARCH_IFACE),
+                    "SearchWithin",
+                    &(folder, query),
+                ),
+            )
+            .await
+    } else {
+        runtime
+            .timeout(
+                timeout,
+                conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Search", &(query,)),
+            )
+            .await
+    }
+    .map_err(|_| SEARCH_TIMED_OUT.to_string())?
+    .map_err(|e| e.to_string())?;
     let matches: Vec<FileResult> = msg.body().deserialize().map_err(|e| e.to_string())?;
     Ok(matches.into_iter().map(to_hit).collect())
 }
@@ -448,8 +471,18 @@ impl Backend {
     /// File results for `query`; `Err` if the daemon is unreachable. A
     /// superseded search resolves to `Ok(None)`.
     pub async fn search(self, query: String) -> Result<Option<Vec<FileHit>>, String> {
+        self.search_in(None, query).await
+    }
+
+    pub async fn search_within(self, folder: String, query: String) -> Result<Option<Vec<FileHit>>, String> {
+        self.search_in(Some(folder), query).await
+    }
+
+    async fn search_in(self, folder: Option<String>, query: String) -> Result<Option<Vec<FileHit>>, String> {
         let (reply, rx) = oneshot::channel();
-        self.tx.unbounded_send(Request::Search { query, reply }).map_err(|_| "bus thread stopped".to_string())?;
+        self.tx
+            .unbounded_send(Request::Search { query, folder, reply })
+            .map_err(|_| "bus thread stopped".to_string())?;
         match rx.await {
             Ok(r) => r.map(Some),
             Err(oneshot::Canceled) => Ok(None),
@@ -496,6 +529,15 @@ mod tests {
                 "stall" => std::future::pending().await,
                 "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
                 _ => Ok(("application/pdf".into(), 123, -1)),
+            }
+        }
+
+        async fn search_within(&self, folder: &str, query: &str) -> zbus::fdo::Result<Vec<FileResult>> {
+            self.0.send((folder.into(), query.into())).unwrap();
+            match folder {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("unavailable directory".into())),
+                _ => self.search(query).await,
             }
         }
 
@@ -599,7 +641,7 @@ mod tests {
             let (search_tx, search_rx) = oneshot::channel();
             let (run_tx, run_rx) = oneshot::channel();
             tx.unbounded_send(Request::Status { reply: status_tx }).unwrap();
-            tx.unbounded_send(Request::Search { query: "report".into(), reply: search_tx }).unwrap();
+            tx.unbounded_send(Request::Search { folder: None, query: "report".into(), reply: search_tx }).unwrap();
             tx.unbounded_send(Request::Run {
                 id: "file:///synthetic/report.txt".into(),
                 action: ACTION_OPEN_PARENT.into(),
@@ -656,7 +698,8 @@ mod tests {
                 let (run_tx, run_rx) = oneshot::channel();
                 let (last_tx, last_rx) = oneshot::channel();
                 if stalled_search {
-                    tx.unbounded_send(Request::Search { query: "stall".into(), reply: first_tx }).unwrap();
+                    tx.unbounded_send(Request::Search { folder: None, query: "stall".into(), reply: first_tx })
+                        .unwrap();
                     tx.unbounded_send(Request::Run {
                         id: "file:///synthetic/report.txt".into(),
                         action: "slow".into(),
@@ -666,7 +709,7 @@ mod tests {
                 } else {
                     // A read before and after the stalled open also proves the
                     // dispatcher remains usable when the open has no outcome.
-                    tx.unbounded_send(Request::Search { query: "slow".into(), reply: first_tx }).unwrap();
+                    tx.unbounded_send(Request::Search { folder: None, query: "slow".into(), reply: first_tx }).unwrap();
                     tx.unbounded_send(Request::Run {
                         id: "file:///synthetic/report.txt".into(),
                         action: "stall".into(),
@@ -674,7 +717,7 @@ mod tests {
                     })
                     .unwrap();
                 }
-                tx.unbounded_send(Request::Search { query: "report".into(), reply: last_tx }).unwrap();
+                tx.unbounded_send(Request::Search { folder: None, query: "report".into(), reply: last_tx }).unwrap();
                 drop(tx);
                 let verify = async {
                     let first = first_rx.await.unwrap();
@@ -784,6 +827,46 @@ mod tests {
             };
             iced::futures::future::join(
                 serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
+        });
+    }
+
+    #[test]
+    fn folder_queries_capture_scope_and_text_and_never_fall_back_to_global_search() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (tx, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                let folder = "file:///synthetic/Reports%20%C3%A8";
+                assert!(backend.clone().search_within(folder.into(), "a/b report".into()).await.unwrap().is_some());
+                assert_eq!(requests.try_recv().unwrap(), (folder.into(), "a/b report".into()));
+                assert!(backend.clone().search_within("reject".into(), "report".into()).await.is_err());
+                assert_eq!(requests.try_recv().unwrap().0, "reject");
+                assert_eq!(
+                    backend.clone().search_within("stall".into(), "report".into()).await.unwrap_err(),
+                    SEARCH_TIMED_OUT
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "stall");
+                assert!(requests.try_recv().is_err(), "no implicit retries");
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { search: Duration::from_millis(40), ..Timeouts::default() }),
                 verify,
             )
             .await;

@@ -49,12 +49,13 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
+| Alt+Right / Alt+Left | Search in the selected folder / return to the previous search |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Ctrl+I | open/close file search status |
 | Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
-| Esc | clear the action filter, close actions, clear the query, then close |
+| Esc | clear the action filter, close actions, clear the query, return from folder search, then close |
 
 Choose **All**, **Applications** or **Files** beside the search field to narrow
 results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
@@ -214,6 +215,39 @@ if saving succeeded but application could not be confirmed, settings remain save
 and Ctrl+S can safely retry. Applying times out after 30 seconds; older daemons
 without this method must be updated. The screen cannot close during saving or
 application; after a failure, Esc returns to search and refreshes its file results.
+
+## Search in a folder
+
+![Scoped folder search](assets/launcher-folder-search.png)
+
+Rendered in a private virtual KWin session with a synthetic indexed tree.
+
+Select a folder result and press **Alt+Right**, or choose **Search in folder**
+from Actions (Ctrl+K; search for `within`). The header shows the captured location.
+Type at least two characters to search indexed files and folders strictly below
+that location, including subfolders. Query syntax and ranked result limits match
+normal file search. This is an indexed subtree search, not a list of immediate
+folder contents; an empty field shows a prompt.
+
+The query and folder URL travel separately, including paths with spaces or
+non-UTF-8 bytes. Unavailable, unindexed or symbolic-link folders are refused
+without broadening the search. Ctrl+R retries the current search. Index coverage
+can lag behind filesystem changes.
+
+A selected child folder can narrow the search again. **Alt+Left** or the header's
+**Back** button restores the previous query, result filter and selected target
+when it remains available. Esc clears the action filter/menu, then the current
+query, then returns to the previous search. Return history is bounded and lasts
+only for this launcher session. Returning shows the previous results immediately
+and refreshes them; late replies cannot overwrite the current context.
+
+Folder searches contain no global suggestions, apps or calculator results. The
+All/Applications/Files filter is unavailable until returning to global search.
+File actions, including Open with and File details, remain available. Ctrl+I
+opens index status; Ctrl+comma opens folder settings. Applying folder settings
+returns to global search with the original query. Searching and moving between
+contexts do not record launch history. Matching launcher and daemon versions are
+required.
 
 ## Open with a selected application
 
