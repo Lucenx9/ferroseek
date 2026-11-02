@@ -12,6 +12,13 @@
 # spectacle is missing.
 set -euo pipefail
 
+export FERROSEEK_SMOKE_PROFILE=${FERROSEEK_SMOKE_PROFILE:-us-1x}
+case "$FERROSEEK_SMOKE_PROFILE" in
+    us-1x) SMOKE_LAYOUT=us ;;
+    fr-1x) SMOKE_LAYOUT=fr ;;
+    *) echo "FAIL: unknown launcher profile: $FERROSEEK_SMOKE_PROFILE" >&2; exit 1 ;;
+esac
+
 BIN_DIR=$(realpath "${1:-target/debug}")
 OUT=$(realpath -m "${2:-target/launcher-smoke}")
 shift $(( $# > 2 ? 2 : $# ))
@@ -133,7 +140,7 @@ else
     sleep 0.5 # initial index of the tiny tree
 fi
 
-KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT=us \
+KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
     kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done

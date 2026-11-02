@@ -66,6 +66,14 @@ def main():
     processes = [probe_process]
     samples = []
     activation_log = out / "activation-target.jsonl"
+    profile = os.environ.get("FERROSEEK_SMOKE_PROFILE", "us-1x")
+    assert profile in ["us-1x", "fr-1x"], "unknown launcher profile"
+    layout = "fr" if profile == "fr-1x" else "us"
+    character_keys = dict(zip("abcdefghijklmnopqrstuvwxyz", [
+        30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
+        49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44]))
+    if layout == "fr":
+        character_keys.update(a=16, q=30, z=17, w=44, m=39)
 
     def keys(*codes):
         subprocess.run([str(helper), *map(str, codes)], check=True, timeout=5)
@@ -76,9 +84,12 @@ def main():
     def chord(modifier, code):
         keys(modifier, code, -code, -modifier)
 
+    def type_text(value):
+        for character in value:
+            tap(character_keys[character])
+
     def text_report():
-        for code in [19, 18, 25, 24, 19, 20]:  # report, US keymap
-            tap(code)
+        type_text("report")
 
     def capture(name):
         subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
@@ -100,12 +111,12 @@ def main():
         wait_for(lambda: select.select([input_device.stdout], [], [], 0)[0], "input device registered")
         assert input_device.stdout.readline().strip() == "ready"
         wait_for(lambda: records(probe_log), "focus probe mapped")
-        tap(44)  # z: establish that input reaches the background test application
+        type_text("z")  # Establish ordinary input before launcher assertions.
         wait_for(lambda: {"text": "z"} in records(probe_log), "initial probe input")
         tap(2)  # Unshifted physical Digit1 proves the compositor's active layout.
         symbol = "&" if os.environ.get("FERROSEEK_SMOKE_PROFILE") == "fr-1x" else "1"
         wait_for(lambda: {"text": "z" + symbol} in records(probe_log), "requested keyboard layout is active")
-        chord(29, 30)  # Ctrl+A
+        chord(29, character_keys["a"])  # Logical Ctrl+A in the active layout
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
 
@@ -158,7 +169,7 @@ def main():
 
                 assert process.wait(timeout=5) == 0
                 wait_for(lambda: not owner(), "launcher name released")
-                tap(44)
+                type_text("z")
                 wait_for(lambda: {"text": "z"} in records(probe_log), "focus returned to previous application")
                 chord(29, 30)
                 tap(14)
@@ -178,7 +189,7 @@ def main():
                 background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
                 processes.append(background_process)
                 wait_for(lambda: records(background), "second background window")
-                tap(44)
+                type_text("z")
                 wait_for(lambda: {"text": "z"} in records(background), "unrelated window owns input")
             log = out / f"activate-{mode}.jsonl"
             with log.open("w") as stream:
@@ -213,7 +224,7 @@ def main():
                 wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
                                      and r.get("activation") == activation_number
                                      for r in records(activation_log)), "target window activated")
-                tap(44)
+                type_text("z")
                 expected = "z" * activation_number
                 wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
                                      for r in records(activation_log)), "chosen application owns keyboard focus")
@@ -243,7 +254,7 @@ def main():
             background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
             processes.append(background_process)
             wait_for(lambda: records(background), "file-action background window")
-            tap(44)
+            type_text("z")
             wait_for(lambda: {"text": "z"} in records(background), "file-action background owns input")
             before_starts = len([r for r in records(activation_log) if r.get("event") == "started"])
             log = out / f"activate-{mode}.jsonl"
@@ -256,15 +267,13 @@ def main():
                                      for r in records(log)), "indexed document selected")
                 if mode == "file-with":
                     chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
-                    for code in [17, 23, 20, 35]:
-                        tap(code)
+                    type_text("with")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 4,
                              "Open with action filtered")
                     tap(28)
                     wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
                              "document handlers loaded")
-                    for code in [30, 46, 20, 23, 47, 30, 20, 23, 24, 49]:  # activation
-                        tap(code)
+                    type_text("activation")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "application_input"]) == 10,
                              "chosen handler filtered")
                     capture("activation-file-with-selection.png")
@@ -300,7 +309,7 @@ def main():
                 wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
                                      and r.get("activation") == number and r.get("pid") == serving_pid
                                      for r in records(activation_log)), "document target activated")
-                tap(44)
+                type_text("z")
                 wait_for(lambda: any(r.get("event") == "input" and r.get("text") == "z" * number
                                      and r.get("pid") == serving_pid for r in records(activation_log)),
                          "document target owns keyboard focus")
@@ -314,11 +323,12 @@ def main():
         # First process reported separately; no cache-dropping, so neither set is a cold-cache result.
         report = {"schema": 1, "environment": {"platform": platform.platform(),
                   "cpu": subprocess.check_output(["lscpu"], text=True),
-                  "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip()},
+                  "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
+                  "profile": profile, "keyboard_layout": layout},
                   "corpus_files": 10007, "first_trial": samples[0], "samples": samples,
                   "repeat_first_frame": summary([s["first_frame_us"] for s in samples[1:]]),
                   "repeat_query_frame": summary([s["query_frame_us"] for s in samples[1:]]),
-                  "limits": "Diagnostic redraw callback, not compositor presentation. Software-rendered virtual KWin; warm daemon; synthetic corpus; US keyboard. Input dispatch and physical display latency are excluded."}
+                  "limits": "Diagnostic redraw callback, not compositor presentation. Software-rendered virtual KWin; warm daemon; synthetic corpus; configured keyboard layout verified by ordinary input. Input dispatch and physical display latency are excluded."}
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
