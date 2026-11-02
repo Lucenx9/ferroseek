@@ -38,7 +38,7 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then file details and Open with; folder navigation; quicklinks and keyword
+then file details and previews; folder navigation; quicklinks and keyword
 commands. Each interaction change needs keyboard, pointer, long-label and
 asynchronous/error checks, plus inspection of rendered UI.
 

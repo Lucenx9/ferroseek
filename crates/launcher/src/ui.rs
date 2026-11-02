@@ -1076,7 +1076,9 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 fn view(s: &Launcher) -> Element<'_, Message> {
     if let Some(panel) = &s.application_picker {
         let generation = s.application_generation;
-        return panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event });
+        return crate::shortcuts::capture_numbered(
+            panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event }),
+        );
     }
     if let Some(panel) = &s.folder_settings {
         let generation = s.folder_generation;
