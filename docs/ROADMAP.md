@@ -27,8 +27,8 @@ published release or verified compatibility with every Linux desktop.
   changing defaults; preserve the selected file through asynchronous updates.
 - [x] Show current file details on request, preserving the selected file and
   search state through loading, refresh, errors and cancellation.
-- [x] Explicit bounded UTF-8 text previews with loading, empty, unsupported and
-  error states; preserve the captured file and search state.
+- [x] Explicitly enabled bounded UTF-8 text sidebar with current metadata, loading,
+  empty, unsupported and error states; follow selection while keeping results usable.
 - [ ] Add other preview formats after defining their decoder and resource limits.
 - [x] Search within indexed folders and subfolders; restore previous queries,
   search scopes and selections when returning.

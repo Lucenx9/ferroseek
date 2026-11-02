@@ -317,11 +317,24 @@ daemon versions are required.
 Rendered in a private virtual KWin session with a synthetic file.
 
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
-`preview` or `contents`), or press Enter in **File details**. The preview reads only when
-opened or refreshed; selecting another result never reads its contents. The view
-stays on the captured file even if search results change. Esc returns to File
-details when opened there, otherwise to the original search and selected target
-when still available. No launch history is recorded.
+`preview` or `contents`), or press Enter in **File details**. It enables a sidebar
+beside the results, with text and current type, size and modification time. File
+details closes back to results when enabling the sidebar.
+
+No content is read merely by opening the launcher or selecting results while
+preview is disabled. Once enabled, the sidebar follows the selected regular file:
+navigation, search editing and result-filter changes can start a new content and
+metadata read. A new query clears the old text immediately. Applications, folders
+and empty results show a prompt without reading content. Late responses cannot
+replace the current target. A stable selected target does not reread just because
+results were reordered.
+
+**Hide** or Esc closes the sidebar before clearing the search; it preserves the
+current query, filter and selection and stops reads on subsequent navigation.
+Preview stays enabled only for the current launcher session. Modal screens such as
+index status, folder settings, File details and Open with hide the sidebar and
+pause new preview reads. Returning resumes it for the current selected file.
+Opening, refreshing or copying a preview does not record launch history.
 
 The view displays plain text, including Markdown or HTML source without rendering
 or executing it. Supported MIME types are `text/*`, JSON, XML, JavaScript, TOML and
@@ -337,11 +350,18 @@ first; a clipped preview says **Beginning of file**. An incomplete UTF-8 sequenc
 at the byte boundary is omitted. CRLF, CR and form-feed page breaks display as LF. These
 limits apply before visual wrapping; the remainder of the file is not validated.
 
-Up/Down, Page Up/Down and Ctrl+Home/End scroll the text. **Refresh** (Ctrl+R)
-retries a failed read or fetches current content; it returns the scroll to the top.
-**Copy path** (Ctrl+Shift+C) copies the captured location, or its lossless file URL
-when the path contains non-UTF-8 bytes. The preview has no editor or content-copy
-command. Return to search to open the file normally.
+Up/Down, Page Up/Down and Ctrl+Home/End navigate the **results**. Use
+**Alt+Page Up/Down** to scroll the preview text, or the wheel over its text area.
+Scrolling the preview does not change the selected result; the wheel over the
+result list navigates that list. **Refresh** (Ctrl+R) retries content and metadata
+for the selected file and returns its text to the top. A metadata failure does
+not discard successfully loaded text.
+
+The sidebar's **Copy path**, or Ctrl+Shift+C outside Actions, copies its location;
+when the path contains non-UTF-8 bytes it copies the lossless file URL. Hover over
+the shortened location to see it in full. The preview has no editor or content-copy
+command. Enter and the normal file actions remain available with the sidebar open;
+only a confirmed open records launch history.
 
 Only indexed regular files are accepted. Symbolic links in any path component,
 changed file identities and unavailable paths are refused. After atomic file

@@ -262,8 +262,8 @@ worker, without reading file contents. The launcher requests details only on
 opening or refreshing the view, applies the existing read deadline and rejects
 late replies through a per-view generation. The view never opens the index.
 
-`Search1.TextPreview(file_url)` returns `(text, truncated)` on explicit entry or
-refresh. The daemon authorizes the indexed regular-file inode through the reader
+`Search1.TextPreview(file_url)` returns `(text, truncated)` after explicit sidebar
+activation, then on selected-file changes and refresh. The daemon authorizes the indexed regular-file inode through the reader
 pool, then walks every path component with `openat(O_PATH | O_NOFOLLOW)`. Directory
 components require `O_DIRECTORY`; the final pinned descriptor must be a regular
 file with the indexed inode. Supported MIME filenames are checked before opening
@@ -277,9 +277,19 @@ controls in the inspected prefix produce `NotSupported`; a partial UTF-8 sequenc
 at the byte limit is dropped. Unknown MIME types are unsupported. Failed identity
 checks produce `AccessDenied`; I/O failures produce `Failed`. This is a best-effort
 read of a pinned inode, not an atomic snapshot of concurrently written content.
-The launcher owns a fixed target and per-read generation, redacts text from Debug,
-and uses its three-second read deadline. A timeout releases the client bus queue;
-it does not cancel underlying filesystem work. Contents are neither persisted nor
+The launcher follows the selected regular file only while the explicitly enabled
+sidebar is visible. Disabled preview, non-file selections and modal screens start
+no content reads. A new query clears stale text; closing the sidebar invalidates
+responses and stops reads on later navigation. Per-read generations bind text,
+metadata and widget events to the current target. Stable identities survive result
+reordering without rereading. No selected file is opened as a side effect.
+
+The bus thread requests text and FileDetails concurrently for each preview target,
+with independent three-second deadlines and independently displayed errors. It
+coalesces queued preview requests to the latest target, even across pending searches;
+search coalescing still respects other request boundaries. Opens are never retried
+or coalesced. A timed-out request releases the client bus queue; it does not cancel
+underlying filesystem work. Text is redacted from Debug and neither persisted nor
 added to launch history. See [text preview limits](LAUNCHER.md#text-preview).
 
 `Search1` also exposes `Applications(file_url)` as desktop ID/name/icon tuples
