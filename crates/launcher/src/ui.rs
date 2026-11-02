@@ -1246,19 +1246,23 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     if s.panel.is_none() {
         content = content.push(numbered_hint(slot));
     }
-    let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(13).right(16));
-    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT - 16.0).style(move |_| container::Style {
+    let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
+    // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
+    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT / 2.0).style(move |_| container::Style {
         background: selected.then_some(Background::Color(palette::ACCENT)),
-        border: Border { radius: 2.0.into(), ..Default::default() },
+        border: Border { radius: 1.5.into(), ..Default::default() },
         ..Default::default()
     });
-    let row = container(row![bar, content].align_y(Vertical::Center)).height(ROW_HEIGHT).width(Length::Fill).style(
-        move |_| container::Style {
+    let bar = container(bar).padding(padding::left(4));
+    let row = container(row![bar, content].align_y(Vertical::Center))
+        .height(ROW_HEIGHT)
+        .width(Length::Fill)
+        .align_y(Vertical::Center)
+        .style(move |_| container::Style {
             background: selected.then_some(Background::Color(palette::SELECTED)),
             border: Border { radius: 9.0.into(), ..Default::default() },
             ..Default::default()
-        },
-    );
+        });
     mouse_area(row)
         .on_press(Message::Selected(item.target.clone()))
         .on_double_click(Message::Clicked(item.target.clone()))
