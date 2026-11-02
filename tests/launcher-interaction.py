@@ -110,7 +110,8 @@ def main():
         with (out / (name + ".log")).open("w") as capture_log:
             subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
                            check=True, timeout=15, stdout=capture_log, stderr=capture_log,
-                           env={**os.environ, "XDG_DATA_DIRS": "/usr/local/share:/usr/share"})
+                           env={**os.environ, "XDG_DATA_DIRS": "/usr/local/share:/usr/share",
+                                "XDG_CONFIG_DIRS": "/etc/xdg"})
         assert (out / name).is_file(), "capture tool returned without an image; inspect its companion log"
         png = (out / name).read_bytes()
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
@@ -207,9 +208,9 @@ def main():
 
                 assert process.wait(timeout=5) == 0
                 wait_for(lambda: not owner(), "launcher name released")
-                type_text("z")
-                wait_for(lambda: {"text": "z"} in records(probe_log), "focus returned to previous application")
-                chord(29, 30)
+                type_text("zz")
+                wait_for(lambda: {"text": "zz"} in records(probe_log), "focus returned to previous application")
+                chord(29, character_keys["a"])
                 tap(14)
                 wait_for(lambda: {"text": ""} in records(probe_log), "probe reset")
 

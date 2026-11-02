@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install isolated graphical test dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev dbus libglib2.0-bin kwin-wayland kde-spectacle xvfb xauth qtwayland5 fonts-dejavu-core libwayland-dev libwayland-bin plasma-wayland-protocols python3-pyqt5 python3-gi gir1.2-gtk-4.0
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev dbus libglib2.0-bin kwin-wayland kde-spectacle xvfb xauth qtwayland5 fonts-dejavu-core breeze-icon-theme libwayland-dev libwayland-bin plasma-wayland-protocols python3-pyqt5 python3-gi gir1.2-gtk-4.0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

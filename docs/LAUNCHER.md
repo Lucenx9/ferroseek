@@ -521,14 +521,16 @@ FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/laun
 
 This mode also requires Python 3 with PyQt5 and GTK 4 introspection bindings,
 a C compiler, `wayland-scanner`,
-Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
+Wayland client headers, `plasma-wayland-protocols`, Breeze/Hicolor icon themes
+and shared MIME data. Its test-only input client
 refuses sockets outside the isolated smoke-test namespace. The bounded profiles
 are `us-1x` (default), `fr-1x` and `us-1.5x`, selected with
 `FERROSEEK_SMOKE_PROFILE`. The input interface is enabled only in disposable KWin.
 The harness owns HOME, config/cache/state/data and runtime paths. Launcher and
-daemon application discovery uses only synthetic data. KWin and Spectacle read
-fixed system data directories for their graphical resources and screenshot
-authorization; caller-defined data/config paths are excluded. The private bus has
+daemon application discovery uses only synthetic data, with read-only links to
+system icon themes and MIME metadata. KWin and Spectacle separately read fixed
+system data and `/etc/xdg` menu configuration for their graphical resources and
+normal screenshot authorization; caller-defined data/config paths are excluded. The private bus has
 no activation services, no real user-manager socket is visible, and inherited
 startup context is cleared.
 
