@@ -53,6 +53,7 @@ def main():
         raise AssertionError('folder fixtures were not indexed')
     assert call('SearchWithin', uri(folder), 'scoped-report') == {uri(path) for path in expected}
     assert call('SearchWithin', uri(raw), 'scoped-report') == {uri(raw_file)}
+    assert call('ListDirectory', uri(raw)) == {uri(raw_file)}
     assert not call('SearchWithin', uri(folder), '')
     assert not call('SearchWithin', uri(folder), 's')
     outside = root / 'unindexed-directory'

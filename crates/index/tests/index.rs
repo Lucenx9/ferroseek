@@ -727,28 +727,26 @@ fn directory_listing_is_direct_ordered_bounded_and_preserves_raw_names() {
 }
 
 #[test]
-fn directory_metadata_and_children_share_a_snapshot_during_concurrent_renames() {
+fn directory_metadata_and_children_share_a_snapshot_during_replacement() {
     let (_temp, db) = setup();
     let (mut writer, _) = Writer::open(&db).unwrap();
     let mut tx = writer.transaction().unwrap();
     let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
-    let (mut left, _) = tx.upsert(root, b"left", dir(10)).unwrap();
-    let (mut right, _) = tx.upsert(root, b"right", dir(20)).unwrap();
-    tx.upsert(left, b"alpha.txt", file(11)).unwrap();
-    tx.upsert(right, b"beta.txt", file(21)).unwrap();
+    let (directory, _) = tx.upsert(root, b"left", dir(10)).unwrap();
+    let (mut child, _) = tx.upsert(directory, b"alpha.txt", file(11)).unwrap();
     tx.commit().unwrap();
     let reader = Reader::open(&db).unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let start = barrier.clone();
     let writing = std::thread::spawn(move || {
         start.wait();
-        for _ in 0..500 {
+        for i in 0..500 {
+            let (inode, name): (u64, &[u8]) = if i % 2 == 0 { (20, b"beta.txt") } else { (10, b"alpha.txt") };
             let mut tx = writer.transaction().unwrap();
-            tx.rename(left, root, b"holding").unwrap();
-            tx.rename(right, root, b"left").unwrap();
-            tx.rename(left, root, b"right").unwrap();
+            tx.delete(child).unwrap();
+            assert_eq!(tx.upsert(root, b"left", dir(inode)).unwrap().0, directory);
+            child = tx.upsert(directory, name, file(inode + 1)).unwrap().0;
             tx.commit().unwrap();
-            std::mem::swap(&mut left, &mut right);
         }
     });
     barrier.wait();
