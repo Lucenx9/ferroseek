@@ -280,7 +280,8 @@ fn parse_kind(
     handlers: bool,
 ) -> Option<App> {
     let group = entry_group(text, "Desktop Entry");
-    let get = |key: &str| -> Option<String> { group.iter().find(|(k, _)| k == key).map(|(_, v)| unescape(v)) };
+    let raw = |key: &str| group.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let get = |key: &str| raw(key).map(unescape);
     let get_localized = |key: &str| -> Option<String> {
         for l in locales {
             let k = format!("{key}[{l}]");
@@ -295,13 +296,13 @@ fn parse_kind(
     if get("Type").as_deref() != Some("Application") || get_bool("Hidden") || (!handlers && get_bool("NoDisplay")) {
         return None;
     }
-    if let Some(only) = get("OnlyShowIn")
-        && !split_list(&only).iter().any(|d| desktops.contains(d))
+    if let Some(only) = raw("OnlyShowIn")
+        && !split_list(only).iter().any(|d| desktops.contains(d))
     {
         return None;
     }
-    if let Some(not) = get("NotShowIn")
-        && split_list(&not).iter().any(|d| desktops.contains(d))
+    if let Some(not) = raw("NotShowIn")
+        && split_list(not).iter().any(|d| desktops.contains(d))
     {
         return None;
     }
@@ -314,7 +315,12 @@ fn parse_kind(
     let exec = get("Exec")?;
     let generic_name = get_localized("GenericName").filter(|s| !s.is_empty());
     let comment = get_localized("Comment").filter(|s| !s.is_empty());
-    let keywords = get_localized("Keywords").map(|k| split_list(&k)).unwrap_or_default();
+    let keywords = locales
+        .iter()
+        .find_map(|locale| raw(&format!("Keywords[{locale}]")))
+        .or_else(|| raw("Keywords"))
+        .map(split_list)
+        .unwrap_or_default();
     let mut app = App {
         id: id.to_string(),
         name,
@@ -327,10 +333,10 @@ fn parse_kind(
         terminal: get_bool("Terminal"),
         working_dir: get("Path").filter(|p| !p.is_empty()).map(PathBuf::from),
         file: file.to_path_buf(),
-        mime_types: get("MimeType").map(|v| split_list(&v)).unwrap_or_default(),
+        mime_types: raw("MimeType").map(split_list).unwrap_or_default(),
     };
     let mut seen = HashSet::new();
-    for id in get("Actions").map(|value| split_list(&value)).unwrap_or_default() {
+    for id in raw("Actions").map(split_list).unwrap_or_default() {
         if !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') || !seen.insert(id.clone()) {
             continue;
         }
@@ -401,23 +407,30 @@ fn unescape(v: &str) -> String {
     out
 }
 
-/// `a;b\;c;` → `["a", "b;c"]`.
+/// Split raw list values before decoding escapes, preserving escaped separators.
 fn split_list(v: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
-    let mut it = v.chars().peekable();
+    let mut it = v.chars();
     while let Some(c) = it.next() {
-        if c == '\\' && it.peek() == Some(&';') {
-            cur.push(';');
-            it.next();
+        if c == '\\' {
+            match it.next() {
+                Some(';') => cur.push(';'),
+                Some(next) => {
+                    cur.push('\\');
+                    cur.push(next);
+                }
+                None => cur.push('\\'),
+            }
         } else if c == ';' {
-            out.push(std::mem::take(&mut cur));
+            out.push(unescape(&cur));
+            cur.clear();
         } else {
             cur.push(c);
         }
     }
     if !cur.is_empty() {
-        out.push(cur);
+        out.push(unescape(&cur));
     }
     out.retain(|s| !s.is_empty());
     out
@@ -690,8 +703,31 @@ mod tests {
     }
 
     #[test]
+    fn parsed_lists_keep_escaped_backslashes_separate_from_semicolon_escapes() {
+        let app = p(concat!(
+            "[Desktop Entry]\nType=Application\nName=Example\nExec=example\n",
+            "Keywords=folder\\\\;next;semi\\;colon;space\\sword;\n",
+            "Keywords[it]=localized\\\\;next;semi\\;colon;\n",
+        ))
+        .unwrap();
+        assert_eq!(app.keywords, ["localized\\", "next", "semi;colon"]);
+        let app = parse(
+            "example.desktop",
+            Path::new("/example.desktop"),
+            concat!(
+                "[Desktop Entry]\nType=Application\nName=Example\nExec=example\n",
+                "Keywords=folder\\\\;next;semi\\;colon;space\\sword;\n",
+            ),
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(app.keywords, ["folder\\", "next", "semi;colon", "space word"]);
+    }
+
+    #[test]
     fn lists_and_escapes() {
-        assert_eq!(split_list(&unescape(r"a;b\;c;;d")), ["a", "b;c", "d"]);
+        assert_eq!(split_list(r"a;b\;c;;d"), ["a", "b;c", "d"]);
         assert_eq!(unescape(r"a\sb\tc\\d"), "a b\tc\\d");
     }
 
