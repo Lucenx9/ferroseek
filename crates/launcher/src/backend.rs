@@ -1056,6 +1056,39 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_queued_opens_never_reach_the_daemon() {
+        use iced::futures::FutureExt;
+
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            for action in ["", ACTION_OPEN_PARENT, "selected.desktop"] {
+                let mut cancelled = if action == "selected.desktop" {
+                    backend.clone().run_with("cancelled".into(), action.into()).boxed_local()
+                } else {
+                    backend.clone().run("cancelled".into(), action).boxed_local()
+                };
+                assert!(iced::futures::poll!(&mut cancelled).is_pending());
+                drop(cancelled);
+            }
+            let mut control = Box::pin(backend.run("control".into(), ""));
+            assert!(iced::futures::poll!(&mut control).is_pending());
+            let (_, result) = iced::futures::future::join(serve(conn, rx, Timeouts::default()), control).await;
+            result.unwrap();
+            assert_eq!(requests.try_iter().collect::<Vec<_>>(), [("control".into(), String::new())]);
+        });
+    }
+
+    #[test]
     fn search_intent_order_survives_reversed_future_polling() {
         use iced::futures::FutureExt;
 
