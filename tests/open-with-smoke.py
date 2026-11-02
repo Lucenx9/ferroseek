@@ -95,7 +95,7 @@ os.replace(temp, out)
                          ('OpenWith', [url, 'missing.desktop', ''])]:
         call(method, *args, ok=False)
     # Candidates must be checked again after the list was displayed.
-    for code, extra in [('%f', 'Hidden=true\n'), ('', ''), ('%f %U', ''), ('--file=%f', ''), ('%Z', '')]:
+    for code, extra in [('%f', 'Hidden=true\n'), ('', ''), ('%f %U', ''), ('--files=%F', ''), ('%Z', '')]:
         write_entry(code, extra)
         log.unlink(missing_ok=True)
         call('OpenWith', url, 'matrix-handler.desktop', '', ok=False)
@@ -123,6 +123,24 @@ subprocess.run(args[args.index('--') + 1:], check=True)
     scopes = [next(arg for arg in json.loads(line) if arg.startswith('--unit='))
               for line in scope_log.read_text().splitlines()]
     assert len(set(scopes)) == 2, 'repeated document opens must use distinct user scopes'
+    # Newly installed metadata can connect an alias through a parent type.
+    # The editor's valid single-file field is embedded in its option argument.
+    with (data / 'mime/globs2').open('a') as file:
+        file.write('50:application/x-fixture-alias:*.ferrotest\n')
+    (data / 'mime/aliases').write_text('application/x-fixture-alias application/x-fixture-document\n')
+    (data / 'mime/subclasses').write_text('application/x-fixture-document text/x-fixture-parent\ntext/x-fixture-parent application/x-fixture-document\n')
+    write_entry('--document=%f')
+    entry.write_text(entry.read_text().replace('MimeType=application/pdf;', 'MimeType=text/x-fixture-parent;'))
+    document = root / 'root/Documents/typed.ferrotest'
+    document.write_text('new type fixture')
+    url = uri(document)
+    wait_for(lambda: 'matrix-handler.desktop' in subprocess.run(['gdbus', 'call', '--session', '--dest', 'io.github.ferroseek.FerroSeek', '--object-path', '/io/github/ferroseek/Search', '--method', 'io.github.ferroseek.Search1.Applications', url], text=True, capture_output=True, timeout=10).stdout)
+    log.unlink(missing_ok=True)
+    call('OpenWith', url, 'matrix-handler.desktop', 'typed-token')
+    wait_for(log.exists)
+    record = json.loads(log.read_text())
+    assert base64.b64decode(record['args'][-1]) == b'--document=' + os.fsencode(document)
+    assert record['token'] == 'typed-token'
     assert config.read_bytes() == saved_defaults, 'opening changed default associations'
     print('PASS: explicit handler arguments, stale choices, refusals, separate scopes and unchanged defaults')
 
