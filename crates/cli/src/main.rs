@@ -213,13 +213,18 @@ fn main() -> ExitCode {
                 }
             };
             // Roots are stored as configured, so a root below a linked ancestor
-            // only matches lexically; a link into the index needs its target.
+            // only matches lexically. The lexical path must still be an indexed
+            // directory naming the same directory: indexed links and `link/..`
+            // resolve through the link's target.
             let within = within.map(|w| {
                 let lexical = normalize(&std::path::absolute(&w).unwrap_or_else(|_| w.clone()));
-                if reader.lookup(&lexical).is_ok_and(|entry| entry.is_some()) {
+                let canonical = std::fs::canonicalize(&w).ok();
+                let indexed_dir =
+                    reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir));
+                if indexed_dir && std::fs::canonicalize(&lexical).ok() == canonical {
                     lexical
                 } else {
-                    std::fs::canonicalize(&w).unwrap_or(lexical)
+                    canonical.unwrap_or(lexical)
                 }
             });
             let opts = SearchOptions {

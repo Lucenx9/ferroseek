@@ -213,20 +213,43 @@ fn special_cache_tags_do_not_block_indexing() {
 }
 
 #[test]
-fn search_in_matches_roots_below_a_linked_ancestor() {
+fn search_in_uses_the_directory_the_argument_names() {
+    use std::os::unix::fs::symlink;
     let t = tempfile::tempdir().unwrap();
     let disk = t.path().join("disk");
     fs::create_dir_all(disk.join("files/Music/Album")).unwrap();
     fs::write(disk.join("files/Music/Album/track.flac"), b"x").unwrap();
     fs::write(disk.join("files/Music/other-track.flac"), b"x").unwrap();
-    // The root itself is a real directory; only an ancestor is a link.
-    std::os::unix::fs::symlink(&disk, t.path().join("mnt")).unwrap();
-    let root = t.path().join("mnt/files");
-    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\n", root.display())).unwrap();
+    // This root is a real directory; only an ancestor is a link.
+    symlink(&disk, t.path().join("mnt")).unwrap();
+    let linked = t.path().join("mnt/files");
+    // An indexed link inside a root: `a/link` -> `b/c`.
+    let real = t.path().join("real");
+    fs::create_dir_all(real.join("a")).unwrap();
+    fs::create_dir_all(real.join("b/c")).unwrap();
+    fs::write(real.join("a/note-a.txt"), b"x").unwrap();
+    fs::write(real.join("b/note-b.txt"), b"x").unwrap();
+    fs::write(real.join("b/c/note-c.txt"), b"x").unwrap();
+    symlink(real.join("b/c"), real.join("a/link")).unwrap();
+    let config = format!("roots = [\"{}\", \"{}\"]\n", linked.display(), real.display());
+    fs::write(t.path().join("config.toml"), config).unwrap();
     assert!(run(t.path(), &["index"]).status.success());
     assert_eq!(stdout(&run(t.path(), &["search", "track"])).lines().count(), 2);
 
-    let album = root.join("Music/Album");
-    let o = run(t.path(), &["search", "--in", album.to_str().unwrap(), "track"]);
-    assert_eq!(stdout(&o).lines().collect::<Vec<_>>(), [album.join("track.flac").to_str().unwrap()]);
+    let scoped = |dir: &Path, query: &str| {
+        let mut lines: Vec<_> = stdout(&run(t.path(), &["search", "--in", dir.to_str().unwrap(), query]))
+            .lines()
+            .map(String::from)
+            .collect();
+        lines.sort();
+        lines
+    };
+    let album = linked.join("Music/Album");
+    assert_eq!(scoped(&album, "track"), [album.join("track.flac").to_str().unwrap()]);
+    // The link's target is searched, and `..` leaves the target, not the link.
+    assert_eq!(scoped(&real.join("a/link"), "note"), [real.join("b/c/note-c.txt").to_str().unwrap()]);
+    assert_eq!(
+        scoped(&real.join("a/link/.."), "note"),
+        [real.join("b/c/note-c.txt").to_str().unwrap(), real.join("b/note-b.txt").to_str().unwrap()]
+    );
 }
