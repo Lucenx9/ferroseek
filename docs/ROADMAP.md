@@ -27,8 +27,9 @@ published release or verified compatibility with every Linux desktop.
   changing defaults; preserve the selected file through asynchronous updates.
 - [x] Show current file details on request, preserving the selected file and
   search state through loading, refresh, errors and cancellation.
-- [ ] Add bounded previews for selected supported formats with explicit loading,
-  unsupported and error states.
+- [x] Explicitly enabled bounded UTF-8 text sidebar with current metadata, loading,
+  empty, unsupported and error states; follow selection while keeping results usable.
+- [ ] Add other preview formats after defining their decoder and resource limits.
 - [x] Search within indexed folders and subfolders; restore previous queries,
   search scopes and selections when returning.
 - [ ] Browse immediate folder contents while preserving navigation state.
@@ -41,7 +42,7 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then file previews; immediate folder browsing; quicklinks and keyword
+then immediate folder browsing; quicklinks and keyword
 commands. Each interaction change needs keyboard, pointer, long-label and
 asynchronous/error checks, plus inspection of rendered UI.
 

@@ -22,6 +22,49 @@ pub struct FileDetails {
     pub modified: i64,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub enum TextPreview {
+    Text { text: String, truncated: bool },
+    Unsupported(String),
+}
+
+// File contents must not leak into diagnostic messages.
+impl std::fmt::Debug for TextPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text { text, truncated } => {
+                f.debug_struct("TextPreview").field("bytes", &text.len()).field("truncated", truncated).finish()
+            }
+            Self::Unsupported(reason) => f.debug_tuple("Unsupported").field(reason).finish(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviewData {
+    pub content: Result<TextPreview, String>,
+    pub details: Result<FileDetails, String>,
+}
+
+/// Validity of a UI preview which may still be waiting behind another request.
+#[derive(Clone)]
+pub struct PreviewRequest(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Default for PreviewRequest {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)))
+    }
+}
+
+impl PreviewRequest {
+    pub fn cancel(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+    pub fn is_active(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// The daemon (mirrors `ferroseek_engine::ipc`; checked by a test).
 pub const DAEMON_BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
 pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
@@ -126,6 +169,7 @@ enum Request {
     Search { query: String, folder: Option<String>, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
+    TextPreview { id: String, validity: PreviewRequest, reply: oneshot::Sender<Result<PreviewData, String>> },
     FileDetails { id: String, reply: oneshot::Sender<Result<FileDetails, String>> },
     RunWith { id: String, app: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
@@ -216,22 +260,68 @@ pub fn start() -> Result<Startup, String> {
 }
 
 async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>, timeouts: Timeouts) {
-    while let Some(mut req) = rx.next().await {
-        // Keystrokes queue searches faster than they may complete; only the
-        // newest pending one is worth running. Dropping a superseded reply
-        // sender cancels its waiting UI task.
-        loop {
-            match rx.try_recv() {
-                Ok(next @ Request::Search { .. }) if matches!(req, Request::Search { .. }) => req = next,
-                Ok(other) => {
-                    handle(&conn, req, timeouts).await;
-                    req = other;
-                }
-                _ => break,
-            }
+    let mut pending = std::collections::VecDeque::new();
+    loop {
+        if pending.is_empty() {
+            let Some(request) = rx.next().await else { break };
+            pending.push_back(request);
         }
-        handle(&conn, req, timeouts).await;
+        while let Ok(next) = rx.try_recv() {
+            // Preview reads have no side effects. Only the latest queued target
+            // matters, including when search requests sit between selections.
+            if matches!(next, Request::TextPreview { .. }) {
+                pending.retain(|request| !matches!(request, Request::TextPreview { .. }));
+            }
+            if matches!(next, Request::Search { .. }) && matches!(pending.back(), Some(Request::Search { .. })) {
+                pending.pop_back();
+            }
+            pending.push_back(next);
+        }
+        if let Some(request) = pending.pop_front() {
+            handle(&conn, request, timeouts).await;
+        }
     }
+}
+
+async fn load_text_preview(conn: &zbus::Connection, id: String, timeout: Duration) -> Result<TextPreview, String> {
+    let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+    let response = runtime
+        .timeout(
+            timeout,
+            conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "TextPreview", &(id,)),
+        )
+        .await
+        .map_err(|_| "Text preview timed out. Refresh to try again.".to_string())?;
+    let message = match response {
+        Err(zbus::Error::FDO(error)) if matches!(error.as_ref(), zbus::fdo::Error::NotSupported(_)) => {
+            let zbus::fdo::Error::NotSupported(reason) = *error else { unreachable!() };
+            return Ok(TextPreview::Unsupported(reason));
+        }
+        Err(zbus::Error::MethodError(name, detail, _))
+            if name.as_str() == "org.freedesktop.DBus.Error.NotSupported" =>
+        {
+            return Ok(TextPreview::Unsupported(
+                detail.unwrap_or_else(|| "This file type has no text preview.".into()),
+            ));
+        }
+        other => other.map_err(|e| e.to_string())?,
+    };
+    let (text, truncated) = message.body().deserialize().map_err(|e| e.to_string())?;
+    Ok(TextPreview::Text { text, truncated })
+}
+
+async fn load_file_details(conn: &zbus::Connection, id: String, timeout: Duration) -> Result<FileDetails, String> {
+    let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+    let message = runtime
+        .timeout(
+            timeout,
+            conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "FileDetails", &(id,)),
+        )
+        .await
+        .map_err(|_| "File details timed out. Refresh to try again.".to_string())?
+        .map_err(|e| e.to_string())?;
+    let (mime, size, modified) = message.body().deserialize().map_err(|e| e.to_string())?;
+    Ok(FileDetails { mime, size, modified })
 }
 
 async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
@@ -246,22 +336,19 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
         Request::RunWith { id, app, reply } => {
             let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
         }
-        Request::FileDetails { id, reply } => {
-            let result = async {
-                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
-                let message = runtime
-                    .timeout(
-                        timeouts.status,
-                        conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "FileDetails", &(id,)),
-                    )
-                    .await
-                    .map_err(|_| "File details timed out. Refresh to try again.".to_string())?
-                    .map_err(|e| e.to_string())?;
-                let (mime, size, modified) = message.body().deserialize().map_err(|e| e.to_string())?;
-                Ok(FileDetails { mime, size, modified })
+        Request::TextPreview { id, validity, reply } => {
+            if !validity.is_active() {
+                return;
             }
+            let (content, details) = iced::futures::future::join(
+                load_text_preview(conn, id.clone(), timeouts.status),
+                load_file_details(conn, id, timeouts.status),
+            )
             .await;
-            let _ = reply.send(result);
+            let _ = reply.send(Ok(PreviewData { content, details }));
+        }
+        Request::FileDetails { id, reply } => {
+            let _ = reply.send(load_file_details(conn, id, timeouts.status).await);
         }
         Request::Applications { id, reply } => {
             let r = async {
@@ -429,6 +516,14 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn text_preview(self, id: String, validity: PreviewRequest) -> Result<PreviewData, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .unbounded_send(Request::TextPreview { id, validity, reply })
+            .map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
     pub async fn file_details(self, id: String) -> Result<FileDetails, String> {
         let (reply, rx) = oneshot::channel();
         self.tx.unbounded_send(Request::FileDetails { id, reply }).map_err(|_| "bus thread stopped".to_string())?;
@@ -523,11 +618,22 @@ mod tests {
 
     #[zbus::interface(name = "io.github.ferroseek.Search1")]
     impl SearchService {
+        async fn text_preview(&self, id: &str) -> zbus::fdo::Result<(String, bool)> {
+            self.0.send((id.into(), "preview".into())).unwrap();
+            match id {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
+                "binary" => Err(zbus::fdo::Error::NotSupported("not UTF-8 text".into())),
+                _ => Ok(("synthetic text".into(), true)),
+            }
+        }
+
         async fn file_details(&self, id: &str) -> zbus::fdo::Result<(String, u64, i64)> {
             self.0.send((id.into(), "details".into())).unwrap();
             match id {
                 "stall" => std::future::pending().await,
                 "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
+                "metadata-error" => Err(zbus::fdo::Error::Failed("metadata unavailable".into())),
                 _ => Ok(("application/pdf".into(), 123, -1)),
             }
         }
@@ -834,6 +940,147 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_queued_preview_never_reads_content_or_metadata() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let (search, search_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Search { query: "report".into(), folder: None, reply: search }).unwrap();
+            let (reply, cancelled) = oneshot::channel();
+            let validity = PreviewRequest::default();
+            tx.unbounded_send(Request::TextPreview { id: "cancelled".into(), validity: validity.clone(), reply })
+                .unwrap();
+            validity.cancel();
+            drop(tx);
+            let verify = async {
+                assert!(search_reply.await.unwrap().is_ok());
+                assert!(cancelled.await.is_err());
+                assert!(requests.try_recv().is_err(), "neither preview RPC may start after cancellation");
+            };
+            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn preview_queue_keeps_only_the_latest_target_across_pending_searches() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let (old, old_reply) = oneshot::channel();
+            tx.unbounded_send(Request::TextPreview {
+                id: "old".into(),
+                validity: PreviewRequest::default(),
+                reply: old,
+            })
+            .unwrap();
+            let (search, search_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Search { query: "report".into(), folder: None, reply: search }).unwrap();
+            let (latest, latest_reply) = oneshot::channel();
+            tx.unbounded_send(Request::TextPreview {
+                id: "latest".into(),
+                validity: PreviewRequest::default(),
+                reply: latest,
+            })
+            .unwrap();
+            drop(tx);
+            let verify = async {
+                assert!(old_reply.await.is_err(), "superseded targets must never reach the service");
+                assert!(search_reply.await.unwrap().is_ok());
+                let data = latest_reply.await.unwrap().unwrap();
+                assert!(data.content.is_ok() && data.details.is_ok());
+                let received: Vec<_> = requests.try_iter().collect();
+                assert_eq!(received.len(), 2);
+                assert!(received.iter().all(|(id, _)| id == "latest"));
+            };
+            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn text_preview_timeout_releases_the_bus_queue_without_retrying() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (tx, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                let stalled = backend.clone().text_preview("stall".into(), PreviewRequest::default()).await.unwrap();
+                assert_eq!(stalled.content.unwrap_err(), "Text preview timed out. Refresh to try again.");
+                assert!(stalled.details.is_err());
+                let rejected = backend.clone().text_preview("reject".into(), PreviewRequest::default()).await.unwrap();
+                assert!(rejected.content.is_err() && rejected.details.is_err());
+                let ready = backend.clone().text_preview("ready".into(), PreviewRequest::default()).await.unwrap();
+                assert_eq!(
+                    ready.content.unwrap(),
+                    TextPreview::Text { text: "synthetic text".into(), truncated: true }
+                );
+                assert_eq!(
+                    ready.details.unwrap(),
+                    FileDetails { mime: "application/pdf".into(), size: 123, modified: -1 }
+                );
+                assert_eq!(
+                    backend
+                        .clone()
+                        .text_preview("binary".into(), PreviewRequest::default())
+                        .await
+                        .unwrap()
+                        .content
+                        .unwrap(),
+                    TextPreview::Unsupported("not UTF-8 text".into())
+                );
+                let separate =
+                    backend.clone().text_preview("metadata-error".into(), PreviewRequest::default()).await.unwrap();
+                assert!(
+                    separate.content.is_ok() && separate.details.is_err(),
+                    "metadata failure does not discard text"
+                );
+                let received: Vec<_> = requests.try_iter().collect();
+                for id in ["stall", "reject", "ready", "binary", "metadata-error"] {
+                    assert_eq!(
+                        received.iter().filter(|(target, _)| target == id).count(),
+                        2,
+                        "exactly one content and one metadata call per target"
+                    );
+                }
+                assert_eq!(received.len(), 10, "reads must not retry automatically");
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
+        });
+    }
+
+    #[test]
     fn folder_queries_capture_scope_and_text_and_never_fall_back_to_global_search() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
@@ -938,5 +1185,14 @@ mod tests {
             let (result, ()) = iced::futures::future::join(backend.status(), respond).await;
             assert_eq!(result.unwrap_err(), "File-search status is unavailable. Try again.");
         });
+    }
+}
+
+#[cfg(test)]
+mod preview_diagnostics {
+    #[test]
+    fn debug_does_not_expose_file_contents() {
+        let preview = super::TextPreview::Text { text: "PRIVATE_FILE_CONTENTS".into(), truncated: false };
+        assert!(!format!("{preview:?}").contains("PRIVATE_FILE_CONTENTS"));
     }
 }

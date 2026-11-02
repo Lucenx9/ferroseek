@@ -26,9 +26,11 @@ use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
+use crate::preview;
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
+const PREVIEW_WIDTH: u32 = 980;
 const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
 const ROW_HEIGHT: f32 = 48.0;
 const INPUT_HEIGHT: f32 = 58.0;
@@ -202,6 +204,11 @@ pub struct Launcher {
     application_generation: u64,
     file_details: Option<details::Panel>,
     details_generation: u64,
+    preview_enabled: bool,
+    window_width: u32,
+    text_preview: Option<preview::Panel>,
+    preview_generation: u64,
+    preview_request: Option<crate::backend::PreviewRequest>,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -220,6 +227,8 @@ pub enum Message {
     Scope(Scope),
     ActionQuery(String),
     FolderBack { generation: u64 },
+    PreviewLoaded { generation: u64, result: Result<crate::backend::PreviewData, String> },
+    Preview { generation: u64, event: preview::Event },
     DetailsLoaded { generation: u64, result: Result<crate::backend::FileDetails, String> },
     Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
@@ -234,6 +243,7 @@ pub enum Message {
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
+    ResultsWheel(f32),
     Selected(Target),
     Clicked(Target),
     ContextMenu(Target),
@@ -314,6 +324,11 @@ fn boot() -> (Launcher, Task<Message>) {
         application_generation: 0,
         file_details: None,
         details_generation: 0,
+        preview_enabled: false,
+        window_width: WIDTH,
+        text_preview: None,
+        preview_generation: 0,
+        preview_request: None,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -339,12 +354,12 @@ fn subscription(_: &Launcher) -> Subscription<Message> {
     Subscription::batch([event::listen_with(on_event), Subscription::run(ui_events)])
 }
 
-fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
+fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
         // Read regardless of capture: the search field keeps focus and
         // swallows Escape, but navigation keys must still reach the list.
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => key_message(&key, modifiers),
-        Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+        Event::Mouse(mouse::Event::WheelScrolled { delta }) if status != event::Status::Captured => {
             let dy = match delta {
                 ScrollDelta::Lines { y, .. } => y,
                 ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
@@ -446,13 +461,16 @@ impl Launcher {
             && self.folder_settings.is_none()
             && self.application_picker.is_none()
             && self.file_details.is_none()
+            && !self.preview_enabled
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
-        if compact == self.compact {
+        let width = if self.preview_visible() { PREVIEW_WIDTH } else { WIDTH };
+        if compact == self.compact && width == self.window_width {
             return Task::none();
         }
         self.compact = compact;
+        self.window_width = width;
         let h = if compact { compact_height() } else { full_height() };
-        Task::done(Message::SizeChange((WIDTH, h)))
+        Task::done(Message::SizeChange((width, h)))
     }
 
     fn selected(&self) -> Option<&Item> {
@@ -464,7 +482,9 @@ impl Launcher {
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens =
             matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
-        if (opens || matches!(action, Action::Details | Action::SearchFolder)) && self.opening.is_some() {
+        if (opens || matches!(action, Action::Details | Action::Preview | Action::SearchFolder))
+            && self.opening.is_some()
+        {
             return Task::none(); // one open at a time; the launcher exits after it
         }
         if opens && self.unconfirmed_open {
@@ -496,6 +516,9 @@ impl Launcher {
             }
             (Action::SearchFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
                 self.enter_folder_search(folder.clone())
+            }
+            (Action::Preview, Target::File(file)) if !file.is_dir && file.path.is_some() => {
+                self.start_preview(file.clone())
             }
             (Action::Details, Target::File(file)) if !file.is_dir && file.path.is_some() => {
                 self.panel = None;
@@ -711,6 +734,105 @@ impl Launcher {
         ])
     }
 
+    fn preview_visible(&self) -> bool {
+        self.preview_enabled
+            && self.file_details.is_none()
+            && self.application_picker.is_none()
+            && self.folder_settings.is_none()
+            && self.search_status.is_none()
+    }
+
+    fn preview_context(&self) -> (Option<Target>, bool) {
+        (self.selected().map(|item| item.target.clone()), self.preview_visible())
+    }
+
+    fn cancel_preview(&mut self, clear: bool) {
+        if let Some(request) = self.preview_request.take() {
+            request.cancel();
+        }
+        self.preview_generation += 1;
+        if clear {
+            self.text_preview = None;
+        }
+    }
+
+    fn sync_preview(&mut self) -> Task<Message> {
+        if !self.preview_visible() {
+            return Task::none();
+        }
+        let file = self.selected().and_then(|item| match &item.target {
+            Target::File(file) if !file.is_dir && file.path.is_some() => Some(file.clone()),
+            _ => None,
+        });
+        let Some(file) = file else {
+            if self.text_preview.is_some() || self.preview_request.is_some() {
+                self.cancel_preview(true);
+            }
+            return Task::none();
+        };
+        if self.text_preview.as_ref().is_some_and(|panel| panel.file.id == file.id) {
+            return Task::none();
+        }
+        self.text_preview = Some(preview::Panel::new(file));
+        Task::batch([
+            self.request_preview(),
+            widget::operation::snap_to(preview::scroll_id(), widget::operation::RelativeOffset::START),
+        ])
+    }
+
+    fn start_preview(&mut self, file: FileHit) -> Task<Message> {
+        self.panel = None;
+        self.file_details = None;
+        self.details_generation += 1;
+        self.preview_enabled = true;
+        let load = if self.cursor.select_target(&Target::File(file.clone()), &self.items) {
+            self.text_preview = Some(preview::Panel::new(file));
+            self.request_preview()
+        } else {
+            self.text_preview = None;
+            self.preview_generation += 1;
+            self.status = Status::Notice("File no longer in results. Select a file to preview.".into());
+            Task::none()
+        };
+        Task::batch([load, self.resize(), widget::operation::focus(search_id())])
+    }
+
+    fn request_preview(&mut self) -> Task<Message> {
+        let Some(panel) = &self.text_preview else { return Task::none() };
+        let id = panel.file.id.clone();
+        if let Some(previous) = self.preview_request.take() {
+            previous.cancel();
+        }
+        let request = crate::backend::PreviewRequest::default();
+        self.preview_request = Some(request.clone());
+        self.preview_generation += 1;
+        let generation = self.preview_generation;
+        Task::perform(self.backend.clone().text_preview(id, request), move |result| Message::PreviewLoaded {
+            generation,
+            result,
+        })
+    }
+
+    fn preview_effect(&mut self, effect: preview::Effect) -> Task<Message> {
+        use widget::operation::{AbsoluteOffset, RelativeOffset};
+        match effect {
+            preview::Effect::None => Task::none(),
+            preview::Effect::Close => {
+                self.preview_enabled = false;
+                self.cancel_preview(true);
+                Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            preview::Effect::Refresh => Task::batch([
+                self.request_preview(),
+                widget::operation::snap_to(preview::scroll_id(), RelativeOffset::START),
+            ]),
+            preview::Effect::Copy(location) => iced::clipboard::write(location),
+            preview::Effect::Scroll(y) => {
+                widget::operation::scroll_by(preview::scroll_id(), AbsoluteOffset { x: 0.0, y })
+            }
+        }
+    }
+
     fn request_file_details(&mut self) -> Task<Message> {
         let Some(panel) = &self.file_details else { return Task::none() };
         let id = panel.file.id.clone();
@@ -732,6 +854,10 @@ impl Launcher {
                 }
                 self.details_generation += 1;
                 Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            details::Effect::Preview => {
+                let Some(panel) = &self.file_details else { return Task::none() };
+                self.start_preview(panel.file.clone())
             }
             details::Effect::Refresh => self.request_file_details(),
             details::Effect::Copy(location) => iced::clipboard::write(location),
@@ -840,6 +966,22 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    let previous = s.preview_context();
+    let query_boundary = matches!(&message, Message::Query(_));
+    let task = update_inner(s, message);
+    if previous.1 && !s.preview_visible() && s.preview_enabled {
+        let loading = s.preview_request.is_some();
+        s.cancel_preview(loading);
+    }
+    if previous != s.preview_context() || query_boundary {
+        let preview = s.sync_preview();
+        Task::batch([task, preview, s.resize()])
+    } else {
+        task
+    }
+}
+
+fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     if (s.application_picker.is_some() || s.file_details.is_some())
         && matches!(
             message,
@@ -854,6 +996,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                 | Message::PanelClicked { .. }
                 | Message::ShowSearchStatus
                 | Message::ShowFolders
+                | Message::ResultsWheel(_)
         )
     {
         return Task::none();
@@ -893,6 +1036,36 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::PreviewLoaded { generation, result } => {
+            if generation == s.preview_generation
+                && let Some(panel) = &mut s.text_preview
+            {
+                panel.loaded(result);
+                s.preview_request = None;
+            }
+            Task::none()
+        }
+        Message::Preview { generation, event } => {
+            if generation != s.preview_generation {
+                return Task::none();
+            }
+            if !s.preview_visible() {
+                return Task::none();
+            }
+            if matches!(event, preview::Event::Back) {
+                return s.preview_effect(preview::Effect::Close);
+            }
+            let Some(panel) = &mut s.text_preview else { return Task::none() };
+            let effect = panel.event(event);
+            s.preview_effect(effect)
+        }
+        Message::RefreshSearchStatus if s.preview_visible() && s.text_preview.is_some() => {
+            let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
+            s.preview_effect(effect)
+        }
+        Message::Wheel(_) if s.preview_visible() => Task::none(),
+        Message::ResultsWheel(_) if !s.preview_visible() => Task::none(),
+        Message::ResultsWheel(dy) => move_results(s, dy),
         Message::FolderBack { generation } => {
             if generation == s.scope_generation {
                 s.back_folder_search()
@@ -1011,6 +1184,9 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             }
         }
         Message::Query(q) => {
+            if s.preview_enabled {
+                s.cancel_preview(true);
+            }
             s.clicks = ClickTracker::default();
             // Editing the main field leaves the action panel and starts a new search.
             s.panel = None;
@@ -1087,13 +1263,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
             if s.search_status.is_some() || s.folder_settings.is_some() {
                 return Task::none(); // the status scrollable handles its own wheel events
             }
-            let delta = if dy > 0.0 { -1 } else { 1 };
-            if let Some(panel) = &mut s.panel {
-                panel.cursor.move_by(delta, panel.filtered_actions().len());
-            } else {
-                s.cursor.move_by(delta, s.items.len());
-            }
-            Task::none()
+            move_results(s, dy)
         }
         Message::Selected(target) => {
             if s.panel.is_some() {
@@ -1169,7 +1339,32 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     }
 }
 
+fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
+    let delta = if dy > 0.0 { -1 } else { 1 };
+    if let Some(panel) = &mut s.panel {
+        panel.cursor.move_by(delta, panel.filtered_actions().len());
+    } else {
+        s.cursor.move_by(delta, s.items.len());
+    }
+    Task::none()
+}
+
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
+    let previous = s.preview_context();
+    let task = command_inner(s, cmd);
+    if previous.1 && !s.preview_visible() && s.preview_enabled {
+        let loading = s.preview_request.is_some();
+        s.cancel_preview(loading);
+    }
+    if previous != s.preview_context() {
+        let preview = s.sync_preview();
+        Task::batch([task, preview, s.resize()])
+    } else {
+        task
+    }
+}
+
+fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
     if let Some(panel) = &mut s.file_details {
         let effect = panel.command(cmd);
@@ -1200,6 +1395,15 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         };
     }
     match cmd {
+        Command::ScrollPreview(_) => {
+            if s.preview_visible()
+                && let Some(panel) = &mut s.text_preview
+            {
+                let effect = panel.command(cmd);
+                return s.preview_effect(effect);
+            }
+            return Task::none();
+        }
         Command::SearchFolder => return s.perform(Action::SearchFolder),
         Command::BackFolder => return s.back_folder_search(),
         _ => {}
@@ -1234,6 +1438,17 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
         }
         return Task::none();
     }
+    if s.preview_visible() {
+        if cmd == Command::Back {
+            return s.preview_effect(preview::Effect::Close);
+        }
+        if cmd == Command::CopyPath
+            && let Some(panel) = &mut s.text_preview
+        {
+            let effect = panel.event(preview::Event::CopyLocation);
+            return s.preview_effect(effect);
+        }
+    }
     let page = VISIBLE_ROWS as isize - 1;
     match cmd {
         Command::Up => s.cursor.move_by(-1, len),
@@ -1264,7 +1479,9 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
                 return widget::operation::focus(actions_id());
             }
         }
-        Command::SearchFolder | Command::BackFolder => unreachable!("handled before action navigation"),
+        Command::SearchFolder | Command::BackFolder | Command::ScrollPreview(_) => {
+            unreachable!("handled before action navigation")
+        }
         Command::Back if s.search_folder.is_some() => {
             if s.query.is_empty() {
                 return s.back_folder_search();
@@ -1386,8 +1603,33 @@ fn view(s: &Launcher) -> Element<'_, Message> {
 
     let mut body = column![header, divider()];
     if !s.compact {
-        body =
-            body.push(container(results(s)).height(ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD).padding([PAD / 2.0, 0.0]));
+        let results: Element<'_, Message> = if s.preview_visible() {
+            let generation = s.preview_generation;
+            let list = mouse_area(container(results(s)).width(Length::Fill).height(Length::Fill)).on_scroll(|delta| {
+                let y = match delta {
+                    ScrollDelta::Lines { y, .. } => y,
+                    ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
+                };
+                Message::ResultsWheel(y)
+            });
+            let preview = match &s.text_preview {
+                Some(panel) => panel.view(),
+                None => preview::empty_view(),
+            }
+            .map(move |event| Message::Preview { generation, event });
+            row![
+                container(list).width(Length::FillPortion(2)),
+                container(space()).width(1).height(Length::Fill).style(|_| container::Style {
+                    background: Some(Background::Color(palette::FAINT)),
+                    ..Default::default()
+                }),
+                container(preview).width(Length::FillPortion(3))
+            ]
+            .into()
+        } else {
+            results(s)
+        };
+        body = body.push(container(results).height(ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD).padding([PAD / 2.0, 0.0]));
         body = body.push(divider());
     }
     body = body.push(footer(s));
@@ -1703,7 +1945,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         hints = hints.push(
             container(hint(
                 "Esc",
-                if !s.query.is_empty() {
+                if s.preview_visible() {
+                    "Hide preview"
+                } else if !s.query.is_empty() {
                     "Clear search"
                 } else if s.search_folder.is_some() {
                     "Previous search"
@@ -1875,6 +2119,11 @@ mod tests {
             application_generation: 0,
             file_details: None,
             details_generation: 0,
+            preview_enabled: false,
+            window_width: WIDTH,
+            text_preview: None,
+            preview_generation: 0,
+            preview_request: None,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
@@ -2155,7 +2404,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 8);
+        assert_eq!(panel.actions.len(), 9);
     }
 
     #[test]
@@ -2446,7 +2695,7 @@ mod tests {
         let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
         let _ = update(&mut s, Message::ShowFolders);
         let _ = update(&mut s, Message::ShowSearchStatus);
-        let _ = command(&mut s, Command::Activate);
+        let _ = command(&mut s, Command::ActivateVisible(0));
         assert!(s.opening.is_none());
         assert!(s.folder_settings.is_none() && s.search_status.is_none());
         let _ = update(&mut s, Message::DetailsLoaded { generation: old, result: Err("unavailable".into()) });
@@ -2561,6 +2810,85 @@ mod tests {
             assert!(s.usage.recent(usage::now(), 8).is_empty());
         }
         assert!(s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, captured);
+    }
+
+    #[test]
+    fn preview_widget_and_subscription_keep_search_navigation_and_sidebar_scrolling() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let captured = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Preview);
+        let initial = s.preview_generation;
+        let loaded = |generation| Message::PreviewLoaded { generation, result: preview_data("synthetic text") };
+        let _ = update(&mut s, loaded(initial));
+        for (key, code, modifiers) in [
+            (Key::Named(keyboard::key::Named::PageDown), Code::PageDown, Modifiers::ALT),
+            (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL),
+            (Key::Character("C".into()), Code::KeyC, Modifiers::CTRL | Modifiers::SHIFT),
+            (Key::Named(keyboard::key::Named::Escape), Code::Escape, Modifiers::empty()),
+        ] {
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(PREVIEW_WIDTH as f32, full_height() as f32);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                widget.operate(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()),
+                );
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                if let Some(message) = on_event(event, shell.event_status(), iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+                messages
+            };
+            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            for message in messages.drain(..) {
+                let _ = update(&mut s, message);
+            }
+            if code == Code::KeyR {
+                assert!(s.preview_generation > initial);
+                let generation = s.preview_generation;
+                let _ = update(&mut s, loaded(generation));
+            }
+            assert_eq!(s.query, "report");
+            assert_eq!(s.scope, Scope::Files);
+            assert!(s.opening.is_none());
+            assert!(s.usage.recent(usage::now(), 8).is_empty());
+        }
+        assert!(s.text_preview.is_none());
         assert_eq!(s.selected().unwrap().target, captured);
     }
 
@@ -2820,6 +3148,339 @@ mod tests {
         assert_eq!(s.scope, Scope::All);
         assert_eq!(s.selected().unwrap().target, target);
         assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn preview_action_preserves_search_and_allows_editing_without_recording_a_launch() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        assert_eq!(s.preview_generation, 0);
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("preview".into()));
+        assert_eq!(s.panel.as_ref().unwrap().filtered_actions(), [Action::Preview]);
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.preview_enabled && s.preview_visible());
+        assert_eq!(s.window_width, PREVIEW_WIDTH);
+        assert_eq!(s.query, "report");
+        let _ = update(&mut s, Message::Query("quarterly".into()));
+        let _ = update(&mut s, Message::Scope(Scope::All));
+        assert_eq!(s.query, "quarterly");
+        assert_eq!(s.scope, Scope::All);
+        assert!(s.text_preview.is_none(), "a new query clears the old text immediately");
+        let _ = command(&mut s, Command::Back);
+        assert!(!s.preview_enabled);
+        assert_eq!(s.query, "quarterly", "Esc hides the sidebar before clearing the query");
+        assert_eq!(s.window_width, WIDTH);
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn preview_follows_selection_and_rejects_stale_content_and_departed_widgets() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation: search, result: Ok(Some(files.clone())) });
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = command(&mut s, Command::Down);
+        let current = s.preview_generation;
+        assert!(current > old);
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        for message in [
+            Message::PreviewLoaded { generation: old, result: Err("late old file".into()) },
+            Message::Preview { generation: old, event: preview::Event::Back },
+            Message::Preview { generation: old, event: preview::Event::Refresh },
+        ] {
+            let _ = update(&mut s, message);
+        }
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, current, "stale replies leave the current read loading");
+        let _ = update(&mut s, Message::PreviewLoaded { generation: current, result: Err("unavailable".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let refreshing = s.preview_generation;
+        assert!(refreshing > current);
+        let _ = update(
+            &mut s,
+            Message::Files { generation: search, result: Ok(Some(vec![files[1].clone(), files[0].clone()])) },
+        );
+        assert_eq!(s.preview_generation, refreshing, "a stable target does not trigger another read");
+        assert!(
+            matches!(s.text_preview.as_mut().unwrap().event(preview::Event::CopyLocation), preview::Effect::Copy(path) if path == "/synthetic/report.pdf")
+        );
+        let _ = command(&mut s, Command::Back);
+        let stopped = s.preview_generation;
+        let _ = command(&mut s, Command::Down);
+        let _ = update(&mut s, Message::PreviewLoaded { generation: refreshing, result: preview_data("closed") });
+        assert!(!s.preview_enabled && s.text_preview.is_none());
+        assert_eq!(s.preview_generation, stopped, "disabled preview never reads on navigation");
+        assert_eq!(s.query, "report");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn preview_from_details_returns_to_results_with_the_captured_file_selected() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let details = s.details_generation;
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.preview_visible() && s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, target);
+        let _ = update(&mut s, Message::Details { generation: details, event: details::Event::Back });
+        assert!(s.preview_visible(), "the departed details button cannot hide the sidebar");
+        let _ = command(&mut s, Command::Back);
+        assert!(!s.preview_enabled && s.file_details.is_none());
+        assert_eq!(s.query, "report");
+        assert!(s.opening.is_none());
+    }
+
+    #[test]
+    fn preview_keeps_normal_open_actions_and_pauses_reads_behind_modal_screens() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        let _ = s.perform(Action::Preview);
+        let read = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: read, result: preview_data("ready") });
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(!s.preview_visible());
+        let paused = s.preview_generation;
+        let _ = update(&mut s, Message::ResultsWheel(-1.0));
+        assert_eq!(s.preview_generation, paused);
+        let _ = update(&mut s, Message::CloseSearchStatus);
+        assert!(s.preview_visible());
+        assert_eq!(s.preview_generation, paused, "returning to the same target reuses its completed data");
+        let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref().unwrap().0, files[1].id);
+        assert!(s.usage.recent(usage::now(), 8).is_empty(), "only confirmed launches record history");
+    }
+
+    #[test]
+    fn an_explicit_preview_follows_keyboard_selection_without_leaving_the_results() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        assert!(s.text_preview.is_none());
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = command(&mut s, Command::Down);
+        assert_eq!(s.selected().unwrap().target, Target::File(files[1].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        assert!(s.preview_generation > old);
+        assert_eq!(s.query, "report");
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    fn pointer_messages(s: &Launcher, point: iced::Point, events: Vec<mouse::Event>) -> Vec<Message> {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::{Rectangle, Size};
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut element = view(s);
+        let widget = element.as_widget_mut();
+        let mut tree = Tree::new(&*widget);
+        let bounds = Size::new(s.window_width as f32, full_height() as f32);
+        let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+        let mut messages = Vec::new();
+        for event in events {
+            let event = Event::Mouse(event);
+            let status = {
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                shell.event_status()
+            };
+            if let Some(message) = on_event(event, status, iced::window::Id::unique()) {
+                messages.push(message);
+            }
+        }
+        messages
+    }
+
+    #[test]
+    fn sidebar_pointer_and_wheel_events_keep_text_and_result_navigation_separate() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        let _ = s.perform(Action::Preview);
+        let read = s.preview_generation;
+        let _ = update(
+            &mut s,
+            Message::PreviewLoaded { generation: read, result: preview_data(&"synthetic line\n".repeat(100)) },
+        );
+        let wheel = || mouse::Event::WheelScrolled { delta: ScrollDelta::Lines { x: 0.0, y: -1.0 } };
+        let messages = pointer_messages(&s, iced::Point::new(650.0, 200.0), vec![wheel()]);
+        assert!(messages.is_empty(), "the text scrollable captures its wheel without changing selection");
+        assert_eq!(s.selected().unwrap().target, Target::File(files[0].clone()));
+        let messages = pointer_messages(&s, iced::Point::new(120.0, 100.0), vec![wheel()]);
+        assert!(matches!(&messages[..], [Message::ResultsWheel(y)] if *y == -1.0), "one route per list wheel event");
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.selected().unwrap().target, Target::File(files[1].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+        let messages = pointer_messages(
+            &s,
+            iced::Point::new(120.0, 95.0),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(messages.iter().any(|message| matches!(message, Message::Selected(_))));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.selected().unwrap().target, Target::File(files[0].clone()));
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[0].id);
+        assert!(s.opening.is_none(), "one click selects without opening");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn hiding_or_disabling_preview_invalidates_pending_bus_requests() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::Preview);
+        let first = s.preview_request.clone().unwrap();
+        let _ = command(&mut s, Command::Down);
+        assert!(!first.is_active(), "old queued selections cannot start later");
+        let second = s.preview_request.clone().unwrap();
+        let old = s.preview_generation;
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        assert!(!second.is_active());
+        assert!(s.text_preview.is_none());
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("hidden") });
+        assert!(s.text_preview.is_none());
+        let _ = update(&mut s, Message::CloseSearchStatus);
+        let resumed = s.preview_request.clone().unwrap();
+        assert!(resumed.is_active());
+        let _ = command(&mut s, Command::Back);
+        assert!(!resumed.is_active());
+        assert!(!s.preview_enabled && s.text_preview.is_none());
+    }
+
+    #[test]
+    fn a_new_query_invalidates_text_even_when_home_selects_the_same_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("report.txt");
+        std::fs::write(&path, "synthetic contents").unwrap();
+        let file = FileHit {
+            id: format!("file://{}", path.display()),
+            name: "report.txt".into(),
+            path: Some(path),
+            icon: String::new(),
+            subtext: String::new(),
+            is_dir: false,
+        };
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![file.clone()])) });
+        let _ = s.perform(Action::AddFavorite);
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("old text") });
+        let _ = update(&mut s, Message::Query(String::new()));
+        assert!(matches!(&s.selected().unwrap().target, Target::File(selected) if selected.id == file.id));
+        let fresh = s.preview_generation;
+        assert!(fresh > old);
+        assert!(s.preview_request.as_ref().unwrap().is_active());
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: preview_data("stale") });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, fresh, "stale content cannot replace the new loading state");
+    }
+
+    #[test]
+    fn sidebar_toolbar_buttons_enter_refresh_copy_and_hide_through_real_widgets() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::Details);
+        let click = |s: &Launcher, x, y| {
+            pointer_messages(
+                s,
+                iced::Point::new(x, y),
+                vec![
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ],
+            )
+        };
+        let messages = click(&s, 500.0, 35.0);
+        assert!(matches!(&messages[..], [Message::Details { event: details::Event::Preview, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.preview_visible());
+        assert!(click(&s, 810.0, 90.0).is_empty(), "refresh is disabled while loading");
+        let initial = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: initial, result: preview_data("synthetic text") });
+        let messages = click(&s, 920.0, 350.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::CopyLocation, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        let messages = click(&s, 810.0, 90.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Refresh, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.preview_generation > initial);
+        let pending = s.preview_request.clone().unwrap();
+        let messages = click(&s, 920.0, 90.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Back, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(!s.preview_enabled && !pending.is_active());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    fn preview_data(text: &str) -> Result<crate::backend::PreviewData, String> {
+        Ok(crate::backend::PreviewData {
+            content: Ok(crate::backend::TextPreview::Text { text: text.into(), truncated: false }),
+            details: Ok(crate::backend::FileDetails {
+                mime: "text/plain".into(),
+                size: text.len() as u64,
+                modified: 0,
+            }),
+        })
     }
 
     fn picker_state() -> Launcher {

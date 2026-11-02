@@ -9,6 +9,7 @@ mod control;
 mod mime;
 mod open;
 mod pool;
+mod preview;
 mod search;
 
 use std::process::ExitCode;

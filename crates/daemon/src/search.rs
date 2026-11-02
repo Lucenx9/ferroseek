@@ -132,6 +132,31 @@ fn to_result(h: &Hit, mime: &MimeDb, home: &Path) -> FileResult {
 
 #[zbus::interface(name = "io.github.ferroseek.Search1")]
 impl Search {
+    /// Explicit bounded text preview; no filesystem path is accepted as a command.
+    async fn text_preview(&self, match_id: String) -> zbus::fdo::Result<(String, bool)> {
+        let path = path_from_url(&match_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid file URL".into()))?;
+        let pool = self.pool.clone();
+        zruntime::unblock(move || {
+            let meta = pool
+                .with(|reader| reader.lookup(&path))
+                .map_err(|_| zbus::fdo::Error::AccessDenied("Cannot authorize file while index is unavailable".into()))?
+                .filter(|(_, meta)| meta.kind == Kind::File)
+                .map(|(_, meta)| meta)
+                .ok_or_else(|| zbus::fdo::Error::AccessDenied("Path is not a regular indexed file".into()))?;
+            let db = MimeDb::load();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            let mime = db.mime_for(&name).unwrap_or_default();
+            crate::preview::read(&path, meta.ino, mime).map_err(|error| match error {
+                crate::preview::Error::Unsupported(reason) => zbus::fdo::Error::NotSupported(reason.into()),
+                crate::preview::Error::Unavailable => zbus::fdo::Error::AccessDenied(
+                    "File changed or is unavailable. Refresh after indexing catches up.".into(),
+                ),
+                crate::preview::Error::Io(error) => zbus::fdo::Error::Failed(format!("Cannot read preview: {error}")),
+            })
+        })
+        .await
+    }
+
     /// Search strictly below a currently indexed directory. The path is kept
     /// separate from user query syntax, including spaces and non-UTF-8 bytes.
     async fn search_within(&self, folder_id: String, query: String) -> zbus::fdo::Result<Vec<FileResult>> {
