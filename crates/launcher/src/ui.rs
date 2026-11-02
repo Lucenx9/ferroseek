@@ -3421,6 +3421,57 @@ mod tests {
         assert_eq!(s.preview_generation, fresh, "stale content cannot replace the new loading state");
     }
 
+    #[test]
+    fn sidebar_toolbar_buttons_enter_refresh_copy_and_hide_through_real_widgets() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::Details);
+        let click = |s: &Launcher, x, y| {
+            pointer_messages(
+                s,
+                iced::Point::new(x, y),
+                vec![
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ],
+            )
+        };
+        let messages = click(&s, 500.0, 35.0);
+        assert!(matches!(&messages[..], [Message::Details { event: details::Event::Preview, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.preview_visible());
+        assert!(click(&s, 810.0, 90.0).is_empty(), "refresh is disabled while loading");
+        let initial = s.preview_generation;
+        let _ = update(&mut s, Message::PreviewLoaded { generation: initial, result: preview_data("synthetic text") });
+        let messages = click(&s, 920.0, 350.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::CopyLocation, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        let messages = click(&s, 810.0, 90.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Refresh, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.preview_generation > initial);
+        let pending = s.preview_request.clone().unwrap();
+        let messages = click(&s, 920.0, 90.0);
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Back, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(!s.preview_enabled && !pending.is_active());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn preview_data(text: &str) -> Result<crate::backend::PreviewData, String> {
         Ok(crate::backend::PreviewData {
             content: Ok(crate::backend::TextPreview::Text { text: text.into(), truncated: false }),

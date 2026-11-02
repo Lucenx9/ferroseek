@@ -178,7 +178,9 @@ impl Panel {
         column![
             header,
             identity,
-            scrollable(container(body).padding([8, 0])).id(scroll_id()).height(Length::Fill),
+            scrollable(container(body).padding(iced::padding::top(8).bottom(8).right(12)))
+                .id(scroll_id())
+                .height(Length::Fill),
             notes,
             ui::divider(),
             metadata,

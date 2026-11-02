@@ -633,6 +633,7 @@ mod tests {
             match id {
                 "stall" => std::future::pending().await,
                 "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
+                "metadata-error" => Err(zbus::fdo::Error::Failed("metadata unavailable".into())),
                 _ => Ok(("application/pdf".into(), 123, -1)),
             }
         }
@@ -1054,15 +1055,21 @@ mod tests {
                         .unwrap(),
                     TextPreview::Unsupported("not UTF-8 text".into())
                 );
+                let separate =
+                    backend.clone().text_preview("metadata-error".into(), PreviewRequest::default()).await.unwrap();
+                assert!(
+                    separate.content.is_ok() && separate.details.is_err(),
+                    "metadata failure does not discard text"
+                );
                 let received: Vec<_> = requests.try_iter().collect();
-                for id in ["stall", "reject", "ready", "binary"] {
+                for id in ["stall", "reject", "ready", "binary", "metadata-error"] {
                     assert_eq!(
                         received.iter().filter(|(target, _)| target == id).count(),
                         2,
                         "exactly one content and one metadata call per target"
                     );
                 }
-                assert_eq!(received.len(), 8, "reads must not retry automatically");
+                assert_eq!(received.len(), 10, "reads must not retry automatically");
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(
