@@ -46,6 +46,21 @@ fn write(p: &Path) {
 }
 
 #[test]
+fn extreme_reconcile_intervals_do_not_stop_initial_indexing() {
+    for minutes in [i64::MAX as u64 / 60, u64::MAX / 60 + 1, 0, 360] {
+        let (_temp, root, paths, mut cfg) = setup();
+        cfg.reconcile_interval_minutes = minutes;
+        write(&root.join("interval-probe.txt"));
+        let engine = Engine::start(&cfg, &paths).unwrap();
+        assert!(engine.wait_idle(Duration::from_secs(5)), "indexer stopped for {minutes} minutes");
+        assert_eq!(hits(&paths, "interval-probe"), 1);
+        write(&root.join("live-interval-probe.txt"));
+        eventually("live updates with an extreme interval", || hits(&paths, "live-interval-probe") == 1);
+        engine.shutdown();
+    }
+}
+
+#[test]
 fn live_updates_pause_resume_restart() {
     let (_t, root, paths, cfg) = setup();
     write(&root.join("existing/alpha-doc.txt"));

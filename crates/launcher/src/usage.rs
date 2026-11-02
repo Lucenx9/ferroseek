@@ -89,10 +89,10 @@ fn related(stored: &str, current: &str) -> bool {
 impl Usage {
     /// Default location under `$XDG_STATE_HOME`.
     pub fn default_path() -> Option<PathBuf> {
-        let state = std::env::var_os("XDG_STATE_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+        let state =
+            std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| {
+                std::env::var_os("HOME").map(PathBuf::from).filter(|p| p.is_absolute()).map(|p| p.join(".local/state"))
+            })?;
         Some(state.join("ferroseek/launcher-usage"))
     }
 
@@ -212,8 +212,12 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
         }
     }
     if entries.len() > MAX_ITEMS {
+        // The item just opened is the one the user asked to remember. A full
+        // history of heavier entries would otherwise delete it before return.
+        let keep = (kind, key.to_string());
         let weight = |r: &Record| r.general.map_or(0.0, |e| e.decayed(now));
-        let mut by_weight: Vec<_> = entries.iter().map(|(k, r)| (weight(r), k.clone())).collect();
+        let mut by_weight: Vec<_> =
+            entries.iter().filter(|(k, _)| **k != keep).map(|(k, r)| (weight(r), k.clone())).collect();
         by_weight.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, k) in by_weight.into_iter().take(entries.len() - MAX_ITEMS) {
             entries.remove(&k);
@@ -324,6 +328,55 @@ mod tests {
     use super::*;
 
     const DAY: u64 = 24 * 3600;
+
+    #[test]
+    fn state_paths_ignore_relative_xdg_and_home_values() {
+        const CHILD: &str = "FERROSEEK_TEST_STATE_PATH";
+        if let Some(expected) = std::env::var_os(CHILD) {
+            let expected = (!expected.is_empty()).then(|| PathBuf::from(expected));
+            assert_eq!(Usage::default_path(), expected);
+            assert_eq!(
+                crate::favorites::Favorites::default_path(),
+                expected.map(|p| p.with_file_name("launcher-favorites"))
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let state = temp.path().join("state");
+        let fallback = home.join(".local/state/ferroseek/launcher-usage");
+        let explicit = state.join("ferroseek/launcher-usage");
+        for (xdg, home, expected) in [
+            (Some(state.as_path()), Some(home.as_path()), Some(explicit.as_path())),
+            (Some(Path::new("relative")), Some(home.as_path()), Some(fallback.as_path())),
+            (Some(Path::new("")), Some(home.as_path()), Some(fallback.as_path())),
+            (None, Some(home.as_path()), Some(fallback.as_path())),
+            (Some(state.as_path()), None, Some(explicit.as_path())),
+            (Some(Path::new("relative")), None, None),
+            (None, Some(Path::new("relative")), None),
+            (None, Some(Path::new("")), None),
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "usage::tests::state_paths_ignore_relative_xdg_and_home_values", "--nocapture"])
+                .env_remove("XDG_STATE_HOME")
+                .env_remove("HOME")
+                .env(CHILD, expected.unwrap_or(Path::new("")));
+            if let Some(value) = xdg {
+                command.env("XDG_STATE_HOME", value);
+            }
+            if let Some(value) = home {
+                command.env("HOME", value);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     #[test]
     fn boost_grows_slowly_is_capped_and_decays() {
@@ -438,6 +491,21 @@ mod tests {
             u.record(Kind::File, &format!("f{i}"), "", 50 * DAY);
         }
         assert_eq!(u.entries.len(), MAX_ITEMS);
+    }
+
+    #[test]
+    fn recording_a_new_item_survives_a_full_history() {
+        let mut u = Usage::disabled();
+        let t = 1_000_000;
+        for i in 0..MAX_ITEMS {
+            let key = format!("old-{i}.desktop");
+            u.record(Kind::App, &key, "", t);
+            u.record(Kind::App, &key, "", t);
+        }
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        u.record(Kind::App, "new.desktop", "", t);
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        assert!(u.boost(Kind::App, "new.desktop", "", t) > 0, "the launch just recorded must stay in history");
     }
 
     #[test]

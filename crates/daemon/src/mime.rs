@@ -8,7 +8,8 @@
 //! mean reading files during a keystroke.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+
+use ferroseek_desktop::apps::data_dirs;
 
 pub struct MimeDb {
     /// Case-insensitive globs, keyed lowercase.
@@ -19,18 +20,6 @@ pub struct MimeDb {
     by_name_cs: HashMap<String, (u32, String)>,
     generic: HashMap<String, String>,
     related: HashMap<String, Vec<String>>,
-}
-
-fn data_dirs() -> Vec<std::path::PathBuf> {
-    let mut v = vec![];
-    if let Some(h) = std::env::var_os("XDG_DATA_HOME") {
-        v.push(h.into());
-    } else if let Some(h) = std::env::var_os("HOME") {
-        v.push(Path::new(&h).join(".local/share"));
-    }
-    let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    v.extend(sys.split(':').filter(|s| !s.is_empty()).map(Into::into));
-    v
 }
 
 impl MimeDb {
@@ -50,7 +39,14 @@ impl MimeDb {
         // Lower-priority dirs first so user dirs override.
         for dir in data_dirs().iter().rev() {
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/globs2")) {
-                db.add_globs2(&s);
+                // Resolve weights within each file, then let the higher-priority
+                // directory replace identical patterns regardless of weight.
+                let mut layer = Self::empty();
+                layer.add_globs2(&s);
+                db.by_ext.extend(layer.by_ext);
+                db.by_name.extend(layer.by_name);
+                db.by_ext_cs.extend(layer.by_ext_cs);
+                db.by_name_cs.extend(layer.by_name_cs);
             }
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/generic-icons")) {
                 for l in s.lines() {
@@ -123,7 +119,7 @@ impl MimeDb {
             if line.starts_with('#') {
                 continue;
             }
-            let mut it = line.splitn(4, ':');
+            let mut it = line.split(':');
             let (Some(w), Some(mime), Some(glob)) = (it.next(), it.next(), it.next()) else { continue };
             let Ok(weight) = w.parse::<u32>() else { continue };
             let cs = it.next().is_some_and(|f| f.split(',').any(|x| x == "cs"));
@@ -182,6 +178,7 @@ impl MimeDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn db() -> MimeDb {
         let mut d = MimeDb::empty();
@@ -192,6 +189,18 @@ mod tests {
         );
         d.generic.insert("application/x-compressed-tar".into(), "package-x-generic".into());
         d
+    }
+
+    #[test]
+    fn extra_globs2_fields_preserve_case_sensitive_flags() {
+        let mut d = MimeDb::empty();
+        d.add_globs2("50:text/x-upper:*.UPPER:cs,future:extension\n50:text/x-literal:README:cs:extension\n");
+        assert_eq!(d.mime_for("sample.UPPER"), Some("text/x-upper"));
+        assert_eq!(d.mime_for("sample.upper"), None);
+        assert_eq!(d.mime_for("README"), Some("text/x-literal"));
+        assert_eq!(d.mime_for("readme"), None);
+        assert_eq!(d.icon_for("sample.upper"), "unknown");
+        assert!(d.handler_types("sample.upper").is_empty());
     }
 
     #[test]
@@ -207,6 +216,83 @@ mod tests {
         assert_eq!(d.mime_for("noext"), None);
         assert_eq!(d.icon_for("a.pdf"), "application-pdf");
         assert_eq!(d.icon_for("weird"), "unknown");
+    }
+
+    #[test]
+    fn mime_loading_ignores_invalid_xdg_paths() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_DATA_HOME";
+        if std::env::var_os(CASE).is_some() {
+            assert_eq!(MimeDb::load().mime_for("file.probe"), Some("text/x-user"));
+            assert!(MimeDb::load_for_handlers().handler_types("file.probe").contains(&"text/x-user".into()));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, glob) in [
+            ("home/.local/share", "50:text/x-user:*.probe\n"),
+            ("relative", "80:text/x-working-directory:*.probe\n"),
+            ("", "80:text/x-working-directory:*.probe\n"),
+            ("relative-system", "90:text/x-relative-system:*.probe\n"),
+        ] {
+            let mime = temp.path().join(relative).join("mime");
+            std::fs::create_dir_all(&mime).unwrap();
+            std::fs::write(mime.join("globs2"), glob).unwrap();
+        }
+        let system = temp.path().join("system");
+        let data_dirs = std::env::join_paths([Path::new("relative-system"), system.as_path()]).unwrap();
+        for data_home in [Path::new(""), Path::new("relative"), &temp.path().join("home/.local/share")] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mime::tests::mime_loading_ignores_invalid_xdg_paths"])
+                .current_dir(temp.path())
+                .env(CASE, "1")
+                .env("HOME", temp.path().join("home"))
+                .env("XDG_DATA_HOME", data_home)
+                .env("XDG_DATA_DIRS", &data_dirs)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        }
+    }
+
+    #[test]
+    fn user_mime_rules_override_identical_system_patterns() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_PRECEDENCE";
+        if std::env::var_os(CASE).is_some() {
+            let db = MimeDb::load();
+            for name in ["file.probe", "file.CASE", "Literal", "Exact"] {
+                assert_eq!(db.mime_for(name), Some("text/x-user"), "wrong rule for {name}");
+                assert_eq!(db.icon_for(name), "text-x-user");
+            }
+            assert_eq!(db.mime_for("untouched.other"), Some("text/x-system"));
+            assert!(MimeDb::load_for_handlers().handler_types("file.probe").contains(&"text/x-user".into()));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (directory, weight, mime_type) in [("system", 80, "text/x-system"), ("user", 50, "text/x-user")] {
+            let mime = temp.path().join(directory).join("mime");
+            std::fs::create_dir_all(&mime).unwrap();
+            let mut globs = ["*.probe", "*.CASE:cs", "Literal", "Exact:cs"]
+                .map(|pattern| format!("{weight}:{mime_type}:{pattern}\n"))
+                .concat();
+            if directory == "system" {
+                globs.push_str("50:text/x-system:*.other\n");
+            } else {
+                globs.push_str("10:text/x-lower-weight:*.probe\n");
+            }
+            std::fs::write(mime.join("globs2"), globs).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mime::tests::user_mime_rules_override_identical_system_patterns"])
+            .env(CASE, "1")
+            .env("HOME", temp.path())
+            .env("XDG_DATA_HOME", temp.path().join("user"))
+            .env("XDG_DATA_DIRS", temp.path().join("system"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]

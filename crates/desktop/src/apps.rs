@@ -133,7 +133,7 @@ impl App {
 /// `$XDG_DATA_HOME` then `$XDG_DATA_DIRS`, with the specification defaults.
 pub fn data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+    match std::env::var_os("XDG_DATA_HOME").filter(|v| Path::new(v).is_absolute()) {
         Some(d) => dirs.push(PathBuf::from(d)),
         None => {
             if let Some(h) = std::env::var_os("HOME") {
@@ -280,7 +280,8 @@ fn parse_kind(
     handlers: bool,
 ) -> Option<App> {
     let group = entry_group(text, "Desktop Entry");
-    let get = |key: &str| -> Option<String> { group.iter().find(|(k, _)| k == key).map(|(_, v)| unescape(v)) };
+    let raw = |key: &str| group.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let get = |key: &str| raw(key).map(unescape);
     let get_localized = |key: &str| -> Option<String> {
         for l in locales {
             let k = format!("{key}[{l}]");
@@ -295,13 +296,13 @@ fn parse_kind(
     if get("Type").as_deref() != Some("Application") || get_bool("Hidden") || (!handlers && get_bool("NoDisplay")) {
         return None;
     }
-    if let Some(only) = get("OnlyShowIn")
-        && !split_list(&only).iter().any(|d| desktops.contains(d))
+    if let Some(only) = raw("OnlyShowIn")
+        && !split_list(only).iter().any(|d| desktops.contains(d))
     {
         return None;
     }
-    if let Some(not) = get("NotShowIn")
-        && split_list(&not).iter().any(|d| desktops.contains(d))
+    if let Some(not) = raw("NotShowIn")
+        && split_list(not).iter().any(|d| desktops.contains(d))
     {
         return None;
     }
@@ -314,7 +315,12 @@ fn parse_kind(
     let exec = get("Exec")?;
     let generic_name = get_localized("GenericName").filter(|s| !s.is_empty());
     let comment = get_localized("Comment").filter(|s| !s.is_empty());
-    let keywords = get_localized("Keywords").map(|k| split_list(&k)).unwrap_or_default();
+    let keywords = locales
+        .iter()
+        .find_map(|locale| raw(&format!("Keywords[{locale}]")))
+        .or_else(|| raw("Keywords"))
+        .map(split_list)
+        .unwrap_or_default();
     let mut app = App {
         id: id.to_string(),
         name,
@@ -327,10 +333,10 @@ fn parse_kind(
         terminal: get_bool("Terminal"),
         working_dir: get("Path").filter(|p| !p.is_empty()).map(PathBuf::from),
         file: file.to_path_buf(),
-        mime_types: get("MimeType").map(|v| split_list(&v)).unwrap_or_default(),
+        mime_types: raw("MimeType").map(split_list).unwrap_or_default(),
     };
     let mut seen = HashSet::new();
-    for id in get("Actions").map(|value| split_list(&value)).unwrap_or_default() {
+    for id in raw("Actions").map(split_list).unwrap_or_default() {
         if !id.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-') || !seen.insert(id.clone()) {
             continue;
         }
@@ -401,23 +407,30 @@ fn unescape(v: &str) -> String {
     out
 }
 
-/// `a;b\;c;` → `["a", "b;c"]`.
+/// Split raw list values before decoding escapes, preserving escaped separators.
 fn split_list(v: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
-    let mut it = v.chars().peekable();
+    let mut it = v.chars();
     while let Some(c) = it.next() {
-        if c == '\\' && it.peek() == Some(&';') {
-            cur.push(';');
-            it.next();
+        if c == '\\' {
+            match it.next() {
+                Some(';') => cur.push(';'),
+                Some(next) => {
+                    cur.push('\\');
+                    cur.push(next);
+                }
+                None => cur.push('\\'),
+            }
         } else if c == ';' {
-            out.push(std::mem::take(&mut cur));
+            out.push(unescape(&cur));
+            cur.clear();
         } else {
             cur.push(c);
         }
     }
     if !cur.is_empty() {
-        out.push(cur);
+        out.push(unescape(&cur));
     }
     out.retain(|s| !s.is_empty());
     out
@@ -501,9 +514,17 @@ pub fn expand_exec(exec: &str, icon: Option<&str>, name: &str, file: &Path) -> R
     // 2. Field codes. A standalone code that expands to nothing removes the
     //    argument; `%i` expands to two arguments.
     let mut argv = Vec::new();
+    let mut documents = 0;
     for arg in raw {
         match arg.as_str() {
-            "%f" | "%F" | "%u" | "%U" | "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => continue,
+            "%f" | "%F" | "%u" | "%U" => {
+                documents += 1;
+                if documents > 1 {
+                    return Err(ExecError::InvalidFieldCode);
+                }
+                continue;
+            }
+            "%d" | "%D" | "%n" | "%N" | "%v" | "%m" => continue,
             "%i" => {
                 if let Some(i) = icon {
                     argv.push("--icon".to_string());
@@ -524,13 +545,14 @@ pub fn expand_exec(exec: &str, icon: Option<&str>, name: &str, file: &Path) -> R
                 Some('%') => out.push('%'),
                 Some('c') => out.push_str(name),
                 Some('k') => out.push_str(&file.to_string_lossy()),
-                Some('i') => {
-                    if let Some(i) = icon {
-                        out.push_str(i);
+                Some('f' | 'u') => {
+                    documents += 1;
+                    if documents > 1 {
+                        return Err(ExecError::InvalidFieldCode);
                     }
                 }
-                // Embedded file/URL and deprecated codes expand to nothing.
-                Some('f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
+                // Multi-argument codes must stand alone. Deprecated codes vanish.
+                Some('d' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
                 _ => return Err(ExecError::InvalidFieldCode),
             }
         }
@@ -690,9 +712,80 @@ mod tests {
     }
 
     #[test]
+    fn parsed_lists_keep_escaped_backslashes_separate_from_semicolon_escapes() {
+        let app = p(concat!(
+            "[Desktop Entry]\nType=Application\nName=Example\nExec=example\n",
+            "Keywords=folder\\\\;next;semi\\;colon;space\\sword;\n",
+            "Keywords[it]=localized\\\\;next;semi\\;colon;\n",
+        ))
+        .unwrap();
+        assert_eq!(app.keywords, ["localized\\", "next", "semi;colon"]);
+        let app = parse(
+            "example.desktop",
+            Path::new("/example.desktop"),
+            concat!(
+                "[Desktop Entry]\nType=Application\nName=Example\nExec=example\n",
+                "Keywords=folder\\\\;next;semi\\;colon;space\\sword;\n",
+            ),
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(app.keywords, ["folder\\", "next", "semi;colon", "space word"]);
+    }
+
+    #[test]
+    fn application_and_action_exec_reject_multiple_document_codes_and_embedded_lists() {
+        for exec in
+            ["prog %f %u", "prog %F %F", "prog --file=%f %U", "prog --files=%F", "prog --urls=%U", "prog --icon=%i"]
+        {
+            let app = p(&format!("[Desktop Entry]\nType=Application\nName=Probe\nExec={exec}\nActions=new;\n[Desktop Action new]\nName=New\nExec={exec}\n")).unwrap();
+            assert_eq!(app.argv(), Err(ExecError::InvalidFieldCode), "Exec={exec}");
+            assert!(app.actions.is_empty(), "invalid action Exec={exec}");
+            assert_eq!(
+                crate::launch::command_line(&app, false, None).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+        let app = p("[Desktop Entry]\nType=Application\nName=Probe\nExec=prog %%f --file=%f\n").unwrap();
+        assert_eq!(app.argv().unwrap(), ["prog", "%f", "--file="]);
+    }
+
+    #[test]
     fn lists_and_escapes() {
-        assert_eq!(split_list(&unescape(r"a;b\;c;;d")), ["a", "b;c", "d"]);
+        assert_eq!(split_list(r"a;b\;c;;d"), ["a", "b;c", "d"]);
         assert_eq!(unescape(r"a\sb\tc\\d"), "a b\tc\\d");
+    }
+
+    #[test]
+    fn application_discovery_ignores_relative_xdg_data_home() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_DATA_HOME";
+        if std::env::var_os(CASE).is_some() {
+            let apps = scan(&data_dirs(), &[], &[]);
+            assert_eq!(apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>(), ["User application"]);
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, name) in [
+            ("home/.local/share/applications/probe.desktop", "User application"),
+            ("relative/applications/probe.desktop", "Working directory application"),
+        ] {
+            let file = temp.path().join(relative);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, format!("[Desktop Entry]\nType=Application\nName={name}\nExec=probe\n")).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "apps::tests::application_discovery_ignores_relative_xdg_data_home"])
+            .current_dir(temp.path())
+            .env(CASE, "1")
+            .env("HOME", temp.path().join("home"))
+            .env("XDG_DATA_HOME", "relative")
+            .env("XDG_DATA_DIRS", temp.path().join("system"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]

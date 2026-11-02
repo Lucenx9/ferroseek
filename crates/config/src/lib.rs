@@ -215,6 +215,9 @@ impl Config {
             return Err(ConfigError::Invalid("max_depth must be > 0".into()));
         }
         for r in self.roots.iter().chain(&self.exclude_paths) {
+            if r.contains('\0') {
+                return Err(ConfigError::Invalid("folder paths must not contain NUL".into()));
+            }
             if !expand(r).is_absolute() {
                 return Err(ConfigError::Invalid(format!("{r:?} is not an absolute path")));
             }
@@ -293,6 +296,16 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn nul_paths_are_rejected_when_parsing_or_updating_roots() {
+        for key in ["roots", "exclude_paths"] {
+            let text = format!(r#"{key} = ["/data/\u0000private"]"#);
+            assert!(matches!(Config::parse(&text), Err(ConfigError::Invalid(_))), "{key} accepted a NUL path");
+        }
+        assert!(matches!(Config::default().with_roots(vec!["/data/\0private".into()]), Err(ConfigError::Invalid(_))));
+        assert!(Config::parse(r#"roots = ["/data/valid path"]"#).is_ok());
     }
 
     #[test]

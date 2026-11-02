@@ -286,10 +286,11 @@ impl Drop for Engine {
 fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &Paths, status: Arc<Status>) {
     let status = &status;
     let debounce = Duration::from_millis(cfg.debounce_ms);
-    let periodic =
-        (cfg.reconcile_interval_minutes > 0).then(|| Duration::from_secs(cfg.reconcile_interval_minutes * 60));
+    let periodic = (cfg.reconcile_interval_minutes > 0)
+        .then(|| Duration::from_secs(cfg.reconcile_interval_minutes.saturating_mul(60)));
     let duty = cfg.max_cpu_percent.clamp(1, 100);
-    let mut next_periodic = periodic.map(|p| Instant::now() + p);
+    // An interval beyond the clock's range has no reachable deadline.
+    let mut next_periodic = periodic.and_then(|p| Instant::now().checked_add(p));
     let mut paused = false;
     let mut missed_while_paused = false;
     let mut pending: Vec<RawEvent> = Vec::new();
@@ -411,7 +412,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                 && now >= p
             {
                 ix.schedule_all(Mode::Quick)?;
-                next_periodic = periodic.map(|d| now + d);
+                next_periodic = periodic.and_then(|d| now.checked_add(d));
             }
             if ix.has_work() && now >= scan_not_before {
                 if !scanning {
