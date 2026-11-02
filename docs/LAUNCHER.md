@@ -49,7 +49,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
-| Ctrl+Right / Alt+Left | Search in the selected folder / return to the previous search |
+| Alt+Right / Alt+Left | Search in the selected folder / return to the previous search |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Ctrl+I | open/close file search status |
 | Ctrl+R | refresh while file search status is open |
@@ -222,7 +222,7 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 Rendered in a private virtual KWin session with a synthetic indexed tree.
 
-Select a folder result and press **Ctrl+Right**, or choose **Search in folder**
+Select a folder result and press **Alt+Right**, or choose **Search in folder**
 from Actions (Ctrl+K; search for `within`). The header shows the captured location.
 Type at least two characters to search indexed files and folders strictly below
 that location, including subfolders. Query syntax and ranked result limits match

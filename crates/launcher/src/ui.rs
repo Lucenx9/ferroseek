@@ -1686,7 +1686,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
         if acts.contains(&Action::SearchFolder) {
-            hints = hints.push(hint("Ctrl+→", "Search here"));
+            hints = hints.push(hint("Alt+→", "Search here"));
         }
         hints = hints.push(
             button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(

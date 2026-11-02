@@ -327,7 +327,7 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::SearchFolder => "Ctrl+Right",
+            Action::SearchFolder => "Alt+Right",
             Action::CopyName
             | Action::OpenWith
             | Action::Details
@@ -545,7 +545,7 @@ pub fn numbered_command(key: &Key, physical: Physical, mods: Modifiers) -> Optio
 pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
     let ctrl = mods.control();
     match key {
-        Key::Named(Named::ArrowRight) if mods == Modifiers::CTRL => Some(Command::SearchFolder),
+        Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Command::SearchFolder),
         Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Command::BackFolder),
         Key::Named(Named::ArrowUp) if ctrl => Some(Command::PreviousSection),
         Key::Named(Named::ArrowDown) if ctrl => Some(Command::NextSection),
