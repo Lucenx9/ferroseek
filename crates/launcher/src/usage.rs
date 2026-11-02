@@ -212,8 +212,12 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
         }
     }
     if entries.len() > MAX_ITEMS {
+        // The item just opened is the one the user asked to remember. A full
+        // history of heavier entries would otherwise delete it before return.
+        let keep = (kind, key.to_string());
         let weight = |r: &Record| r.general.map_or(0.0, |e| e.decayed(now));
-        let mut by_weight: Vec<_> = entries.iter().map(|(k, r)| (weight(r), k.clone())).collect();
+        let mut by_weight: Vec<_> =
+            entries.iter().filter(|(k, _)| **k != keep).map(|(k, r)| (weight(r), k.clone())).collect();
         by_weight.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, k) in by_weight.into_iter().take(entries.len() - MAX_ITEMS) {
             entries.remove(&k);
@@ -487,6 +491,21 @@ mod tests {
             u.record(Kind::File, &format!("f{i}"), "", 50 * DAY);
         }
         assert_eq!(u.entries.len(), MAX_ITEMS);
+    }
+
+    #[test]
+    fn recording_a_new_item_survives_a_full_history() {
+        let mut u = Usage::disabled();
+        let t = 1_000_000;
+        for i in 0..MAX_ITEMS {
+            let key = format!("old-{i}.desktop");
+            u.record(Kind::App, &key, "", t);
+            u.record(Kind::App, &key, "", t);
+        }
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        u.record(Kind::App, "new.desktop", "", t);
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        assert!(u.boost(Kind::App, "new.desktop", "", t) > 0, "the launch just recorded must stay in history");
     }
 
     #[test]
