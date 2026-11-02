@@ -101,6 +101,13 @@ pub struct FolderPolicy {
     pub config: Config,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationChoice {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+}
+
 /// Events the bus thread delivers to the UI.
 #[derive(Debug, Clone)]
 pub enum UiEvent {
@@ -111,6 +118,8 @@ pub enum UiEvent {
 enum Request {
     Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
+    Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
+    RunWith { id: String, app: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
     FolderPolicy { reply: oneshot::Sender<Result<Option<FolderPolicy>, String>> },
     ApplyFolders { path: String, roots: Vec<String>, reply: oneshot::Sender<Result<bool, String>> },
@@ -224,15 +233,27 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            let body = (id.as_str(), action.as_str(), "");
-            let request = conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Open", &body);
-            let r = match zruntime::SharedRuntime::current() {
-                Ok(runtime) => match runtime.timeout(timeouts.open, request).await {
-                    Ok(result) => result.map(|_| ()).map_err(open_error),
-                    Err(_) => Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())),
-                },
-                Err(e) => Err(RunError::Failed(e.to_string())),
-            };
+            let _ = reply.send(run(conn, "Open", &id, &action, timeouts.open).await);
+        }
+        Request::RunWith { id, app, reply } => {
+            let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+        }
+        Request::Applications { id, reply } => {
+            let r = async {
+                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+                let body = (id,);
+                let message = runtime
+                    .timeout(
+                        timeouts.status,
+                        conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "Applications", &body),
+                    )
+                    .await
+                    .map_err(|_| "Application list timed out. Try again.".to_string())?
+                    .map_err(|e| e.to_string())?;
+                let apps: Vec<(String, String, String)> = message.body().deserialize().map_err(|e| e.to_string())?;
+                Ok(apps.into_iter().map(|(id, name, icon)| ApplicationChoice { id, name, icon }).collect())
+            }
+            .await;
             let _ = reply.send(r);
         }
         Request::Status { reply } => {
@@ -268,6 +289,24 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             .await;
             let _ = reply.send(r);
         }
+    }
+}
+
+async fn run(
+    conn: &zbus::Connection,
+    method: &str,
+    id: &str,
+    argument: &str,
+    timeout: Duration,
+) -> Result<(), RunError> {
+    let body = (id, argument, "");
+    let request = conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), method, &body);
+    match zruntime::SharedRuntime::current() {
+        Ok(runtime) => match runtime.timeout(timeout, request).await {
+            Ok(result) => result.map(|_| ()).map_err(open_error),
+            Err(_) => Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())),
+        },
+        Err(e) => Err(RunError::Failed(e.to_string())),
     }
 }
 
@@ -342,6 +381,20 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn applications(self, id: String) -> Result<Vec<ApplicationChoice>, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.unbounded_send(Request::Applications { id, reply }).map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
+    pub async fn run_with(self, id: String, app: String) -> Result<(), RunError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .unbounded_send(Request::RunWith { id, app, reply })
+            .map_err(|_| RunError::Failed("bus thread stopped".into()))?;
+        rx.await.map_err(|_| RunError::Unconfirmed("bus thread stopped before confirming the open request".into()))?
+    }
+
     pub async fn folder_policy(self) -> Result<Option<FolderPolicy>, String> {
         let (reply, rx) = oneshot::channel();
         self.tx.unbounded_send(Request::FolderPolicy { reply }).map_err(|_| "bus thread stopped".to_string())?;

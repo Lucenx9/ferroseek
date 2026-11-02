@@ -258,6 +258,7 @@ pub fn build_items(apps: &[App], app_hits: &[(usize, u32)], files: &[FileHit]) -
 pub enum Action {
     Launch,
     Open,
+    OpenWith,
     Reveal,
     CopyPath,
     CopyName,
@@ -275,6 +276,7 @@ impl Action {
         match self {
             Action::Launch => "Launch",
             Action::Open => "Open",
+            Action::OpenWith => "Open with…",
             Action::Reveal => "Show in folder",
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
@@ -299,6 +301,7 @@ impl Action {
             return Some(matcher::EXACT);
         }
         let aliases: &[&str] = match self {
+            Self::OpenWith => &["application", "choose app", "handler"],
             Self::Reveal => &["reveal", "directory", "parent"],
             Self::CopyName => &["filename", "title"],
             Self::CopyPath => &["location"],
@@ -319,6 +322,7 @@ impl Action {
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::CopyName
+            | Action::OpenWith
             | Action::ResetRanking
             | Action::AddFavorite
             | Action::RemoveFavorite
@@ -340,6 +344,9 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
+    }
+    if matches!(t, Target::File(FileHit { path: Some(_), is_dir: false, .. })) {
+        actions.push(Action::OpenWith);
     }
     actions
 }

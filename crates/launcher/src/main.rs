@@ -14,6 +14,7 @@ mod icons;
 mod launch;
 mod matcher;
 mod model;
+mod open_with;
 mod shortcuts;
 mod ui;
 mod uri;
