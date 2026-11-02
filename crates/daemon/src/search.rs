@@ -110,7 +110,8 @@ pub fn path_from_url(u: &str) -> Option<PathBuf> {
 fn subtext(path: &Path, home: &Path) -> String {
     let parent = path.parent().unwrap_or(Path::new("/"));
     match parent.strip_prefix(home) {
-        Ok(rel) if !home.as_os_str().is_empty() => {
+        // `/` is a prefix of every absolute path. It is not a home directory.
+        Ok(rel) if !home.as_os_str().is_empty() && home.parent().is_some() => {
             if rel.as_os_str().is_empty() {
                 "~".to_string()
             } else {
@@ -366,5 +367,7 @@ mod tests {
         assert_eq!(subtext(Path::new("/home/u/a.txt"), h), "~");
         assert_eq!(subtext(Path::new("/home/u/d/a.txt"), h), "~/d");
         assert_eq!(subtext(Path::new("/srv/a.txt"), h), "/srv");
+        assert_eq!(subtext(Path::new("/etc/passwd"), Path::new("/")), "/etc");
+        assert_eq!(subtext(Path::new("/passwd"), Path::new("/")), "/");
     }
 }
