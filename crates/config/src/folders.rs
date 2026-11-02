@@ -14,6 +14,31 @@ pub struct Document {
     source: Option<String>,
 }
 
+struct SettingsLock(std::fs::File);
+
+impl SettingsLock {
+    fn acquire(path: &Path) -> Result<Self, String> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path.with_extension("toml.lock"))
+            .map_err(|e| e.to_string())?;
+        file.try_lock().map_err(|_| "Settings are busy. Try again.".to_string())?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for SettingsLock {
+    fn drop(&mut self) {
+        // A concurrent spawn can inherit the description until exec. Closing
+        // only our descriptor would keep flock held by that child temporarily.
+        let _ = self.0.unlock();
+    }
+}
+
 impl Document {
     pub fn load(path: PathBuf) -> Result<Self, String> {
         let path =
@@ -46,15 +71,7 @@ impl Document {
         }
         let dir = self.path.parent().ok_or("Configuration has no parent folder")?;
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| e.to_string())?;
-        let lock = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(self.path.with_extension("toml.lock"))
-            .map_err(|e| e.to_string())?;
-        lock.try_lock().map_err(|_| "Settings are busy. Try again.".to_string())?;
+        let _lock = SettingsLock::acquire(&self.path)?;
         if std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.file_type().is_symlink()) {
             return Err("Configuration is a symbolic link. Its target must be edited separately.".into());
         }
@@ -132,6 +149,21 @@ pub fn validate_folder(root: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn saving_releases_the_lock_even_with_an_inherited_descriptor() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "roots = []").unwrap();
+        let document = Document::load(path.clone()).unwrap();
+        let lock = SettingsLock::acquire(&path).unwrap();
+        // dup and fork share the same open file description and flock.
+        let inherited = lock.0.try_clone().unwrap();
+        assert!(document.save(vec![]).unwrap_err().contains("busy"));
+        drop(lock);
+        document.save(vec![]).expect("a finished save must release its lock before the child closes its copy");
+        drop(inherited);
+    }
 
     #[test]
     fn folder_edits_preserve_settings_comments_and_conflicts() {
