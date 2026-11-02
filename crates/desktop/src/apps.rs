@@ -232,6 +232,9 @@ fn scan_kind(dirs: &[PathBuf], locales: &[String], desktops: &[String], handlers
             if !seen.insert(id.clone()) {
                 continue;
             }
+            if !path.is_file() {
+                continue;
+            }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             if let Some(app) = parse_kind(&id, &path, &text, locales, desktops, handlers) {
                 apps.push(app);
@@ -675,6 +678,59 @@ mod tests {
     fn lists_and_escapes() {
         assert_eq!(split_list(&unescape(r"a;b\;c;;d")), ["a", "b;c", "d"]);
         assert_eq!(unescape(r"a\sb\tc\\d"), "a b\tc\\d");
+    }
+
+    #[test]
+    fn scan_ignores_special_desktop_files() {
+        use std::os::unix::{fs::symlink, net::UnixListener};
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        const ROOT: &str = "FERROSEEK_TEST_DESKTOP_SCAN_ROOT";
+        if let Some(root) = std::env::var_os(ROOT) {
+            let dirs = [PathBuf::from(root)];
+            for apps in [scan(&dirs, &[], &[]), file_handlers(&dirs, &[], &[], &["text/plain".into()])] {
+                let mut ids: Vec<_> = apps.iter().map(|app| app.id.as_str()).collect();
+                ids.sort();
+                assert_eq!(ids, ["regular.desktop", "symlink.desktop"]);
+            }
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let applications = temp.path().join("applications");
+        std::fs::create_dir(&applications).unwrap();
+        let regular = applications.join("regular.desktop");
+        std::fs::write(
+            &regular,
+            "[Desktop Entry]\nType=Application\nName=Valid\nExec=/bin/true %f\nMimeType=text/plain;\n",
+        )
+        .unwrap();
+        symlink(&regular, applications.join("symlink.desktop")).unwrap();
+        let pipe = applications.join("pipe.desktop");
+        assert!(Command::new("mkfifo").arg(&pipe).status().unwrap().success());
+        symlink(&pipe, applications.join("linked-pipe.desktop")).unwrap();
+        symlink(temp.path().join("missing"), applications.join("broken.desktop")).unwrap();
+        let _socket = UnixListener::bind(applications.join("socket.desktop")).unwrap();
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "apps::tests::scan_ignores_special_desktop_files", "--nocapture"])
+            .env(ROOT, temp.path())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("application discovery blocked on a special desktop file");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]
