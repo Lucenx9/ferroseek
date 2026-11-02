@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use ferroseek_engine::config::normalize;
 use ferroseek_engine::{Config, EngineError, Paths, index_once, ipc};
 use ferroseek_index::{Hit, Kind, Query, Reader, SearchOptions};
 use serde::Serialize;
@@ -211,7 +212,16 @@ fn main() -> ExitCode {
                     ));
                 }
             };
-            let within = within.map(|w| std::fs::canonicalize(&w).unwrap_or(w));
+            // Roots are stored as configured, so a root below a linked ancestor
+            // only matches lexically; a link into the index needs its target.
+            let within = within.map(|w| {
+                let lexical = normalize(&std::path::absolute(&w).unwrap_or_else(|_| w.clone()));
+                if reader.lookup(&lexical).is_ok_and(|entry| entry.is_some()) {
+                    lexical
+                } else {
+                    std::fs::canonicalize(&w).unwrap_or(lexical)
+                }
+            });
             let opts = SearchOptions {
                 limit,
                 within,
