@@ -39,7 +39,14 @@ impl MimeDb {
         // Lower-priority dirs first so user dirs override.
         for dir in data_dirs().iter().rev() {
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/globs2")) {
-                db.add_globs2(&s);
+                // Resolve weights within each file, then let the higher-priority
+                // directory replace identical patterns regardless of weight.
+                let mut layer = Self::empty();
+                layer.add_globs2(&s);
+                db.by_ext.extend(layer.by_ext);
+                db.by_name.extend(layer.by_name);
+                db.by_ext_cs.extend(layer.by_ext_cs);
+                db.by_name_cs.extend(layer.by_name_cs);
             }
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/generic-icons")) {
                 for l in s.lines() {
@@ -234,6 +241,46 @@ mod tests {
                 .unwrap();
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
         }
+    }
+
+    #[test]
+    fn user_mime_rules_override_identical_system_patterns() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_PRECEDENCE";
+        if std::env::var_os(CASE).is_some() {
+            let db = MimeDb::load();
+            for name in ["file.probe", "file.CASE", "Literal", "Exact"] {
+                assert_eq!(db.mime_for(name), Some("text/x-user"), "wrong rule for {name}");
+                assert_eq!(db.icon_for(name), "text-x-user");
+            }
+            assert_eq!(db.mime_for("untouched.other"), Some("text/x-system"));
+            assert!(MimeDb::load_for_handlers().handler_types("file.probe").contains(&"text/x-user".into()));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (directory, weight, mime_type) in [("system", 80, "text/x-system"), ("user", 50, "text/x-user")] {
+            let mime = temp.path().join(directory).join("mime");
+            std::fs::create_dir_all(&mime).unwrap();
+            let mut globs = ["*.probe", "*.CASE:cs", "Literal", "Exact:cs"]
+                .map(|pattern| format!("{weight}:{mime_type}:{pattern}\n"))
+                .concat();
+            if directory == "system" {
+                globs.push_str("50:text/x-system:*.other\n");
+            } else {
+                globs.push_str("10:text/x-lower-weight:*.probe\n");
+            }
+            std::fs::write(mime.join("globs2"), globs).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mime::tests::user_mime_rules_override_identical_system_patterns"])
+            .env(CASE, "1")
+            .env("HOME", temp.path())
+            .env("XDG_DATA_HOME", temp.path().join("user"))
+            .env("XDG_DATA_DIRS", temp.path().join("system"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]
