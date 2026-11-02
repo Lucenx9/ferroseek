@@ -48,7 +48,10 @@ fn wrap_command<T: From<String>>(
         argv = wrapped;
     }
     if scoped {
-        let unit = format!("--unit=app-ferroseek-{}-{}", unit_safe(&app.id), std::process::id());
+        // A daemon can launch the same app repeatedly while earlier scopes live.
+        static NEXT_SCOPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = NEXT_SCOPE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let unit = format!("--unit=app-ferroseek-{}-{}-{serial}", unit_safe(&app.id), std::process::id());
         let mut s: Vec<T> = ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--slice=app.slice"]
             .map(|s| T::from(s.to_string()))
             .into();
