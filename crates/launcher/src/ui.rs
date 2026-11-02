@@ -216,6 +216,7 @@ pub struct Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     Query(String),
+    ContextQuery { generation: u64, query: String },
     Scope(Scope),
     ActionQuery(String),
     FolderBack { generation: u64 },
@@ -702,7 +703,12 @@ impl Launcher {
         } else {
             Task::none()
         };
-        Task::batch([refresh, self.resize(), widget::operation::focus(search_id())])
+        Task::batch([
+            refresh,
+            self.resize(),
+            widget::operation::focus(search_id()),
+            widget::operation::move_cursor_to_end(search_id()),
+        ])
     }
 
     fn request_file_details(&mut self) -> Task<Message> {
@@ -838,6 +844,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         && matches!(
             message,
             Message::Query(_)
+                | Message::ContextQuery { .. }
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
                 | Message::FolderBack { .. }
@@ -855,6 +862,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         && matches!(
             message,
             Message::Query(_)
+                | Message::ContextQuery { .. }
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
                 | Message::FolderBack { .. }
@@ -872,6 +880,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         && matches!(
             message,
             Message::Query(_)
+                | Message::ContextQuery { .. }
                 | Message::Scope(_)
                 | Message::ActionQuery(_)
                 | Message::FolderBack { .. }
@@ -993,6 +1002,13 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                 });
             }
             Task::none()
+        }
+        Message::ContextQuery { generation, query } => {
+            if generation == s.scope_generation {
+                update(s, Message::Query(query))
+            } else {
+                Task::none()
+            }
         }
         Message::Query(q) => {
             s.clicks = ClickTracker::default();
@@ -1260,8 +1276,9 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
             if s.query.is_empty() {
                 return iced::exit();
             }
-            // Escape also unfocuses the field; clear and take focus back.
-            return Task::batch([Task::done(Message::Query(String::new())), widget::operation::focus(search_id())]);
+            // Apply the clear synchronously so it cannot arrive in a later context.
+            let clear = update(s, Message::Query(String::new()));
+            return Task::batch([clear, widget::operation::focus(search_id())]);
         }
     }
     Task::none()
@@ -1296,9 +1313,10 @@ fn view(s: &Launcher) -> Element<'_, Message> {
             Scope::Files => "Search indexed files…",
         }
     };
+    let scope_generation = s.scope_generation;
     let input = text_input(placeholder, &s.query)
         .id(search_id())
-        .on_input(Message::Query)
+        .on_input(move |query| Message::ContextQuery { generation: scope_generation, query })
         .size(if s.search_folder.is_some() { 16 } else { 20 })
         .padding(if s.search_folder.is_some() { [3, 8] } else { [14, 8] })
         .style(|_, _| text_input::Style {
@@ -2604,12 +2622,15 @@ mod tests {
         let mut s = search_state();
         let _ = update(&mut s, Message::Query("report".into()));
         let root_generation = s.generation;
+        let root_input = s.scope_generation;
         let parent = search_folder_hit("/synthetic/Reports");
         let _ = update(&mut s, Message::Files { generation: root_generation, result: Ok(Some(vec![parent.clone()])) });
         let root_target = Target::File(parent.clone());
         s.cursor.select_target(&root_target, &s.items);
         let _ = command(&mut s, Command::SearchFolder);
         let parent_back = s.scope_generation;
+        let _ = update(&mut s, Message::ContextQuery { generation: root_input, query: "late global input".into() });
+        assert!(s.query.is_empty());
         let _ = update(&mut s, Message::Files { generation: root_generation, result: Ok(Some(file_hits())) });
         assert!(s.items.is_empty());
         let _ = update(&mut s, Message::Scope(Scope::All));
@@ -2636,6 +2657,11 @@ mod tests {
         assert_eq!(s.status, Status::Searching);
         let _ = command(&mut s, Command::BackFolder);
         assert_eq!(s.search_folder.as_ref(), Some(&parent));
+        assert_eq!(s.scope, Scope::Files);
+        let _ = update(
+            &mut s,
+            Message::ContextQuery { generation: parent_back, query: "input from departed parent view".into() },
+        );
         assert_eq!(s.query, "=2+3");
         assert_eq!(s.selected().unwrap().target, Target::File(child));
         let _ = update(&mut s, Message::Files { generation: pending_child, result: Ok(Some(file_hits())) });
