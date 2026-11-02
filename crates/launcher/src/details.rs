@@ -171,7 +171,7 @@ fn field(label: &str, value: &str) -> Element<'static, Event> {
     .into()
 }
 
-fn format_size(bytes: u64) -> String {
+pub(crate) fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes} bytes");
     }

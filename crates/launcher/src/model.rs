@@ -510,6 +510,7 @@ pub enum Command {
     CopyPath,
     SearchFolder,
     BackFolder,
+    ScrollPreview(i8),
     /// Close the panel, else clear the query, else hide.
     Back,
 }
@@ -560,6 +561,8 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::Tab) if mods == (Modifiers::CTRL | Modifiers::SHIFT) => Some(Command::PreviousScope),
         Key::Named(Named::Tab) if mods.shift() => Some(Command::Up),
         Key::Named(Named::Tab) => Some(Command::Down),
+        Key::Named(Named::PageUp) if mods == Modifiers::ALT => Some(Command::ScrollPreview(-1)),
+        Key::Named(Named::PageDown) if mods == Modifiers::ALT => Some(Command::ScrollPreview(1)),
         Key::Named(Named::PageUp) => Some(Command::PageUp),
         Key::Named(Named::PageDown) => Some(Command::PageDown),
         Key::Named(Named::Home) if ctrl => Some(Command::First),
