@@ -37,8 +37,9 @@ impl Search {
         let pool = self.pool.clone();
         let p = path.clone();
         zruntime::unblock(move || {
-            let known =
-                pool.with(|r| r.lookup(&p)).map_err(|_| zbus::fdo::Error::Failed("Index is unavailable".into()))?;
+            let known = pool.with(|r| r.lookup(&p)).map_err(|_| {
+                zbus::fdo::Error::AccessDenied("Cannot authorize file while index is unavailable".into())
+            })?;
             if !known.is_some_and(|(_, meta)| meta.kind == Kind::File) {
                 return Err(zbus::fdo::Error::AccessDenied("path is not a regular indexed file".into()));
             }
@@ -177,7 +178,16 @@ impl Search {
                 &uri,
                 (!token.is_empty()).then_some(token.as_str()),
             )
-            .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::InvalidInput
+                | std::io::ErrorKind::InvalidData
+                | std::io::ErrorKind::NotADirectory => zbus::fdo::Error::SpawnExecFailed(e.to_string()),
+                _ => zbus::fdo::Error::Failed(e.to_string()),
+            })?;
+            // From here the child may already have opened the document, so a
+            // reaper failure must remain an unconfirmed dispatch to the client.
             std::thread::Builder::new()
                 .name("reap-selected-opener".into())
                 .spawn(move || {

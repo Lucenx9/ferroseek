@@ -66,7 +66,7 @@ fn open_error(error: zbus::Error) -> RunError {
         zbus::fdo::Error::ServiceUnknown(_) | zbus::fdo::Error::NameHasNoOwner(_)
         | zbus::fdo::Error::UnknownObject(_) | zbus::fdo::Error::UnknownInterface(_)
         | zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::InvalidArgs(_)
-        | zbus::fdo::Error::AccessDenied(_)));
+        | zbus::fdo::Error::AccessDenied(_) | zbus::fdo::Error::SpawnExecFailed(_)));
     if rejected { RunError::Failed(error.to_string()) } else { RunError::Unconfirmed(error.to_string()) }
 }
 
@@ -713,6 +713,10 @@ mod tests {
             RunError::Unconfirmed(_)
         ));
         assert!(matches!(open_error(zbus::fdo::Error::InvalidArgs("bad URL".into()).into()), RunError::Failed(_)));
+        assert!(matches!(
+            open_error(zbus::fdo::Error::SpawnExecFailed("executable is unavailable".into()).into()),
+            RunError::Failed(_)
+        ));
         assert!(matches!(
             open_error(zbus::fdo::Error::Failed("opener may have started".into()).into()),
             RunError::Unconfirmed(_)

@@ -2213,6 +2213,25 @@ mod tests {
     }
 
     #[test]
+    fn picker_rejected_dispatch_can_choose_another_application() {
+        let mut s = picker_state();
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        let (file, query) = s.opening.clone().unwrap();
+        let _ = update(&mut s, Message::Opened(Err(RunError::Failed("executable is unavailable".into()))));
+        assert!(!s.unconfirmed_open);
+        assert!(s.opening.is_none());
+        assert_eq!(s.usage.boost(Kind::File, &file, &query, usage::now()), 0);
+        let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("01".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref(), Some(&(file.clone(), query.clone())));
+        assert_eq!(s.application_picker.as_ref().unwrap().query, "01");
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert!(s.usage.boost(Kind::File, &file, &query, usage::now()) > 0);
+    }
+
+    #[test]
     fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
         let file = file_hits().remove(0);
         let mut panel = open_with::Panel::new(file);
