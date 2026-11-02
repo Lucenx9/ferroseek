@@ -2124,7 +2124,7 @@ mod tests {
         s.apps[0].actions = names
             .iter()
             .enumerate()
-            .map(|(i, name)| crate::apps::DesktopAction {
+            .map(|(i, name)| ferroseek_desktop::apps::DesktopAction {
                 id: format!("action-{i}"),
                 name: (*name).into(),
                 exec: format!("synthetic-viewer --action-{i}"),
