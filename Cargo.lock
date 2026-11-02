@@ -1077,6 +1077,8 @@ dependencies = [
  "iced_layershell",
  "log",
  "tempfile",
+ "wayland-client",
+ "wayland-protocols",
  "winit-core",
  "zbus",
  "zruntime",

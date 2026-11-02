@@ -30,6 +30,12 @@ zruntime = { version = "0.2", default-features = false, features = ["helper"] }
 freedesktop-icons = "0.4"
 log.workspace = true
 
+[[example]]
+name = "activation-context-prototype"
+path = "examples/activation_context_prototype.rs"
+
 [dev-dependencies]
+wayland-client = "=0.31.15"
+wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 ferroseek-engine.workspace = true
 tempfile.workspace = true
