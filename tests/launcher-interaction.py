@@ -60,7 +60,7 @@ def main():
     trials = int(os.environ.get("FERROSEEK_SMOKE_TRIALS", "20"))
     assert 2 <= trials <= 100
     probe_log = out / "focus-probe.jsonl"
-    probe_process = subprocess.Popen(["/usr/bin/python3", __file__, "--probe", str(probe_log)])
+    probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
     processes = [probe_process]
     samples = []
 

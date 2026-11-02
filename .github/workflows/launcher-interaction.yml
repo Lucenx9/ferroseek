@@ -3,9 +3,15 @@ on:
   pull_request:
     paths:
       - 'crates/launcher/**'
+      - 'crates/daemon/**'
+      - 'crates/index/**'
+      - 'crates/engine/**'
+      - 'crates/config/**'
+      - 'crates/desktop/**'
       - 'tests/launcher-*'
       - '.github/workflows/launcher-interaction.yml'
       - 'Cargo.lock'
+      - 'Cargo.toml'
   workflow_dispatch:
 jobs:
   keyboard-and-latency:
