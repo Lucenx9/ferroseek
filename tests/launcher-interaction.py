@@ -194,6 +194,9 @@ def main():
                     assert activated[-1]["pid"] == serving_pid, "reactivate the existing instance"
                 else:
                     serving_pid = activated[-1]["pid"]
+                wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
+                                     and r.get("activation") == (2 if existing else 1)
+                                     for r in records(activation_log)), "target window activated")
                 tap(44)
                 expected = "zz" if existing else "z"
                 wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
@@ -217,6 +220,11 @@ def main():
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
     finally:
+        if sys.exc_info()[0] is not None:
+            try:
+                capture("interaction-failure.png")
+            except (OSError, subprocess.SubprocessError):
+                pass
         for pid in {r["pid"] for r in records(activation_log) if r.get("event") == "started"}:
             try:
                 command = Path(f"/proc/{pid}/cmdline").read_bytes()

@@ -26,6 +26,7 @@ def main():
         def __init__(self):
             super().__init__(application_id="org.ferroseek.ActivationProbe")
             self.window = None
+            self.activation_count = 0
 
         def do_startup(self):
             Gtk.Application.do_startup(self)
@@ -34,14 +35,17 @@ def main():
             self.add_action(quit_action)
 
         def do_activate(self):
+            self.activation_count += 1
             if self.window is None:
                 self.window = Gtk.ApplicationWindow(application=self, title="FerroSeek activation target")
                 entry = Gtk.Entry()
                 entry.connect("changed", lambda entry: record("input", text=entry.get_text()))
                 self.window.set_child(entry)
                 self.window.set_default_size(400, 100)
-                entry.grab_focus()
-            record("activated")
+                self.window.connect("map", lambda _: entry.grab_focus())
+                self.window.connect("notify::is-active", lambda window, _: record(
+                    "focus", active=window.is_active(), activation=self.activation_count))
+            record("activated", activation=self.activation_count)
             self.window.present()
 
     return Application().run([sys.argv[0]])
