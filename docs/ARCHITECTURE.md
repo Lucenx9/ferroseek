@@ -207,8 +207,8 @@ applications and stores local launch history. File queries and opens use the
 daemon on the session bus. CLI and optional MCP use the same index; neither
 maintains another index.
 
-Application results and declared actions capture the app, action and query
-before asynchronous submission. `activation::Activation` installs an independent
+Application results, declared actions and file actions capture their target,
+action or selected handler and original query before asynchronous submission. `activation::Activation` installs an independent
 event queue on the exact Wayland connection injected through
 `iced_layershell::Settings::with_connection`. Additional keyboard/pointer listeners
 observe focus surfaces and input serials; key contents are unused. A display-sync
@@ -223,9 +223,19 @@ desktop commands clear inherited startup context and forward only the new
 nonempty token through the child environment, preserving argv, terminal, working
 directory and scope behavior. The receiving app consumes it; the compositor
 controls focus. A successful spawn is submission acknowledgement, not a focus
-report. An abort-on-drop application task cancels deferred work when the launcher
-closes, while the existing single-open gate prevents duplicates. Already submitted
-commands cannot be undone. File open/reveal routing is unchanged.
+report. Abort-on-drop launch tasks cancel deferred application and file work when
+the launcher closes, while the existing single-open gate prevents duplicates.
+Already submitted commands cannot be undone.
+
+The bus worker receives the same activation adapter at startup. File Open,
+OpenWith and reveal acquire context immediately before IPC dispatch, after earlier
+queued requests, with no guessed target application ID. Canceled reply receivers
+skip acquisition, and a second check after the bounded wait prevents dispatch if
+the launcher closed meanwhile. The existing Open/OpenWith wire signatures,
+authorization, deadlines and uncertain-open protection stay intact. The daemon's
+`xdg-open` child also clears inherited startup variables and receives only the
+operation token. Reveal forwards it as FileManager1's startup ID and into the
+existing parent-directory fallback; file-manager support determines its effect.
 
 ```text
 launcher -> daemon Search1 -> shared index <- indexing engine

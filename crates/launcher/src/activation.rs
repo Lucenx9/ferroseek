@@ -332,21 +332,21 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, Reply> for Worker {
 delegate_noop!(Worker: ignore xdg_activation_v1::XdgActivationV1);
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::Shutdown;
     use std::os::unix::net::UnixStream;
     use std::sync::mpsc;
 
-    enum Mode {
+    pub(crate) enum Mode {
         EmptyRegistry,
         NoSeat,
         Stall,
         Disconnect,
     }
 
-    struct Server {
+    pub(crate) struct Server {
         socket: UnixStream,
         thread: Option<std::thread::JoinHandle<()>>,
     }
@@ -363,7 +363,7 @@ mod tests {
 
     // Minimal core-protocol peer: no globals, callback replies or a stalled peer.
     // This mocks the compositor boundary, not the activation worker's internals.
-    fn compositor(mode: Mode) -> (Activation, Server, mpsc::Receiver<()>) {
+    pub(crate) fn compositor(mode: Mode) -> (Activation, Server, mpsc::Receiver<()>) {
         let (client, mut peer) = UnixStream::pair().unwrap();
         let socket = peer.try_clone().unwrap();
         let (send, seen) = mpsc::channel();

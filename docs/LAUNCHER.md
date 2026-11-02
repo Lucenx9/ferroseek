@@ -129,27 +129,33 @@ in their own transient systemd user scope when a user manager is available.
 
 ## Application activation
 
-Opening an application or one of its declared actions requests fresh Wayland
-activation context from the launcher's focused surface and current input.
-The footer shows **Opening application…**. You can keep searching while it
-waits; the chosen application, action and original query stay captured, and
+Opening an application, a declared action or an indexed file, choosing **Open
+with…**, and showing a file in its folder request fresh Wayland activation
+context from the launcher's focused surface and current input. The footer shows
+**Opening application…** for apps and **Opening…** for files. The chosen target,
+action or handler and original query stay captured during asynchronous work;
 further open commands are ignored until submission completes.
 
-Token acquisition waits at most one second. If the protocol, suitable seat or
-focus context is unavailable, the worker fails, or the deadline expires, the
-ordinary command still runs without activation context. Desktop launch commands
-remove inherited `XDG_ACTIVATION_TOKEN` and `DESKTOP_STARTUP_ID`, then supply only
-this operation's nonempty token. Token values and key contents are not logged.
+Token acquisition waits at most one second. File actions request it when the
+bus worker is ready to dispatch, after earlier queued work, without guessing the
+desktop-selected target's application ID. If context is unavailable or acquisition
+fails, the ordinary open is sent once without it. Desktop child processes remove
+inherited `XDG_ACTIVATION_TOKEN` and `DESKTOP_STARTUP_ID`, then supply only this
+operation's nonempty token. Token values and key contents are not logged.
 
-The receiving application and compositor decide whether to create a window,
-raise an existing instance, or decline focus. FerroSeek does not select a
-particular application window. Launch submission records application history
-only after the command starts successfully; that acknowledgement does not prove
-focus. A submission error leaves the launcher and action menu usable for retry.
+Reveal forwards the context through `FileManager1.ShowItems`' startup-ID argument
+and its existing parent-directory fallback. Support for XDG tokens through that
+older interface depends on the receiving file manager. The application and
+compositor choose whether to create a window, raise an existing instance or
+decline focus; FerroSeek does not choose a particular application window.
+History is recorded only after successful submission acknowledgement, which does
+not prove focus. Known submission failures leave the launcher usable for retry;
+uncertain replies retain the duplicate-open protection described below.
 
 Esc retains its normal clear-query/close sequence. Closing with Esc or the
-instance toggle cancels a deferred launcher-side submission. An application
-already submitted to the system may still open; closing cannot undo that.
+instance toggle cancels deferred tasks. A queued file action checks cancellation
+before requesting context and again before D-Bus dispatch. An already submitted
+operation may still open; closing cannot undo it.
 
 The adapter uses an independent queue on iced's shared Wayland connection;
 it needs no window-manager permissions or desktop configuration changes. See
@@ -160,8 +166,9 @@ remain to be validated.
 
 ## Slow or disconnected search services
 
-File search calls wait up to five seconds, and file open/reveal calls up to
-fifteen seconds, including service activation. The launcher does not retry
+File search calls wait up to five seconds, and file open/reveal/Open with calls
+wait up to fifteen seconds after dispatch, including service activation. The
+activation-context wait and earlier queued work are additional. The launcher does not retry
 these calls automatically. A timed-out search leaves an error; typing a new
 query starts a new search, and replies for older queries remain ignored.
 
@@ -484,10 +491,9 @@ ferroseek-launcher
 
 ## Limitations
 
-- Fresh activation context currently covers application results and declared
-  actions. Indexed file open/reveal and Open with do not yet request it in the
-  launcher. Applications still need a usable `Exec`; D-Bus-only entries and
-  explicit application-window switching are unsupported.
+- Focus depends on the receiving application and compositor; activation context
+  may be unavailable or declined. Application entries still need a usable `Exec`;
+  D-Bus-only entries and explicit application-window switching are unsupported.
 - The window is 720 px wide normally and 980 px while the preview sidebar is visible, near the
   top of the active output. Its size/position are not configurable; there is no
   light theme yet.
@@ -525,7 +531,10 @@ single-instance application, moves input to another test app, and reactivates
 the existing target through both Enter and a result-row double click. A persistent
 synthetic input device keeps the isolated seat capabilities present. Token presence
 and activation acknowledgement are followed by actual text input in the target;
-an acknowledgement alone is insufficient.
+an acknowledgement alone is insufficient. File cases cover new/existing document
+handlers, the application chooser, double click and FileManager1 reveal, including
+a long filename. An owned `xdg-open` stand-in routes default opens to the synthetic
+handler; these checks do not validate real desktop associations or file managers.
 Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Local timing diagnostics

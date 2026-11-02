@@ -1083,6 +1083,42 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_during_context_wait_prevents_file_dispatch() {
+        use crate::activation::tests::{Mode, compositor};
+        use iced::futures::FutureExt;
+
+        for selected_handler in [false, true] {
+            let (_temp, _bus, address) = private_bus();
+            let (activation, _peer, waiting) = compositor(Mode::Stall);
+            zbus::block_on(async {
+                let (observed, requests) = std::sync::mpsc::channel();
+                let _service = zbus::connection::Builder::address(address.trim())
+                    .name(DAEMON_BUS_NAME)
+                    .serve_at(SEARCH_PATH, SearchService(observed))
+                    .build()
+                    .await
+                    .unwrap();
+                let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+                let (tx, rx) = mpsc::unbounded();
+                let backend = Backend { tx };
+                let mut pending = if selected_handler {
+                    backend.run_with("cancelled".into(), "selected.desktop".into()).boxed_local()
+                } else {
+                    backend.run("cancelled".into(), "").boxed_local()
+                };
+                assert!(iced::futures::poll!(&mut pending).is_pending());
+                let cancel = async move {
+                    // Observe the real protocol request; no timing guess or worker hook.
+                    zruntime::unblock(move || waiting.recv_timeout(Duration::from_secs(3))).await.unwrap();
+                    drop(pending);
+                };
+                iced::futures::future::join(serve(conn, rx, Timeouts::default(), activation), cancel).await;
+                assert!(requests.try_recv().is_err(), "cancelled token acquisition must not dispatch a file open");
+            });
+        }
+    }
+
+    #[test]
     fn cancelled_queued_opens_never_reach_the_daemon() {
         use iced::futures::FutureExt;
 

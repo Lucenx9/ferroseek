@@ -21,8 +21,9 @@ published release or verified compatibility with every Linux desktop.
   Current graphical evidence is nested virtual KWin only.
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
-  Application results/actions now request fresh context; virtual KWin verifies
-  new and existing target input. Physical desktops and file-open context remain.
+  Application results/actions, file opens, selected handlers and reveal now request
+  fresh context. Virtual KWin checks target input; physical desktops and broader
+  compositor/toolkit compatibility remain.
 - [x] Dedicated FerroSeek daemon search/open interface, independent replies for
   concurrent clients, and removal of Noctalia/KRunner adapters.
 - [x] Choose a compatible installed application for an indexed file without
