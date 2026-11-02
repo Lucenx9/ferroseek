@@ -11,7 +11,35 @@ set -euo pipefail
 BIN=${1:-target/debug/ferroseekd}
 BIN=$(realpath "$BIN")
 if [[ "${FERROSEEK_SMOKE_ISOLATED:-}" != 1 ]]; then
-    exec env FERROSEEK_SMOKE_ISOLATED=1 dbus-run-session -- "$0" "$BIN"
+    TEST_BUS_ROOT=$(mktemp -d /tmp/ferroseek-dbus-session-XXXXXX)
+    trap 'rm -rf "$TEST_BUS_ROOT"' EXIT
+    mkdir -p "$TEST_BUS_ROOT/services" "$TEST_BUS_ROOT/host-data/dbus-1/services"
+    # A sentinel in a standard directory makes accidental default-bus config fail
+    # even on CI hosts without a file manager. It must never be activatable.
+    cat > "$TEST_BUS_ROOT/host-data/dbus-1/services/org.ferroseek.Unexpected.service" <<'SERVICE'
+[D-BUS Service]
+Name=org.ferroseek.Unexpected
+Exec=/usr/bin/false
+SERVICE
+    sed "s|@SERVICEDIR@|$TEST_BUS_ROOT/services|" > "$TEST_BUS_ROOT/bus.conf" <<'XML'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "https://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <servicedir>@SERVICEDIR@</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+XML
+    FERROSEEK_SMOKE_ISOLATED=1 XDG_DATA_HOME="$TEST_BUS_ROOT/host-data" \
+        dbus-run-session --config-file="$TEST_BUS_ROOT/bus.conf" -- "$0" "$BIN"
+    exit
 fi
 
 T=$(mktemp -d)
@@ -26,7 +54,8 @@ mkdir -p "$T/bin" "$T/runtime"
 chmod 700 "$T/runtime"
 cat > "$T/bin/xdg-open" <<'SH'
 #!/bin/sh
-printf '%s\n' "$XDG_ACTIVATION_TOKEN" "$#" "$1" > "$TEST_OPEN_LOG"
+printf '%s\n' "${XDG_ACTIVATION_TOKEN-unset}" "${DESKTOP_STARTUP_ID-unset}" "$#" "$1" > "$TEST_OPEN_LOG.tmp"
+mv "$TEST_OPEN_LOG.tmp" "$TEST_OPEN_LOG"
 SH
 chmod +x "$T/bin/xdg-open"
 export PATH="$T/bin:$PATH" XDG_RUNTIME_DIR="$T/runtime" TEST_OPEN_LOG="$T/open-log"
@@ -51,13 +80,17 @@ printf '%s\n' "$XDG_ACTIVATION_TOKEN" "$#" "$1" "$2" > "$TEST_OPEN_LOG"
 SH
 chmod +x "$T/bin/selected-opener"
 export FERROSEEK_CONFIG="$T/config.toml" FERROSEEK_DATA_DIR="$T/data" FERROSEEK_LOG=debug
-"$BIN" 2> "$T/daemon.log" &
+XDG_ACTIVATION_TOKEN=inherited-token DESKTOP_STARTUP_ID=inherited-startup "$BIN" 2> "$T/daemon.log" &
 PID=$!
 
 SVC=io.github.ferroseek.FerroSeek
 call() { gdbus call --session --dest "$SVC" "$@"; }
 fail() { echo "FAIL: $*"; echo "--- daemon log"; cat "$T/daemon.log"; exit 1; }
 file_status() { call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.FileSearchStatus; }
+
+activatable=$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+    --method org.freedesktop.DBus.ListActivatableNames)
+[[ "$activatable" != *org.ferroseek.Unexpected* ]] || fail "standard service directories leaked into the test bus"
 
 for _ in $(seq 100); do
     call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status \
@@ -142,9 +175,16 @@ grep -q "not in the index" "$T/open-out" || fail "unindexed Open not refused"
 
 echo "== Open indexed URL with activation token and a single path argument"
 url="file://$T/root/Documents/Quarterly%20Report.pdf"
-call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "" "test-token" > /dev/null
-for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
-[[ "$(cat "$T/open-log")" == "$(printf 'test-token\n1\n%s' "$T/root/Documents/Quarterly Report.pdf")" ]] || fail "indexed Open argument/token forwarding"
+for action in "" open-parent; do
+    for token in test-token ""; do
+        rm -f "$T/open-log"
+        call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "$action" "$token" > /dev/null
+        for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
+        expected_path="$T/root/Documents/Quarterly Report.pdf"
+        [[ "$action" != open-parent ]] || expected_path="$T/root/Documents"
+        [[ "$(cat "$T/open-log")" == "$(printf '%s\nunset\n1\n%s' "${token:-unset}" "$expected_path")" ]] || fail "file open/folder fallback must forward only this operation token and one path argument"
+    done
+done
 for pair in invalid-url unknown-action; do
     if [[ "$pair" == invalid-url ]]; then id="https://example.com"; action=""; else id="$url"; action="unknown"; fi
     if call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$id" "$action" "" > /dev/null 2>&1; then

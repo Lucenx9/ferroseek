@@ -90,8 +90,8 @@ More navigation keys and history settings are in the [launcher guide](docs/LAUNC
 
 The window currently has a fixed size and position and one dark appearance.
 Themes and layout configuration are planned. Application focus depends on the
-receiving app and compositor; application opens now supply fresh Wayland
-activation context when available. See [activation behavior](docs/LAUNCHER.md#application-activation).
+receiving app and compositor; application launches, file opens and reveal actions
+supply fresh Wayland activation context when available. See [activation behavior](docs/LAUNCHER.md#application-activation).
 
 The next priorities are real desktop validation, reliable activation, clear
 appearance settings and latency checks on real desktops. A first

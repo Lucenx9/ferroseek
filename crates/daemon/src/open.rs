@@ -27,7 +27,8 @@ pub fn open_path(path: &Path, token: Option<&str>) -> io::Result<()> {
         Command::new("xdg-open")
     };
     cmd.arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(t) = token {
+    cmd.env_remove("XDG_ACTIVATION_TOKEN").env_remove("DESKTOP_STARTUP_ID");
+    if let Some(t) = token.filter(|token| !token.is_empty()) {
         cmd.env("XDG_ACTIVATION_TOKEN", t);
     }
     let mut child = cmd.spawn()?;

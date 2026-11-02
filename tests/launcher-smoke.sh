@@ -101,6 +101,18 @@ printf 'app\ttest.report-viewer.desktop\n' > "$XDG_STATE_HOME/ferroseek/launcher
 printf 'app\t3\t%s\ttest.report-viewer.desktop\nfile\t2\t%s\tfile://%s\n' "$(date +%s)" "$(date +%s)" \
     "$(printf %s "$R/Documents/notes-2024.md")" > "$XDG_STATE_HOME/ferroseek/launcher-usage"
 export FERROSEEK_CONFIG="$T/ferroseek.toml"
+# The daemon's synthetic document handler must use this same isolated display.
+SOCK=wayland-ferroseek-smoke-$$
+export WAYLAND_DISPLAY="$SOCK"
+if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+    mkdir -p "$T/bin"
+    target=$(realpath tests/launcher-activation-probe.py)
+    python=$(command -v python3)
+    printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$python" "$target" > "$T/bin/xdg-open"
+    chmod +x "$T/bin/xdg-open"
+    export PATH="$T/bin:$PATH" FERROSEEK_ACTIVATION_LOG="$OUT/activation-target.jsonl"
+    export GDK_BACKEND=wayland GSK_RENDERER=cairo GTK_A11Y=none
+fi
 FERROSEEK_DATA_DIR="$T/data" "$BIN_DIR/ferroseekd" 2> "$T/daemon.log" &
 DPID=$!
 has_owner() {
@@ -121,7 +133,6 @@ else
     sleep 0.5 # initial index of the tiny tree
 fi
 
-SOCK=wayland-ferroseek-smoke-$$
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT=us \
     kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
 KPID=$!

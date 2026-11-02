@@ -83,7 +83,8 @@ fn main() -> ExitCode {
     // Applications are scanned while the bus connection is set up.
     let scan =
         std::thread::spawn(|| apps::scan(&apps::data_dirs(), &apps::current_locales(), &apps::current_desktops()));
-    let (backend, events) = match backend::start() {
+    let activation = activation::Activation::default();
+    let (backend, events) = match backend::start(activation.clone()) {
         Ok(backend::Startup::Primary(b, ev)) => (b, ev),
         Ok(backend::Startup::Toggled) => return ExitCode::SUCCESS,
         Err(e) => {
@@ -100,7 +101,7 @@ fn main() -> ExitCode {
     };
     match ui::run(
         ui::Boot {
-            activation: activation::Activation::default(),
+            activation,
             backend,
             apps,
             usage: history,

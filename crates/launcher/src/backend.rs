@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ferroseek_config::Config;
+
+use crate::activation::Activation;
 use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -204,7 +206,7 @@ impl LauncherIface {
 }
 
 /// Connects to the session bus and claims the single-instance name.
-pub fn start() -> Result<Startup, String> {
+pub fn start(activation: Activation) -> Result<Startup, String> {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<Startup, String>>();
     std::thread::Builder::new()
         .name("bus".into())
@@ -253,14 +255,19 @@ pub fn start() -> Result<Startup, String> {
                 if ready_tx.send(Ok(Startup::Primary(Backend { tx }, ev_rx))).is_err() {
                     return;
                 }
-                serve(conn, rx, Timeouts::default()).await;
+                serve(conn, rx, Timeouts::default(), activation).await;
             });
         })
         .map_err(|e| format!("cannot start bus thread: {e}"))?;
     ready_rx.recv().map_err(|_| "bus thread exited during startup".to_string())?
 }
 
-async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>, timeouts: Timeouts) {
+async fn serve(
+    conn: zbus::Connection,
+    mut rx: mpsc::UnboundedReceiver<Request>,
+    timeouts: Timeouts,
+    activation: Activation,
+) {
     let mut pending = std::collections::VecDeque::new();
     loop {
         if pending.is_empty() {
@@ -281,7 +288,7 @@ async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>,
             pending.push_back(next);
         }
         if let Some(request) = pending.pop_front() {
-            handle(&conn, request, timeouts).await;
+            handle(&conn, request, timeouts, &activation).await;
         }
     }
 }
@@ -342,7 +349,7 @@ fn folder_read_error(error: zbus::Error) -> String {
     }
 }
 
-async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
+async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts, activation: &Activation) {
     match req {
         Request::ListDirectory { folder, reply } => {
             let result = async {
@@ -373,10 +380,10 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            let _ = reply.send(run(conn, "Open", &id, &action, timeouts.open).await);
+            run(conn, "Open", &id, &action, activation, reply, timeouts.open).await;
         }
         Request::RunWith { id, app, reply } => {
-            let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+            run(conn, "OpenWith", &id, &app, activation, reply, timeouts.open).await;
         }
         Request::TextPreview { id, validity, reply } => {
             if !validity.is_active() {
@@ -451,17 +458,29 @@ async fn run(
     method: &str,
     id: &str,
     argument: &str,
+    activation: &Activation,
+    reply: oneshot::Sender<Result<(), RunError>>,
     timeout: Duration,
-) -> Result<(), RunError> {
-    let body = (id, argument, "");
+) {
+    if reply.is_canceled() {
+        return;
+    }
+    // Acquire at dispatch, so queued reads cannot age the token.
+    // The desktop chooses the target application for file actions.
+    let token = activation.token(String::new()).await;
+    if reply.is_canceled() {
+        return;
+    }
+    let body = (id, argument, token.as_deref().unwrap_or(""));
     let request = conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), method, &body);
-    match zruntime::SharedRuntime::current() {
+    let result = match zruntime::SharedRuntime::current() {
         Ok(runtime) => match runtime.timeout(timeout, request).await {
             Ok(result) => result.map(|_| ()).map_err(open_error),
             Err(_) => Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())),
         },
         Err(e) => Err(RunError::Failed(e.to_string())),
-    }
+    };
+    let _ = reply.send(result);
 }
 
 async fn folder_policy(conn: &zbus::Connection) -> Result<Option<FolderPolicy>, String> {
@@ -846,7 +865,7 @@ mod tests {
                 assert_eq!(search_rx.await.unwrap().unwrap()[0].name, "report.txt");
                 run_rx.await.unwrap().unwrap();
             };
-            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+            iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), verify).await;
             assert_eq!(
                 opened_rx.try_recv().unwrap(),
                 ("file:///synthetic/report.txt".into(), ACTION_OPEN_PARENT.into())
@@ -923,7 +942,7 @@ mod tests {
                     }
                     assert_eq!(last_rx.await.unwrap().unwrap()[0].name, "report.txt");
                 };
-                iced::futures::future::join(serve(conn, rx, timeouts), verify).await;
+                iced::futures::future::join(serve(conn, rx, timeouts, Activation::default()), verify).await;
                 let (_, action) = opened_rx.try_recv().unwrap();
                 assert_eq!(action, if stalled_search { "slow" } else { "stall" });
                 assert!(opened_rx.try_recv().is_err(), "an open must never be retried automatically");
@@ -979,7 +998,7 @@ mod tests {
                 assert!(matches!(result, Err(RunError::Unconfirmed(_))));
                 assert!(opened_rx.try_recv().is_err());
             };
-            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+            iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), verify).await;
         });
     }
 
@@ -1018,7 +1037,12 @@ mod tests {
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(
-                serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                serve(
+                    conn,
+                    rx,
+                    Timeouts { status: Duration::from_millis(40), ..Timeouts::default() },
+                    Activation::default(),
+                ),
                 verify,
             )
             .await;
@@ -1051,7 +1075,77 @@ mod tests {
                 assert!(cancelled.await.is_err());
                 assert!(requests.try_recv().is_err(), "neither preview RPC may start after cancellation");
             };
-            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+            iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn cancellation_during_context_wait_prevents_file_dispatch() {
+        use crate::activation::tests::{Mode, compositor};
+        use iced::futures::FutureExt;
+
+        for selected_handler in [false, true] {
+            let (_temp, _bus, address) = private_bus();
+            let (activation, _peer, waiting) = compositor(Mode::Stall);
+            zbus::block_on(async {
+                let (observed, requests) = std::sync::mpsc::channel();
+                let _service = zbus::connection::Builder::address(address.trim())
+                    .name(DAEMON_BUS_NAME)
+                    .serve_at(SEARCH_PATH, SearchService(observed))
+                    .build()
+                    .await
+                    .unwrap();
+                let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+                let (tx, rx) = mpsc::unbounded();
+                let backend = Backend { tx };
+                let mut pending = if selected_handler {
+                    backend.run_with("cancelled".into(), "selected.desktop".into()).boxed_local()
+                } else {
+                    backend.run("cancelled".into(), "").boxed_local()
+                };
+                assert!(iced::futures::poll!(&mut pending).is_pending());
+                let cancel = async move {
+                    // Observe the real protocol request; no timing guess or worker hook.
+                    zruntime::unblock(move || waiting.recv_timeout(Duration::from_secs(3))).await.unwrap();
+                    drop(pending);
+                };
+                iced::futures::future::join(serve(conn, rx, Timeouts::default(), activation), cancel).await;
+                assert!(requests.try_recv().is_err(), "cancelled token acquisition must not dispatch a file open");
+            });
+        }
+    }
+
+    #[test]
+    fn cancelled_queued_opens_never_reach_the_daemon() {
+        use iced::futures::FutureExt;
+
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            for action in ["", ACTION_OPEN_PARENT, "selected.desktop"] {
+                let mut cancelled = if action == "selected.desktop" {
+                    backend.clone().run_with("cancelled".into(), action.into()).boxed_local()
+                } else {
+                    backend.clone().run("cancelled".into(), action).boxed_local()
+                };
+                assert!(iced::futures::poll!(&mut cancelled).is_pending());
+                drop(cancelled);
+            }
+            let mut control = Box::pin(backend.run("control".into(), ""));
+            assert!(iced::futures::poll!(&mut control).is_pending());
+            let (_, result) =
+                iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), control).await;
+            result.unwrap();
+            assert_eq!(requests.try_iter().collect::<Vec<_>>(), [("control".into(), String::new())]);
         });
     }
 
@@ -1089,7 +1183,8 @@ mod tests {
                 iced::futures::pin_mut!(replies);
                 assert!(iced::futures::poll!(&mut replies).is_pending());
                 let (_, (newer, older)) =
-                    iced::futures::future::join(serve(conn, rx, Timeouts::default()), replies).await;
+                    iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), replies)
+                        .await;
                 assert!(newer.unwrap(), "latest intent was discarded (listing={listing})");
                 assert!(older.unwrap().is_none(), "obsolete intent survived (listing={listing})");
                 assert_eq!(
@@ -1156,7 +1251,12 @@ mod tests {
                 );
             };
             iced::futures::future::join(
-                serve(conn, rx, Timeouts { open: Duration::from_millis(40), ..Timeouts::default() }),
+                serve(
+                    conn,
+                    rx,
+                    Timeouts { open: Duration::from_millis(40), ..Timeouts::default() },
+                    Activation::default(),
+                ),
                 verify,
             )
             .await;
@@ -1200,7 +1300,12 @@ mod tests {
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(
-                serve(conn, rx, Timeouts { search: Duration::from_millis(40), ..Timeouts::default() }),
+                serve(
+                    conn,
+                    rx,
+                    Timeouts { search: Duration::from_millis(40), ..Timeouts::default() },
+                    Activation::default(),
+                ),
                 verify,
             )
             .await;
@@ -1246,7 +1351,7 @@ mod tests {
                 assert_eq!(received.len(), 2);
                 assert!(received.iter().all(|(id, _)| id == "latest"));
             };
-            iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+            iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), verify).await;
         });
     }
 
@@ -1311,7 +1416,12 @@ mod tests {
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(
-                serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                serve(
+                    conn,
+                    rx,
+                    Timeouts { status: Duration::from_millis(40), ..Timeouts::default() },
+                    Activation::default(),
+                ),
                 verify,
             )
             .await;
@@ -1351,7 +1461,12 @@ mod tests {
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(
-                serve(conn, rx, Timeouts { search: Duration::from_millis(40), ..Timeouts::default() }),
+                serve(
+                    conn,
+                    rx,
+                    Timeouts { search: Duration::from_millis(40), ..Timeouts::default() },
+                    Activation::default(),
+                ),
                 verify,
             )
             .await;
