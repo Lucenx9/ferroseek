@@ -2125,6 +2125,30 @@ mod tests {
         assert!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()) > 0);
     }
 
+    #[test]
+    fn file_details_action_is_discoverable_and_preserves_search_on_return() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("properties".into()));
+        let actions = s.panel.as_ref().unwrap().filtered_actions();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label(), "File details");
+        let _ = command(&mut s, Command::Activate);
+        let _ = update(&mut s, Message::Query("queued input".into()));
+        let _ = update(&mut s, Message::Scope(Scope::All));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.selected().unwrap().target, target);
+        assert_eq!(s.query, "report");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn picker_state() -> Launcher {
         let mut s = search_state();
         let _ = update(&mut s, Message::Scope(Scope::Files));

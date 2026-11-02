@@ -25,7 +25,11 @@ def main():
                                  f'io.github.ferroseek.{interface}.{method}', *args],
                                 text=True, capture_output=True, timeout=10)
         assert (result.returncode == 0) == ok, result.stderr or result.stdout
-        return ast.literal_eval(re.sub(r'\b(?:u?int64)\s+', '', result.stdout)) if ok else result.stderr
+        if not ok:
+            return result.stderr
+        if method == 'Search':
+            return result.stdout
+        return ast.literal_eval(re.sub(r'\b(?:u?int64)\s+', '', result.stdout))
 
     def uri(path):
         return 'file://' + quote_from_bytes(os.fsencode(path), safe='/')
@@ -56,8 +60,8 @@ def main():
     link.symlink_to(pdf)
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
-        found = {hit[0] for hit in call('Search', 'details')[0]}
-        if {uri(raw), uri(unknown)} <= found:
+        found = call('Search', 'details')
+        if uri(raw) in found and uri(unknown) in found:
             break
         time.sleep(0.03)
     else:

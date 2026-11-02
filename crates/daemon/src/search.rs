@@ -148,6 +148,24 @@ impl Search {
         .await
     }
 
+    /// Current attributes for an indexed regular file, without reading its contents.
+    async fn file_details(&self, match_id: String) -> zbus::fdo::Result<(String, u64, i64)> {
+        use std::os::unix::fs::MetadataExt;
+
+        let path = self.indexed_file(&match_id).await?;
+        zruntime::unblock(move || {
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|_| zbus::fdo::Error::AccessDenied("File is no longer available".into()))?;
+            if !meta.is_file() {
+                return Err(zbus::fdo::Error::AccessDenied("Path is no longer a regular file".into()));
+            }
+            let mime = MimeDb::load();
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            Ok((mime.mime_for(&name).unwrap_or_default().to_owned(), meta.len(), meta.mtime()))
+        })
+        .await
+    }
+
     /// Installed handlers declaring the indexed file's MIME type or a parent.
     async fn applications(&self, match_id: String) -> zbus::fdo::Result<Vec<(String, String, String)>> {
         let path = self.indexed_file(&match_id).await?;
