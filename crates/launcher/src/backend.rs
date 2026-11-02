@@ -327,6 +327,21 @@ async fn load_file_details(conn: &zbus::Connection, id: String, timeout: Duratio
     Ok(FileDetails { mime, size, modified })
 }
 
+fn folder_read_error(error: zbus::Error) -> String {
+    // Keep transport/interface details out of the normal recovery message.
+    let denied = matches!(&error, zbus::Error::FDO(cause) if matches!(cause.as_ref(), zbus::fdo::Error::AccessDenied(_)))
+        || matches!(&error, zbus::Error::MethodError(name, ..) if name.as_str() == "org.freedesktop.DBus.Error.AccessDenied");
+    let outdated = matches!(&error, zbus::Error::FDO(cause) if matches!(cause.as_ref(), zbus::fdo::Error::UnknownMethod(_)))
+        || matches!(&error, zbus::Error::MethodError(name, ..) if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod");
+    if denied {
+        "Folder changed or is unavailable. Refresh or go back.".into()
+    } else if outdated {
+        "Folder navigation requires an updated daemon.".into()
+    } else {
+        "Could not load the folder. Check index status or refresh.".into()
+    }
+}
+
 async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
     match req {
         Request::ListDirectory { folder, reply } => {
@@ -345,7 +360,7 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
                     )
                     .await
                     .map_err(|_| "Folder listing timed out. Refresh to try again.".to_string())?
-                    .map_err(|e| e.to_string())?;
+                    .map_err(folder_read_error)?;
                 let (entries, truncated): (Vec<FileResult>, bool) =
                     message.body().deserialize().map_err(|e| e.to_string())?;
                 Ok((entries.into_iter().map(to_hit).collect(), truncated))
@@ -532,7 +547,7 @@ async fn search(
             .await
     }
     .map_err(|_| SEARCH_TIMED_OUT.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|error| if folder.is_some() { folder_read_error(error) } else { error.to_string() })?;
     let matches: Vec<FileResult> = msg.body().deserialize().map_err(|e| e.to_string())?;
     Ok(matches.into_iter().map(to_hit).collect())
 }
@@ -677,6 +692,7 @@ mod tests {
             self.0.send((folder.into(), "list".into())).unwrap();
             match folder {
                 "stall" => std::future::pending().await,
+                "old-daemon" => Err(zbus::fdo::Error::UnknownMethod("ListDirectory".into())),
                 "reject" => Err(zbus::fdo::Error::AccessDenied("folder unavailable".into())),
                 _ => Ok((
                     vec![(
@@ -1104,11 +1120,21 @@ mod tests {
                     backend.clone().list_directory("stall".into()).await.unwrap_err(),
                     "Folder listing timed out. Refresh to try again."
                 );
-                assert!(backend.clone().list_directory("reject".into()).await.is_err());
+                assert_eq!(
+                    backend.clone().list_directory("reject".into()).await.unwrap_err(),
+                    "Folder changed or is unavailable. Refresh or go back."
+                );
+                assert_eq!(
+                    backend.clone().list_directory("old-daemon".into()).await.unwrap_err(),
+                    "Folder navigation requires an updated daemon."
+                );
                 let (files, more) = backend.clone().list_directory("ready".into()).await.unwrap();
                 assert!(more);
                 assert_eq!(files[0].path.as_deref(), Some(std::path::Path::new("/synthetic/report.txt")));
-                assert_eq!(requests.try_iter().map(|(id, _)| id).collect::<Vec<_>>(), ["stall", "reject", "ready"]);
+                assert_eq!(
+                    requests.try_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+                    ["stall", "reject", "old-daemon", "ready"]
+                );
                 assert!(backend.search("report".into()).await.unwrap().is_some());
             };
             iced::futures::future::join(

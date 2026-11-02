@@ -1285,7 +1285,11 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 Ok(None) => return Task::none(),
                 Err(e) => {
                     s.files.clear();
-                    s.status = Status::Error(format!("File search unavailable: {e}"));
+                    s.status = Status::Error(if s.search_folder.is_some() {
+                        e
+                    } else {
+                        format!("File search unavailable: {e}")
+                    });
                 }
             }
             let had_panel = s.panel.is_some();
@@ -1952,6 +1956,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     let (msg, color) = match &s.status {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
+        Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
+            ("Loading folder…".into(), palette::DIM)
+        }
         Status::Searching => ("Searching…".to_string(), palette::DIM),
         Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
             if s.folder_more {
