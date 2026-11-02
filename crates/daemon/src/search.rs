@@ -32,6 +32,39 @@ impl Search {
             home: std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default(),
         }
     }
+    async fn indexed_file(&self, match_id: &str) -> zbus::fdo::Result<PathBuf> {
+        let path = path_from_url(match_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid file URL".into()))?;
+        let pool = self.pool.clone();
+        let p = path.clone();
+        zruntime::unblock(move || {
+            let known = pool.with(|r| r.lookup(&p)).map_err(|_| {
+                zbus::fdo::Error::AccessDenied("Cannot authorize file while index is unavailable".into())
+            })?;
+            if !known.is_some_and(|(_, meta)| meta.kind == Kind::File) {
+                return Err(zbus::fdo::Error::AccessDenied("path is not a regular indexed file".into()));
+            }
+            if !std::fs::symlink_metadata(&p).is_ok_and(|meta| meta.is_file()) {
+                return Err(zbus::fdo::Error::AccessDenied("file is no longer available".into()));
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(path)
+    }
+}
+
+fn applications_for_file(path: &Path) -> Vec<ferroseek_desktop::apps::App> {
+    let db = MimeDb::load_for_handlers();
+    let types = db.handler_types(&path.file_name().unwrap_or_default().to_string_lossy());
+    if types.is_empty() {
+        return Vec::new();
+    }
+    ferroseek_desktop::apps::file_handlers(
+        &ferroseek_desktop::apps::data_dirs(),
+        &ferroseek_desktop::apps::current_locales(),
+        &ferroseek_desktop::apps::current_desktops(),
+        &types,
+    )
 }
 
 /// `file://` URL with every byte outside RFC 3986 unreserved/`/` escaped,
@@ -111,6 +144,52 @@ impl Search {
                 .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
             let mime = mime.get_or_init(MimeDb::load);
             Ok(hits.iter().map(|h| to_result(h, mime, &home)).collect())
+        })
+        .await
+    }
+
+    /// Installed handlers declaring the indexed file's MIME type or a parent.
+    async fn applications(&self, match_id: String) -> zbus::fdo::Result<Vec<(String, String, String)>> {
+        let path = self.indexed_file(&match_id).await?;
+        zruntime::unblock(move || {
+            Ok(applications_for_file(&path)
+                .into_iter()
+                .map(|app| (app.id, app.name, app.icon.unwrap_or_default()))
+                .collect())
+        })
+        .await
+    }
+
+    /// Open one indexed file with a current installed handler, without
+    /// modifying the desktop's default application association.
+    async fn open_with(&self, match_id: String, application_id: String, token: String) -> zbus::fdo::Result<()> {
+        let path = self.indexed_file(&match_id).await?;
+        zruntime::unblock(move || {
+            let app =
+                applications_for_file(&path).into_iter().find(|app| app.id == application_id).ok_or_else(|| {
+                    zbus::fdo::Error::InvalidArgs(
+                        "Application is no longer available for this file. Reload the application list.".into(),
+                    )
+                })?;
+            let uri = file_url(&path);
+            let mut child = ferroseek_desktop::launch::launch_file(
+                &app,
+                &path,
+                &uri,
+                (!token.is_empty()).then_some(token.as_str()),
+            )
+            // A preparation/spawn error returns before a child is handed back.
+            // The selected application has not executed; an explicit retry is safe.
+            .map_err(|e| zbus::fdo::Error::SpawnExecFailed(e.to_string()))?;
+            // From here the child may already have opened the document, so a
+            // reaper failure must remain an unconfirmed dispatch to the client.
+            std::thread::Builder::new()
+                .name("reap-selected-opener".into())
+                .spawn(move || {
+                    let _ = child.wait();
+                })
+                .map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            Ok(())
         })
         .await
     }

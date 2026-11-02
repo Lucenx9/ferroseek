@@ -7,7 +7,7 @@
 //! majority of entries. Content sniffing is deliberately not done: it would
 //! mean reading files during a keystroke.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub struct MimeDb {
@@ -18,6 +18,7 @@ pub struct MimeDb {
     by_ext_cs: HashMap<String, (u32, String)>,
     by_name_cs: HashMap<String, (u32, String)>,
     generic: HashMap<String, String>,
+    related: HashMap<String, Vec<String>>,
 }
 
 fn data_dirs() -> Vec<std::path::PathBuf> {
@@ -40,6 +41,7 @@ impl MimeDb {
             by_ext_cs: HashMap::new(),
             by_name_cs: HashMap::new(),
             generic: HashMap::new(),
+            related: HashMap::new(),
         }
     }
 
@@ -59,6 +61,61 @@ impl MimeDb {
             }
         }
         db
+    }
+
+    /// Explicit chooser reads include current alias/subclass metadata. Ordinary
+    /// search icon lookups retain their existing cached, filename-only path.
+    pub fn load_for_handlers() -> MimeDb {
+        let mut db = Self::load();
+        let mut aliases = HashMap::new();
+        for dir in data_dirs().iter().rev() {
+            if let Ok(text) = std::fs::read_to_string(dir.join("mime/aliases")) {
+                for line in text.lines().filter(|line| !line.starts_with('#')) {
+                    let mut fields = line.split_whitespace();
+                    if let (Some(alias), Some(canonical)) = (fields.next(), fields.next()) {
+                        aliases.insert(alias.to_string(), canonical.to_string());
+                    }
+                }
+            }
+            if let Ok(text) = std::fs::read_to_string(dir.join("mime/subclasses")) {
+                for line in text.lines().filter(|line| !line.starts_with('#')) {
+                    let mut fields = line.split_whitespace();
+                    if let (Some(child), Some(parent)) = (fields.next(), fields.next()) {
+                        db.related.entry(child.to_string()).or_default().push(parent.to_string());
+                    }
+                }
+            }
+        }
+        // Aliases are equivalent in either direction; a later user alias
+        // replaces its system definition before reverse edges are constructed.
+        for (alias, canonical) in aliases {
+            db.related.entry(alias.clone()).or_default().push(canonical.clone());
+            db.related.entry(canonical).or_default().push(alias);
+        }
+        db
+    }
+
+    pub fn handler_types(&self, name: &str) -> Vec<String> {
+        let Some(mime) = self.mime_for(name) else { return Vec::new() };
+        let mut pending = vec![mime.to_string()];
+        let mut seen = HashSet::new();
+        let mut types = Vec::new();
+        while let Some(mime) = pending.pop() {
+            if !seen.insert(mime.clone()) {
+                continue;
+            }
+            if mime.starts_with("text/") && mime != "text/plain" {
+                pending.push("text/plain".into());
+            }
+            if !mime.starts_with("inode/") && mime != "application/octet-stream" {
+                pending.push("application/octet-stream".into());
+            }
+            if let Some(parents) = self.related.get(&mime) {
+                pending.extend(parents.iter().cloned());
+            }
+            types.push(mime);
+        }
+        types
     }
 
     pub fn add_globs2(&mut self, s: &str) {

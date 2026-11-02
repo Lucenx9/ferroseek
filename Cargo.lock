@@ -1015,6 +1015,7 @@ dependencies = [
 name = "ferroseek-daemon"
 version = "0.1.0"
 dependencies = [
+ "ferroseek-desktop",
  "ferroseek-engine",
  "ferroseek-index",
  "libc",
@@ -1032,6 +1033,13 @@ dependencies = [
  "tempfile",
  "toml",
  "toml_edit",
+]
+
+[[package]]
+name = "ferroseek-desktop"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]
@@ -1060,6 +1068,7 @@ dependencies = [
 name = "ferroseek-launcher"
 version = "0.1.0"
 dependencies = [
+ "ferroseek-desktop",
  "ferroseek-config",
  "ferroseek-engine",
  "freedesktop-icons",

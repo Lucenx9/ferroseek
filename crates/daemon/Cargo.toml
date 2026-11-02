@@ -11,6 +11,7 @@ name = "ferroseekd"
 path = "src/main.rs"
 
 [dependencies]
+ferroseek-desktop.workspace = true
 ferroseek-index.workspace = true
 ferroseek-engine.workspace = true
 zbus.workspace = true

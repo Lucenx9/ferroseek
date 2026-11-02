@@ -24,7 +24,8 @@ been published yet.
   when the application's `.desktop` file declares them.
 - Find files and folders by name or path in configured indexing roots.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
-- Open a file, reveal it in its folder or copy its path through keyboard actions.
+- Open a file with its default app or choose a compatible installed app; reveal
+  it in its folder or copy its path through keyboard actions.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
