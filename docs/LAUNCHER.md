@@ -483,6 +483,8 @@ FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/laun
 This mode also requires Python 3 with PyQt5, a C compiler, `wayland-scanner`,
 Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
 refuses sockets outside the isolated smoke-test namespace. Twenty opens verify
+typing with a US keymap; this disposable KWin permits the test input interface.
+The real desktop's interface permissions are never changed. The checks cover
 typing after the first redraw without clicking, editing after asynchronous
 results, action-filter focus and return to the main input, Escape/toggle and
 input returning to a background test application. PNGs, diagnostic logs and
