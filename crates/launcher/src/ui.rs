@@ -378,7 +378,10 @@ impl Launcher {
             .items
             .iter()
             .map(|item| {
-                let generic = crate::icons::generic_mime_icon(&item.icon);
+                let generic = match item.target {
+                    Target::File(ref f) if !f.is_dir => icons.generic_mime_icon(&item.icon),
+                    _ => None,
+                };
                 let file_fallbacks = [generic.as_deref().unwrap_or_default(), "text-x-generic", "unknown"];
                 let fallbacks: &[&str] = match item.target {
                     Target::App(_) => &["application-x-executable"],

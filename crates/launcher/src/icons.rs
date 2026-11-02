@@ -16,16 +16,19 @@ pub struct Icons {
     theme: String,
     size: u16,
     cache: HashMap<String, Option<Icon>>,
+    /// shared-mime-info `generic-icons` keyed by MIME icon name, read when
+    /// the first file row needs it.
+    generic: Option<HashMap<String, String>>,
 }
 
 impl Icons {
     pub fn new(size: u16) -> Icons {
-        Icons { theme: current_theme(), size, cache: HashMap::new() }
+        Icons { theme: current_theme(), size, cache: HashMap::new(), generic: None }
     }
 
     #[cfg(test)]
     pub fn disabled() -> Self {
-        Self { theme: String::new(), size: 0, cache: HashMap::new() }
+        Self { theme: String::new(), size: 0, cache: HashMap::new(), generic: Some(HashMap::new()) }
     }
 
     /// Icon for a theme name or an absolute file path, trying `fallbacks`
@@ -64,13 +67,34 @@ impl Icons {
         self.cache.insert(name.to_string(), icon.clone());
         icon
     }
+
+    /// The shared-mime-info generic icon for a MIME icon name missing from
+    /// the theme: the database entry (`application-pdf` →
+    /// `x-office-document`), else the media type's (`image-png` →
+    /// `image-x-generic`). Themes such as Adwaita ship only these.
+    pub fn generic_mime_icon(&mut self, name: &str) -> Option<String> {
+        let table = self.generic.get_or_insert_with(|| load_generic_icons(&crate::apps::data_dirs()));
+        if let Some(icon) = table.get(name) {
+            return Some(icon.clone());
+        }
+        let (media, _) = name.split_once('-')?;
+        Some(format!("{media}-x-generic"))
+    }
 }
 
-/// The shared-mime-info default for a MIME icon name missing from the theme
-/// (`image-png` → `image-x-generic`). Themes such as Adwaita ship only these.
-pub fn generic_mime_icon(name: &str) -> Option<String> {
-    let (media, _) = name.split_once('-')?;
-    Some(format!("{media}-x-generic"))
+/// `<data dir>/mime/generic-icons` lines `type/subtype:icon`, keyed like the
+/// daemon's icon names (`/` → `-`). Earlier data dirs take precedence.
+fn load_generic_icons(dirs: &[PathBuf]) -> HashMap<String, String> {
+    let mut table = HashMap::new();
+    for dir in dirs {
+        let Ok(text) = std::fs::read_to_string(dir.join("mime/generic-icons")) else { continue };
+        for (mime, icon) in text.lines().filter_map(|line| line.split_once(':')) {
+            if !icon.is_empty() {
+                table.entry(mime.replace('/', "-")).or_insert_with(|| icon.to_string());
+            }
+        }
+    }
+    table
 }
 
 fn load(p: &Path) -> Option<Icon> {
@@ -128,12 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn mime_icons_fall_back_to_their_media_type() {
-        assert_eq!(generic_mime_icon("image-png").as_deref(), Some("image-x-generic"));
-        assert_eq!(
-            generic_mime_icon("application-vnd.oasis.opendocument.text").as_deref(),
-            Some("application-x-generic")
-        );
-        assert_eq!(generic_mime_icon("unknown"), None);
+    fn mime_icons_use_the_database_generic_icon_then_their_media_type() {
+        let temp = tempfile::tempdir().unwrap();
+        let (user, system) = (temp.path().join("user"), temp.path().join("system"));
+        for (dir, text) in [
+            (&user, "application/pdf:x-office-document\n"),
+            (&system, "application/pdf:text-x-generic\napplication/zip:package-x-generic\nbroken\n"),
+        ] {
+            std::fs::create_dir_all(dir.join("mime")).unwrap();
+            std::fs::write(dir.join("mime/generic-icons"), text).unwrap();
+        }
+        let mut icons = Icons { generic: Some(load_generic_icons(&[user, system])), ..Icons::disabled() };
+        assert_eq!(icons.generic_mime_icon("application-pdf").as_deref(), Some("x-office-document"), "user dir wins");
+        assert_eq!(icons.generic_mime_icon("application-zip").as_deref(), Some("package-x-generic"));
+        assert_eq!(icons.generic_mime_icon("image-png").as_deref(), Some("image-x-generic"));
+        assert_eq!(icons.generic_mime_icon("unknown"), None);
     }
 }
