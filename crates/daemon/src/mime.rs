@@ -112,7 +112,7 @@ impl MimeDb {
             if line.starts_with('#') {
                 continue;
             }
-            let mut it = line.splitn(4, ':');
+            let mut it = line.split(':');
             let (Some(w), Some(mime), Some(glob)) = (it.next(), it.next(), it.next()) else { continue };
             let Ok(weight) = w.parse::<u32>() else { continue };
             let cs = it.next().is_some_and(|f| f.split(',').any(|x| x == "cs"));
@@ -182,6 +182,18 @@ mod tests {
         );
         d.generic.insert("application/x-compressed-tar".into(), "package-x-generic".into());
         d
+    }
+
+    #[test]
+    fn extra_globs2_fields_preserve_case_sensitive_flags() {
+        let mut d = MimeDb::empty();
+        d.add_globs2("50:text/x-upper:*.UPPER:cs,future:extension\n50:text/x-literal:README:cs:extension\n");
+        assert_eq!(d.mime_for("sample.UPPER"), Some("text/x-upper"));
+        assert_eq!(d.mime_for("sample.upper"), None);
+        assert_eq!(d.mime_for("README"), Some("text/x-literal"));
+        assert_eq!(d.mime_for("readme"), None);
+        assert_eq!(d.icon_for("sample.upper"), "unknown");
+        assert!(d.handler_types("sample.upper").is_empty());
     }
 
     #[test]
