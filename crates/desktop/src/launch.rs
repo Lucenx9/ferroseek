@@ -100,7 +100,9 @@ pub fn launch_file(app: &App, path: &Path, uri: &str, token: Option<&str>) -> io
 fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::Result<std::process::Child> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(token) = token {
+    // Startup context is single-use; only this operation's context may escape.
+    cmd.env_remove("XDG_ACTIVATION_TOKEN").env_remove("DESKTOP_STARTUP_ID");
+    if let Some(token) = token.filter(|token| !token.is_empty()) {
         cmd.env("XDG_ACTIVATION_TOKEN", token);
     }
     // Its own process group: a signal to the launcher's group (e.g. ^C in
