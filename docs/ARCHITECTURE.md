@@ -281,7 +281,10 @@ regular directory and applies SearchOptions.within to the existing ranked search
 The explicit folder URL remains separate from query syntax. In folder contexts,
 empty queries call ListDirectory; two or more characters call SearchWithin.
 Normal/scoped searches and directory lists share queued search coalescing and the
-existing read deadline. Captured context/query generations reject late responses.
+existing read deadline. These requests enter the channel synchronously when the UI
+constructs their completion futures, so executor polling order cannot discard a
+newer intent in favor of an older one. Captured context/query generations reject
+late responses.
 
 A bounded in-memory return stack preserves query, global filter, folder, list,
 truncation and selected identity. Returning shows and refreshes that snapshot.

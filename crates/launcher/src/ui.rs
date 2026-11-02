@@ -719,16 +719,12 @@ impl Launcher {
                 result,
             });
         }
-        Task::perform(
-            async move {
-                if let Some(folder) = folder {
-                    backend.search_within(folder, query).await
-                } else {
-                    backend.search(query).await
-                }
-            },
-            move |result| Message::Files { generation, result },
-        )
+        let deliver = move |result| Message::Files { generation, result };
+        if let Some(folder) = folder {
+            Task::perform(backend.search_within(folder, query), deliver)
+        } else {
+            Task::perform(backend.search(query), deliver)
+        }
     }
 
     fn refresh_folder(&mut self) -> Task<Message> {

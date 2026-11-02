@@ -522,8 +522,10 @@ results, action-filter focus and return to the main input, Escape/toggle and
 input returning to a background test application. PNGs, diagnostic logs and
 `latency.json` remain in the output directory. It also opens a synthetic
 single-instance application, moves input to another test app, and reactivates
-the existing target. Token presence and activation acknowledgement are followed
-by actual text input in the target; an acknowledgement alone is insufficient.
+the existing target through both Enter and a result-row double click. A persistent
+synthetic input device keeps the isolated seat capabilities present. Token presence
+and activation acknowledgement are followed by actual text input in the target;
+an acknowledgement alone is insufficient.
 Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Local timing diagnostics

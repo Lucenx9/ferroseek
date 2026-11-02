@@ -558,12 +558,16 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
-    pub async fn list_directory(self, folder: String) -> Result<(Vec<FileHit>, bool), String> {
+    pub fn list_directory(self, folder: String) -> impl Future<Output = Result<(Vec<FileHit>, bool), String>> {
         let (reply, rx) = oneshot::channel();
-        self.tx
+        let sent = self
+            .tx
             .unbounded_send(Request::ListDirectory { folder, reply })
-            .map_err(|_| "bus thread stopped".to_string())?;
-        rx.await.map_err(|_| "bus thread stopped".to_string())?
+            .map_err(|_| "bus thread stopped".to_string());
+        async move {
+            sent?;
+            rx.await.map_err(|_| "bus thread stopped".to_string())?
+        }
     }
 
     pub async fn text_preview(self, id: String, validity: PreviewRequest) -> Result<PreviewData, String> {
@@ -615,22 +619,35 @@ impl Backend {
 
     /// File results for `query`; `Err` if the daemon is unreachable. A
     /// superseded search resolves to `Ok(None)`.
-    pub async fn search(self, query: String) -> Result<Option<Vec<FileHit>>, String> {
-        self.search_in(None, query).await
+    pub fn search(self, query: String) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
+        self.search_in(None, query)
     }
 
-    pub async fn search_within(self, folder: String, query: String) -> Result<Option<Vec<FileHit>>, String> {
-        self.search_in(Some(folder), query).await
+    pub fn search_within(
+        self,
+        folder: String,
+        query: String,
+    ) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
+        self.search_in(Some(folder), query)
     }
 
-    async fn search_in(self, folder: Option<String>, query: String) -> Result<Option<Vec<FileHit>>, String> {
+    fn search_in(
+        self,
+        folder: Option<String>,
+        query: String,
+    ) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
         let (reply, rx) = oneshot::channel();
-        self.tx
+        // Preserve UI intent order even when completion futures are polled out of order.
+        let sent = self
+            .tx
             .unbounded_send(Request::Search { query, folder, reply })
-            .map_err(|_| "bus thread stopped".to_string())?;
-        match rx.await {
-            Ok(r) => r.map(Some),
-            Err(oneshot::Canceled) => Ok(None),
+            .map_err(|_| "bus thread stopped".to_string());
+        async move {
+            sent?;
+            match rx.await {
+                Ok(r) => r.map(Some),
+                Err(oneshot::Canceled) => Ok(None),
+            }
         }
     }
 
