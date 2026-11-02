@@ -29,8 +29,9 @@ published release or verified compatibility with every Linux desktop.
   search state through loading, refresh, errors and cancellation.
 - [ ] Add bounded previews for selected supported formats with explicit loading,
   unsupported and error states.
-- [ ] Navigate into folders and back without losing the previous query,
-  search scope or selection.
+- [x] Search within indexed folders and subfolders; restore previous queries,
+  search scopes and selections when returning.
+- [ ] Browse immediate folder contents while preserving navigation state.
 - [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,
   size and position. Keep focus, navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
@@ -40,7 +41,7 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then file previews; folder navigation; quicklinks and keyword
+then file previews; immediate folder browsing; quicklinks and keyword
 commands. Each interaction change needs keyboard, pointer, long-label and
 asynchronous/error checks, plus inspection of rendered UI.
 

@@ -23,6 +23,7 @@ been published yet.
 - Run application actions such as new or private windows from the actions menu,
   when the application's `.desktop` file declares them.
 - Find files and folders by name or path in configured indexing roots.
+- Search inside a selected indexed folder and its subfolders; return to the previous search.
 - Inspect an indexed file's full location, type, current size and modification time.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal

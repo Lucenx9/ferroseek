@@ -1342,7 +1342,10 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         let path = folder.path.as_deref().and_then(|path| path.to_str()).unwrap_or(&folder.id);
         let location = widget::tooltip(
             text(ellipsize_middle(path, 62)).size(11).color(palette::DIM),
-            container(text(path).size(12)).padding(8).style(surface_style),
+            container(text(path).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                .padding(8)
+                .max_width(600)
+                .style(surface_style),
             widget::tooltip::Position::Bottom,
         );
         column![
@@ -1643,6 +1646,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching => ("Searching…".to_string(), palette::DIM),
+        Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => {
+            ("Folder search".into(), palette::DIM)
+        }
         Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
             ("Calculator".to_string(), palette::DIM)
         }
@@ -1660,6 +1666,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         hints = hints.push(hint("Enter", acts[0].label()));
         if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
+        }
+        if acts.contains(&Action::SearchFolder) {
+            hints = hints.push(hint("Ctrl+→", "Search here"));
         }
         hints = hints.push(
             button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(

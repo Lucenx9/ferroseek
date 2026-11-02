@@ -246,6 +246,15 @@ transactional policy path. Pause, throttling and other settings are retained.
 The launcher's policy read checks the current unique bus owner to avoid service
 activation during first-run editing; explicit Save & apply may activate it.
 
+`Search1.SearchWithin(folder_url, query)` validates a currently indexed live
+regular directory and applies `SearchOptions.within` to the existing ranked
+index search. The explicit folder URL remains separate from query syntax and
+never falls back to global search. It does not list filesystem contents or
+change the index schema. Normal and scoped queries share the launcher's queued
+search coalescing and read deadline. Captured query/folder pairs and generations
+protect responses; a bounded in-memory return stack preserves query, global
+filter, result snapshot and selection. Returning refreshes that snapshot.
+
 `Search1.FileDetails(file_url)` returns MIME type (empty when unknown), current
 size in bytes and signed modification seconds since the Unix epoch. It validates
 an indexed regular file and reads current filesystem attributes in a blocking
