@@ -682,7 +682,7 @@ mod tests {
                 assert_eq!(opened_rx.try_recv().unwrap().1, "reject");
                 for application in ["first.desktop", "second.desktop"] {
                     assert!(matches!(
-                        backend.run_with("file:///synthetic/report.txt".into(), application.into()).await,
+                        backend.clone().run_with("file:///synthetic/report.txt".into(), application.into()).await,
                         Err(RunError::Failed(_))
                     ));
                     assert_eq!(opened_rx.try_recv().unwrap().1, application);
