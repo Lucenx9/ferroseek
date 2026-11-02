@@ -175,7 +175,9 @@ for q in "${QUERIES[@]}"; do
     for _ in $(seq 100); do has_owner io.github.ferroseek.Launcher && break; sleep 0.05; done
     sleep 1.5
     kill -0 "$LPID" 2>/dev/null || fail "launcher exited for query '$q'"
-    timeout 15 spectacle -b -n -f -o "$OUT/query-$i.png" > /dev/null 2>&1 || fail "screenshot failed"
+    XDG_DATA_DIRS=/usr/local/share:/usr/share \
+        timeout 15 spectacle -b -n -f -o "$OUT/query-$i.png" > "$OUT/query-$i.png.log" 2>&1 || fail "screenshot failed"
+    [[ -s "$OUT/query-$i.png" ]] || fail "capture tool returned without an image; inspect query-$i.png.log"
     echo "== '$q': $OUT/query-$i.png"
     timeout 5 "$BIN_DIR/ferroseek-launcher" || fail "toggle invocation failed"
     for _ in $(seq 40); do kill -0 "$LPID" 2>/dev/null || break; sleep 0.05; done

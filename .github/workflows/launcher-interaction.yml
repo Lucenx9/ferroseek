@@ -38,6 +38,13 @@ jobs:
           export FERROSEEK_SMOKE_INTERACTION=1
           export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
           xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
+      - name: Exercise screenshot-only smoke mode
+        run: |
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_LOGGING_RULES='*.debug=false'
+          export FERROSEEK_SMOKE_INTERACTION=0
+          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
+          xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction/screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:

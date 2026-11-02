@@ -625,9 +625,9 @@ The isolated graphical harness measures the release launcher and real daemon
 together. It generates 10,007 synthetic files, waits for indexing to finish,
 and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and
 a private bus with no activation services. Launcher processes use `--private`,
-so history and favorites are disabled. Current profiles isolate application data
-to synthetic entries and staged screenshot-authorization metadata; historical runs
-below identify their earlier runner-application workload. A separate test window establishes
+so history and favorites are disabled. Current launcher/daemon application data
+contains synthetic entries only; KWin and Spectacle separately read fixed system
+resources. Historical runs below identify their earlier runner-application workload. A separate test window establishes
 keyboard input before the launcher and receives input again after it closes.
 Test-only Wayland fake input types `report` into the real search widget, edits
 the action filter and returns to the main field. No UI messages are injected.
