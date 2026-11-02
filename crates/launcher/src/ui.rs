@@ -4273,6 +4273,71 @@ mod tests {
     }
 
     #[test]
+    fn closing_aborts_deferred_file_actions() {
+        for route in [Action::Open, Action::Reveal, Action::OpenWith] {
+            for close in ["escape", "toggle", "drop", "complete"] {
+                let mut s = search_state();
+                let _ = update(&mut s, Message::Query("report".into()));
+                let generation = s.generation;
+                let files = file_hits();
+                let target = Target::File(files[0].clone());
+                let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files)) });
+                let _ = update(&mut s, Message::Selected(target));
+                let task = if route == Action::OpenWith {
+                    let _ = s.perform(route);
+                    let generation = s.application_generation;
+                    let _ = update(
+                        &mut s,
+                        Message::ApplicationsLoaded {
+                            generation,
+                            result: Ok(vec![crate::backend::ApplicationChoice {
+                                id: "chosen.desktop".into(),
+                                name: "Chosen".into(),
+                                icon: String::new(),
+                            }]),
+                        },
+                    );
+                    command(&mut s, Command::Activate)
+                } else {
+                    s.perform(route)
+                };
+                if close == "escape" {
+                    // Close chooser, clear query, then close the launcher.
+                    for _ in 0..3 {
+                        let _ = command(&mut s, Command::Back);
+                    }
+                } else if close == "toggle" {
+                    let _ = update(&mut s, Message::Ui(UiEvent::Toggle));
+                }
+                let mut state = Some(s);
+                if close == "drop" {
+                    drop(state.take());
+                }
+                let output = iced::futures::executor::block_on(async {
+                    if let Some(stream) = iced_runtime::task::into_stream(task) {
+                        stream.collect::<Vec<_>>().await
+                    } else {
+                        Vec::new()
+                    }
+                });
+                if close == "complete" {
+                    assert_eq!(output.len(), 1, "control must observe backend failure");
+                    let state = state.as_mut().unwrap();
+                    for action in output {
+                        if let iced_runtime::Action::Output(message) = action {
+                            let _ = update(state, message);
+                        }
+                    }
+                    assert!(state.opening.is_none());
+                    assert!(matches!(state.status, Status::Error(_)));
+                } else {
+                    assert!(output.is_empty(), "closing must cancel {route:?} before submission ({close})");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn application_tasks_preserve_the_target_and_respect_closing() {
         let case = std::env::var("FERROSEEK_TEST_CANCEL_APP");
         let Ok(case) = case else {
