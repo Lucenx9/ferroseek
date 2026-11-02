@@ -437,7 +437,7 @@ ferroseek-launcher
 - No XDG activation token is passed to launched applications:
   `iced_layershell` 0.19 does not expose the layer surface needed to request
   one. Focus of the new window is left to the compositor's policy.
-- The window is 720 px wide normally and 980 px with preview enabled, near the
+- The window is 720 px wide normally and 980 px while the preview sidebar is visible, near the
   top of the active output. Its size/position are not configurable; there is no
   light theme yet.
 
