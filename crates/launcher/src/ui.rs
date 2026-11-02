@@ -12,7 +12,7 @@ use iced::mouse::{self, ScrollDelta};
 use iced::widget::{
     self, Id, button, column, container, image, mouse_area, row, scrollable, space, stack, svg, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Length, Shadow, Subscription, Task, Theme, Vector, padding};
+use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme, padding};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
@@ -2206,8 +2206,8 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         background: Some(Background::Color(palette::RAISED)),
         border: Border { color: palette::BORDER, width: 1.0, radius: 10.0.into() },
         text_color: Some(palette::TEXT),
-        // Lifts the panel off the identical results behind it.
-        shadow: Shadow { color: Color::from_rgba8(0, 0, 0, 0.45), offset: Vector::new(0.0, 6.0), blur_radius: 18.0 },
+        // No shadow: iced_tiny_skia 0.14 paints it unclipped on partial redraws
+        // (cursor blink), darkening the panel. RAISED and the border lift it.
         ..Default::default()
     });
     container(panel)
