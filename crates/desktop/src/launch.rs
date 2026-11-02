@@ -117,7 +117,11 @@ fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::R
 }
 
 fn in_path(prog: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(prog).is_file()))
+    use std::os::unix::fs::PermissionsExt;
+    std::env::var_os("PATH").is_some_and(|p| {
+        std::env::split_paths(&p)
+            .any(|d| d.join(prog).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+    })
 }
 
 fn systemd_run_available() -> bool {
@@ -164,6 +168,31 @@ mod tests {
         assert_eq!(&s[..6], ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--slice=app.slice"]);
         assert!(s[6].starts_with("--unit=app-ferroseek-org.ex.T_1-"));
         assert_eq!(&s[7..], ["--", "prog", "--x"]);
+    }
+
+    #[test]
+    fn terminal_detection_skips_non_executable_programs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CASE: &str = "FERROSEEK_TEST_TERMINAL_PATH";
+        if std::env::var_os(CASE).is_some() {
+            assert_eq!(terminal_command(), Some(vec!["konsole".into(), "-e".into()]));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let stub = temp.path().join("xdg-terminal-exec");
+        std::fs::write(&stub, "not executable").unwrap();
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let terminal = temp.path().join("konsole");
+        std::fs::write(&terminal, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&terminal, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "launch::tests::terminal_detection_skips_non_executable_programs"])
+            .env(CASE, "1")
+            .env("PATH", temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]
