@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -63,6 +64,7 @@ def main():
     probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
     processes = [probe_process]
     samples = []
+    activation_log = out / "activation-target.jsonl"
 
     def keys(*codes):
         subprocess.run([str(helper), *map(str, codes)], check=True, timeout=5)
@@ -151,6 +153,52 @@ def main():
                 tap(14)
                 wait_for(lambda: {"text": ""} in records(probe_log), "probe reset")
 
+        # Launch a real single-instance target, then reactivate it from another app.
+        target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
+        entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"
+        entry.write_text("[Desktop Entry]\nType=Application\nName=Activation Probe\n"
+                         f'Exec="{sys.executable}" "{target}"\n')
+        serving_pid = None
+        for existing in [False, True]:
+            if existing:
+                # A new unrelated window must own input before requesting the target again.
+                background = out / "activation-background.jsonl"
+                background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
+                processes.append(background_process)
+                wait_for(lambda: records(background), "second background window")
+                tap(44)
+                wait_for(lambda: {"text": "z"} in records(background), "unrelated window owns input")
+            log = out / ("activate-existing.jsonl" if existing else "activate-new.jsonl")
+            with log.open("w") as stream:
+                process = subprocess.Popen(
+                    [str(binary), "--private", "--query", "activation"], stdout=stream, stderr=stream,
+                    env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
+                         "FERROSEEK_ACTIVATION_LOG": str(activation_log), "GSK_RENDERER": "cairo"},
+                )
+                processes.append(process)
+                wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")
+                tap(28)  # Enter is the actual activation input.
+                assert process.wait(timeout=5) == 0
+                starts = wait_for(lambda: [r for r in records(activation_log) if r.get("event") == "started"],
+                                  "target process started")
+                if existing:
+                    starts = wait_for(lambda: (s if len(s := [r for r in records(activation_log)
+                                                              if r.get("event") == "started"]) == 2 else None),
+                                      "single-instance client started")
+                assert starts[-1]["token_present"], "user-triggered launch must receive a fresh activation token"
+                activated = wait_for(lambda: (a if len(a := [r for r in records(activation_log)
+                                                            if r.get("event") == "activated"]) >= (2 if existing else 1)
+                                             else None), "application accepted activation")
+                if existing:
+                    assert activated[-1]["pid"] == serving_pid, "reactivate the existing instance"
+                else:
+                    serving_pid = activated[-1]["pid"]
+                tap(44)
+                expected = "zz" if existing else "z"
+                wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
+                                     for r in records(activation_log)), "chosen application owns keyboard focus")
+                capture("activation-existing.png" if existing else "activation-new.png")
+
         def summary(values):
             values = sorted(values)
             return {"n": len(values), "p50_us": values[math.ceil(len(values) * .5) - 1],
@@ -168,6 +216,13 @@ def main():
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
     finally:
+        for pid in {r["pid"] for r in records(activation_log) if r.get("event") == "started"}:
+            try:
+                command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                if b"launcher-activation-probe.py" in command:
+                    os.kill(pid, signal.SIGTERM)
+            except (FileNotFoundError, ProcessLookupError):
+                pass
         for process in reversed(processes):
             if process.poll() is None:
                 process.terminate()
