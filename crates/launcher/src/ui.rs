@@ -1191,6 +1191,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 && let Some(panel) = &mut s.application_picker
             {
                 panel.loaded(result, &mut s.icons);
+                timing::event("applications_loaded");
                 return widget::operation::focus(open_with::input_id());
             }
             Task::none()
@@ -1203,6 +1204,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 return Task::none();
             }
             let Some(panel) = &mut s.application_picker else { return Task::none() };
+            if matches!(event, open_with::Event::Query(_)) {
+                timing::event("application_input");
+            }
             let effect = panel.event(event);
             s.application_effect(effect)
         }

@@ -84,10 +84,10 @@ def main():
         subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
                        check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def owner():
+    def owner(name="io.github.ferroseek.Launcher"):
         result = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
                                  "--object-path", "/org/freedesktop/DBus", "--method",
-                                 "org.freedesktop.DBus.NameHasOwner", "io.github.ferroseek.Launcher"],
+                                 "org.freedesktop.DBus.NameHasOwner", name],
                                 check=True, capture_output=True, text=True, timeout=5)
         return "true" in result.stdout
 
@@ -165,7 +165,7 @@ def main():
         target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
         entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"
         entry.write_text("[Desktop Entry]\nType=Application\nName=Activation Probe\n"
-                         f'Exec="{sys.executable}" "{target}"\n')
+                         f'Exec="{sys.executable}" "{target}" %f\nMimeType=text/plain;\n')
         serving_pid = None
         for activation_number, mode in enumerate(["new", "existing", "pointer"], start=1):
             existing = mode != "new"
@@ -214,6 +214,93 @@ def main():
                 expected = "z" * activation_number
                 wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
                                      for r in records(activation_log)), "chosen application owns keyboard focus")
+                capture(f"activation-{mode}.png")
+
+        # File actions use a fresh target process, then reactivate that instance.
+        assert b"launcher-activation-probe.py" in Path(f"/proc/{serving_pid}/cmdline").read_bytes()
+        os.kill(serving_pid, signal.SIGTERM)
+        wait_for(lambda: not owner("org.ferroseek.ActivationProbe"), "application target closed")
+        document = Path(os.environ["HOME"]) / "Corpus/Documents" / (
+            "focus-document with a deliberately long descriptive filename for activation checks.txt")
+        document.write_text("Synthetic activation document\n")
+        mime = Path(os.environ["XDG_DATA_HOME"]) / "mime"
+        mime.mkdir(exist_ok=True)
+        (mime / "globs2").write_text("50:text/plain:*.txt\n")
+
+        def indexed_document():
+            result = subprocess.run(["gdbus", "call", "--session", "--dest", "io.github.ferroseek.FerroSeek",
+                                     "--object-path", "/io/github/ferroseek/Search", "--method",
+                                     "io.github.ferroseek.Search1.Search", "focus-document"],
+                                    capture_output=True, text=True, timeout=5)
+            return result.returncode == 0 and document.name in result.stdout
+
+        wait_for(indexed_document, "new document indexed")
+        for number, mode in enumerate(["file-new", "file-existing", "file-with", "file-pointer", "file-reveal"], 1):
+            background = out / f"activation-background-{mode}.jsonl"
+            background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
+            processes.append(background_process)
+            wait_for(lambda: records(background), "file-action background window")
+            tap(44)
+            wait_for(lambda: {"text": "z"} in records(background), "file-action background owns input")
+            before_starts = len([r for r in records(activation_log) if r.get("event") == "started"])
+            log = out / f"activate-{mode}.jsonl"
+            with log.open("w") as stream:
+                process = subprocess.Popen([str(binary), "--private", "--query", "focus-document"],
+                                           stdout=stream, stderr=stream,
+                                           env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
+                processes.append(process)
+                wait_for(lambda: any(r.get("event") == "query_frame" and r.get("files") == 1
+                                     for r in records(log)), "indexed document selected")
+                if mode == "file-with":
+                    chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
+                    for code in [17, 23, 20, 35]:
+                        tap(code)
+                    wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 4,
+                             "Open with action filtered")
+                    tap(28)
+                    wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
+                             "document handlers loaded")
+                    for code in [30, 46, 20, 23, 47, 30, 20, 23, 24, 49]:  # activation
+                        tap(code)
+                    wait_for(lambda: len([r for r in records(log) if r.get("event") == "application_input"]) == 10,
+                             "chosen handler filtered")
+                    capture("activation-file-with-selection.png")
+                    tap(28)
+                elif mode == "file-pointer":
+                    capture("activation-file-pointer-selection.png")
+                    subprocess.run([str(helper), "--double-click", "400", "295"], check=True, timeout=5)
+                elif mode == "file-reveal":
+                    wait_for(lambda: owner("org.freedesktop.FileManager1"), "synthetic file manager registered")
+                    chord(29, 28)
+                else:
+                    tap(28)
+                assert process.wait(timeout=5) == 0
+                if mode == "file-reveal":
+                    revealed = wait_for(lambda: [r for r in records(activation_log) if r.get("event") == "revealed"],
+                                        "file manager accepted reveal")[-1]
+                    assert revealed["uris"] == [document.as_uri()]
+                    assert revealed["token_present"], "reveal must forward this operation's activation token"
+                    assert revealed["pid"] == serving_pid
+                else:
+                    starts = wait_for(lambda: (rows if len(rows := [r for r in records(activation_log)
+                                                                   if r.get("event") == "started"]) > before_starts
+                                               else None), "document handler started")
+                    assert starts[-1]["arguments"] == [str(document)], "preserve the selected document argument"
+                    assert starts[-1]["token_present"], "file action must receive a fresh activation token"
+                    opened = wait_for(lambda: (rows if len(rows := [r for r in records(activation_log)
+                                                                   if r.get("event") == "opened"]) >= number
+                                               else None), "document delivered to application")
+                    assert opened[-1]["uris"] == [document.as_uri()]
+                    if mode == "file-new":
+                        serving_pid = opened[-1]["pid"]
+                    assert opened[-1]["pid"] == serving_pid, "reuse the existing document handler"
+                wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
+                                     and r.get("activation") == number and r.get("pid") == serving_pid
+                                     for r in records(activation_log)), "document target activated")
+                tap(44)
+                wait_for(lambda: any(r.get("event") == "input" and r.get("text") == "z" * number
+                                     and r.get("pid") == serving_pid for r in records(activation_log)),
+                         "document target owns keyboard focus")
                 capture(f"activation-{mode}.png")
 
         def summary(values):
