@@ -23,9 +23,10 @@ published release or verified compatibility with every Linux desktop.
   tokens where supported.
 - [x] Dedicated FerroSeek daemon search/open interface, independent replies for
   concurrent clients, and removal of Noctalia/KRunner adapters.
-- [ ] Add file details and **Open with** actions; preserve the selected file
-  while loading details or available applications. Add bounded previews for
-  selected supported formats with explicit loading, unsupported and error states.
+- [x] Choose a compatible installed application for an indexed file without
+  changing defaults; preserve the selected file through asynchronous updates.
+- [ ] Add file details and bounded previews for selected supported formats with
+  explicit loading, unsupported and error states.
 - [ ] Navigate into folders and back without losing the previous query,
   search scope or selection.
 - [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,

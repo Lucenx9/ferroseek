@@ -258,6 +258,7 @@ pub fn build_items(apps: &[App], app_hits: &[(usize, u32)], files: &[FileHit]) -
 pub enum Action {
     Launch,
     Open,
+    OpenWith,
     Reveal,
     CopyPath,
     CopyName,
@@ -275,6 +276,7 @@ impl Action {
         match self {
             Action::Launch => "Launch",
             Action::Open => "Open",
+            Action::OpenWith => "Open with…",
             Action::Reveal => "Show in folder",
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
@@ -299,6 +301,7 @@ impl Action {
             return Some(matcher::EXACT);
         }
         let aliases: &[&str] = match self {
+            Self::OpenWith => &["application", "choose app", "handler"],
             Self::Reveal => &["reveal", "directory", "parent"],
             Self::CopyName => &["filename", "title"],
             Self::CopyPath => &["location"],
@@ -319,6 +322,7 @@ impl Action {
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::CopyName
+            | Action::OpenWith
             | Action::ResetRanking
             | Action::AddFavorite
             | Action::RemoveFavorite
@@ -340,6 +344,9 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
+    }
+    if matches!(t, Target::File(FileHit { path: Some(_), is_dir: false, .. })) {
+        actions.push(Action::OpenWith);
     }
     actions
 }
@@ -1045,7 +1052,8 @@ mod tests {
                 Action::CopyPath,
                 Action::CopyName,
                 Action::ResetRanking,
-                Action::AddFavorite
+                Action::AddFavorite,
+                Action::OpenWith
             ]
         );
         let mut odd = file("a", false);
@@ -1059,12 +1067,13 @@ mod tests {
         assert_eq!(secondary_action(&calculator), Some(Action::UseResult));
         assert_eq!(secondary_action(&f), Some(Action::Reveal));
         assert_eq!(secondary_action(&actions_for(&Target::App(0), false)), None);
-        for target in [Target::App(0), Target::File(file("a", false))] {
-            let add = actions_for(&target, false);
+        for (target, favorite_slot) in [(Target::App(0), 3), (Target::File(file("a", false)), 5)] {
+            let mut add = actions_for(&target, false);
             let remove = actions_for(&target, true);
-            assert_eq!(add.last(), Some(&Action::AddFavorite));
-            assert_eq!(remove.last(), Some(&Action::RemoveFavorite));
-            assert_eq!(&add[..add.len() - 1], &remove[..remove.len() - 1]);
+            assert_eq!(add[favorite_slot], Action::AddFavorite);
+            assert_eq!(remove[favorite_slot], Action::RemoveFavorite);
+            add[favorite_slot] = Action::RemoveFavorite;
+            assert_eq!(add, remove, "toggling favorites changes no other action or numbered position");
         }
     }
 
@@ -1115,6 +1124,7 @@ mod tests {
         for action in [
             Action::Launch,
             Action::Open,
+            Action::OpenWith,
             Action::Reveal,
             Action::CopyPath,
             Action::CopyName,

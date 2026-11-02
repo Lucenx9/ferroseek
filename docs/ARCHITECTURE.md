@@ -23,6 +23,7 @@ decisions and historical measurements are retained with their evidence.
 | crate | kind | responsibility |
 |---|---|---|
 | `crates/index` (`ferroseek-index`) | lib | SQLite store: schema, versioning and recovery, the tree mutation transaction, search and ranking |
+| `crates/desktop` (`ferroseek-desktop`) | lib | shared pure-Rust desktop entry parsing, file-handler discovery and argument-safe launches |
 | `crates/config` (`ferroseek-config`) | lib | pure-Rust config/XDG validation and folder-only atomic settings edits |
 | `crates/engine` (`ferroseek-engine`) | lib | exclusions, mount policy, scanner (reconciliation), inotify watcher, indexing pipeline (batching, pause, throttle, status) |
 | `crates/daemon` (`ferroseekd`) | bin | process lifecycle, D-Bus control, file search and opening |
@@ -244,6 +245,17 @@ its active exclusions. Removed roots/watches are dropped through the existing
 transactional policy path. Pause, throttling and other settings are retained.
 The launcher's policy read checks the current unique bus owner to avoid service
 activation during first-run editing; explicit Save & apply may activate it.
+
+`Search1` also exposes `Applications(file_url)` as desktop ID/name/icon tuples
+and `OpenWith(file_url, desktop_id, token)`. Both validate an available regular
+indexed file; OpenWith resolves eligible desktop entries again before dispatch.
+The client sends an application ID, never an executable or desktop-file path.
+The shared desktop crate retains the existing parser and launch wrappers; file
+field codes expand to raw OS paths or percent-encoded URIs without a shell.
+Document opens use separate, uniquely named application scopes and a reaper.
+No default association is written, and the original Search/Open API is unchanged.
+The launcher owns cached matching labels and the chooser's captured file identity;
+it still never opens the index.
 
 D-Bus activation uses `io.github.ferroseek.FerroSeek.service`, optionally backed
 by `ferroseek.service`. The installer reloads bus registrations without

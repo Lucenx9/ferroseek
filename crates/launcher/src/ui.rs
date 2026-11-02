@@ -24,6 +24,7 @@ use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
+use crate::open_with;
 use crate::usage::{self, Kind, Usage};
 
 pub const WIDTH: u32 = 720;
@@ -184,6 +185,8 @@ pub struct Launcher {
     clicks: ClickTracker,
     panel: Option<Panel>,
     search_status: Option<SearchStatusPanel>,
+    application_picker: Option<open_with::Panel>,
+    application_generation: u64,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -200,6 +203,8 @@ pub enum Message {
     Query(String),
     Scope(Scope),
     ActionQuery(String),
+    ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
+    OpenWith { generation: u64, event: open_with::Event },
     ShowSearchStatus,
     ShowFolders,
     FolderShortcut(folders::Shortcut),
@@ -283,6 +288,8 @@ fn boot() -> (Launcher, Task<Message>) {
         clicks: ClickTracker::default(),
         panel: None,
         search_status: None,
+        application_picker: None,
+        application_generation: 0,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -408,6 +415,7 @@ impl Launcher {
             && self.items.is_empty()
             && self.search_status.is_none()
             && self.folder_settings.is_none()
+            && self.application_picker.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -424,7 +432,8 @@ impl Launcher {
     fn perform(&mut self, action: Action) -> Task<Message> {
         self.clicks = ClickTracker::default();
         let Some(item) = self.selected().cloned() else { return Task::none() };
-        let opens = matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal);
+        let opens =
+            matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
         if opens && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
         }
@@ -454,6 +463,12 @@ impl Launcher {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
                 Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened)
+            }
+            (Action::OpenWith, Target::File(file)) if !file.is_dir && file.path.is_some() => {
+                self.panel = None;
+                self.application_picker = Some(open_with::Panel::new(file.clone()));
+                let load = self.request_applications();
+                Task::batch([load, self.resize(), widget::operation::focus(open_with::input_id())])
             }
             (Action::CopyPath, Target::File(f)) => match &f.path {
                 Some(p) => self.copy(p.to_string_lossy().into_owned(), "path"),
@@ -577,6 +592,48 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn request_applications(&mut self) -> Task<Message> {
+        let Some(panel) = &self.application_picker else { return Task::none() };
+        let id = panel.file.id.clone();
+        self.application_generation += 1;
+        let generation = self.application_generation;
+        Task::perform(self.backend.clone().applications(id), move |result| Message::ApplicationsLoaded {
+            generation,
+            result,
+        })
+    }
+
+    fn application_effect(&mut self, effect: open_with::Effect) -> Task<Message> {
+        match effect {
+            open_with::Effect::None => Task::none(),
+            open_with::Effect::Focus => widget::operation::focus(open_with::input_id()),
+            open_with::Effect::Close => {
+                if let Some(panel) = self.application_picker.take() {
+                    self.cursor.select_target(&Target::File(panel.file), &self.items);
+                }
+                self.application_generation += 1;
+                Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            open_with::Effect::Reload => {
+                if self.opening.is_some() || !self.application_picker.as_mut().is_some_and(|panel| panel.loading()) {
+                    return Task::none();
+                }
+                Task::batch([self.request_applications(), widget::operation::focus(open_with::input_id())])
+            }
+            open_with::Effect::Open(app) => {
+                if self.opening.is_some() || self.unconfirmed_open {
+                    return Task::none();
+                }
+                let Some(panel) = &mut self.application_picker else { return Task::none() };
+                let id = panel.file.id.clone();
+                panel.opening();
+                self.opening = Some((id.clone(), self.query.clone()));
+                self.status = Status::Notice("Opening…".into());
+                Task::perform(self.backend.clone().run_with(id, app), Message::Opened)
+            }
+        }
+    }
+
     fn refresh_search_status(&mut self) -> Task<Message> {
         if matches!(self.search_status, Some(SearchStatusPanel::Loading)) {
             return Task::none();
@@ -626,6 +683,22 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.application_picker.is_some()
+        && matches!(
+            message,
+            Message::Query(_)
+                | Message::Scope(_)
+                | Message::ActionQuery(_)
+                | Message::Selected(_)
+                | Message::Clicked(_)
+                | Message::ContextMenu(_)
+                | Message::PanelClicked { .. }
+                | Message::ShowSearchStatus
+                | Message::ShowFolders
+        )
+    {
+        return Task::none();
+    }
     if s.folder_settings.is_some()
         && matches!(
             message,
@@ -657,6 +730,29 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::ApplicationsLoaded { generation, result } => {
+            if generation == s.application_generation
+                && let Some(panel) = &mut s.application_picker
+            {
+                panel.loaded(result, &mut s.icons);
+                return widget::operation::focus(open_with::input_id());
+            }
+            Task::none()
+        }
+        Message::OpenWith { generation, event } => {
+            if generation != s.application_generation {
+                return Task::none();
+            }
+            if s.opening.is_some() && !matches!(event, open_with::Event::Back) {
+                return Task::none();
+            }
+            let Some(panel) = &mut s.application_picker else { return Task::none() };
+            let effect = panel.event(event);
+            s.application_effect(effect)
+        }
+        Message::RefreshSearchStatus if s.application_picker.is_some() => {
+            s.application_effect(open_with::Effect::Reload)
+        }
         Message::ShowFolders => {
             if let Some(panel) = &mut s.folder_settings {
                 let (task, effect) = panel.update(folders::Event::Back, s.backend.clone());
@@ -787,6 +883,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
+            if let Some(panel) = &mut s.application_picker {
+                if s.opening.is_none() {
+                    panel.wheel(if dy > 0.0 { -1 } else { 1 });
+                }
+                return Task::none();
+            }
             if s.search_status.is_some() || s.folder_settings.is_some() {
                 return Task::none(); // the status scrollable handles its own wheel events
             }
@@ -858,6 +960,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
                     Status::Error(UNCONFIRMED_OPEN.into())
                 }
             };
+            if let Some(panel) = &mut s.application_picker
+                && let Status::Error(error) = &s.status
+            {
+                panel.failed(error.clone());
+            }
             s.resize()
         }
         Message::Ui(UiEvent::Toggle) => iced::exit(),
@@ -869,6 +976,13 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.application_picker {
+        if s.opening.is_some() && cmd != Command::Back {
+            return Task::none();
+        }
+        let effect = panel.command(cmd);
+        return s.application_effect(effect);
+    }
     if let Some(panel) = &mut s.folder_settings {
         let (task, effect) = panel.command(cmd, s.backend.clone());
         return s.finish_folders(task, effect);
@@ -960,6 +1074,10 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.application_picker {
+        let generation = s.application_generation;
+        return panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event });
+    }
     if let Some(panel) = &s.folder_settings {
         let generation = s.folder_generation;
         return panel.view().map(move |event| Message::Folder { generation, event });
@@ -1472,6 +1590,8 @@ mod tests {
             clicks: ClickTracker::default(),
             panel: None,
             search_status: None,
+            application_picker: None,
+            application_generation: 0,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
@@ -1752,7 +1872,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 6);
+        assert_eq!(panel.actions.len(), 7);
     }
 
     #[test]
@@ -1958,6 +2078,176 @@ mod tests {
     }
 
     #[test]
+    fn open_with_filters_choices_and_dispatches_the_captured_file() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search_generation = s.generation;
+        let files = file_hits();
+        let captured = files[0].clone();
+        let _ = update(&mut s, Message::Files { generation: search_generation, result: Ok(Some(files.clone())) });
+        let _ = update(&mut s, Message::Selected(Target::File(captured.clone())));
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("open with".into()));
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.application_picker.is_some());
+        assert!(s.opening.is_none());
+        let generation = s.application_generation;
+        let _ = update(
+            &mut s,
+            Message::ApplicationsLoaded {
+                generation,
+                result: Ok(vec![
+                    crate::backend::ApplicationChoice {
+                        id: "one.desktop".into(),
+                        name: "Editor One".into(),
+                        icon: String::new(),
+                    },
+                    crate::backend::ApplicationChoice {
+                        id: "two.desktop".into(),
+                        name: "Editor Two".into(),
+                        icon: String::new(),
+                    },
+                ]),
+            },
+        );
+        let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
+        let _ = update(&mut s, Message::Query("offscreen input".into()));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        let _ = update(&mut s, Message::OpenWith { generation, event: crate::open_with::Event::Query("two".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref(), Some(&(captured.id.clone(), "report".into())));
+        assert_eq!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()), 0);
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()) > 0);
+    }
+
+    fn picker_state() -> Launcher {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let _ = s.perform(Action::OpenWith);
+        s
+    }
+
+    fn picker_choices(count: usize) -> Vec<crate::backend::ApplicationChoice> {
+        (0..count)
+            .map(|i| crate::backend::ApplicationChoice {
+                id: format!("editor-{i:02}.desktop"),
+                name: format!("Editor {i:02}"),
+                icon: String::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn picker_escape_restores_search_and_ignores_closed_or_reopened_generations() {
+        let mut s = picker_state();
+        let old = s.application_generation;
+        let target = s.selected().unwrap().target.clone();
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(12)) });
+        let _ = update(&mut s, Message::OpenWith { generation: old, event: open_with::Event::Query("07".into()) });
+        let _ = command(&mut s, Command::Back);
+        assert!(s.application_picker.as_ref().unwrap().query.is_empty());
+        let _ = command(&mut s, Command::Back);
+        assert!(s.application_picker.is_none());
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        assert_eq!(s.selected().unwrap().target, target);
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Err("late".into()) });
+        assert!(s.application_picker.is_none());
+        let _ = s.perform(Action::OpenWith);
+        let current = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(12)) });
+        let _ = update(
+            &mut s,
+            Message::OpenWith { generation: old, event: open_with::Event::Open("editor-00.desktop".into()) },
+        );
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: current, result: Ok(picker_choices(12)) });
+        let _ = update(&mut s, Message::OpenWith { generation: current, event: open_with::Event::Query("07".into()) });
+        let _ = update(
+            &mut s,
+            Message::OpenWith { generation: current, event: open_with::Event::Open("editor-00.desktop".into()) },
+        );
+        assert!(s.opening.is_none(), "a filtered-out pointer choice must not dispatch");
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_some());
+    }
+
+    #[test]
+    fn picker_read_errors_can_retry_but_unconfirmed_dispatch_cannot_duplicate() {
+        let mut s = picker_state();
+        let old = s.application_generation;
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.application_generation, old, "one list request at a time");
+        let _ =
+            update(&mut s, Message::ApplicationsLoaded { generation: old, result: Err("service unavailable".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let generation = s.application_generation;
+        assert!(generation > old);
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation: old, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(Vec::new()) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_some());
+        let _ = update(&mut s, Message::Opened(Err(RunError::Unconfirmed("connection lost".into()))));
+        assert!(s.unconfirmed_open);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        let _ = command(&mut s, Command::Back);
+        let _ = s.perform(Action::OpenWith);
+        assert!(s.application_picker.is_none(), "close and reopen the process before retrying an uncertain launch");
+    }
+
+    #[test]
+    fn picker_rejected_dispatch_can_choose_another_application() {
+        let mut s = picker_state();
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(2)) });
+        let _ = command(&mut s, Command::Activate);
+        let (file, query) = s.opening.clone().unwrap();
+        let _ = update(&mut s, Message::Opened(Err(RunError::Failed("executable is unavailable".into()))));
+        assert!(!s.unconfirmed_open);
+        assert!(s.opening.is_none());
+        assert_eq!(s.usage.boost(Kind::File, &file, &query, usage::now()), 0);
+        let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("01".into()) });
+        let _ = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref(), Some(&(file.clone(), query.clone())));
+        assert_eq!(s.application_picker.as_ref().unwrap().query, "01");
+        let _ = update(&mut s, Message::Opened(Ok(())));
+        assert!(s.usage.boost(Kind::File, &file, &query, usage::now()) > 0);
+    }
+
+    #[test]
+    fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
+        let file = file_hits().remove(0);
+        let mut panel = open_with::Panel::new(file);
+        panel.loaded(Ok(picker_choices(12)), &mut Icons::disabled());
+        let _ = panel.command(Command::Last);
+        assert!(
+            matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-06.desktop")
+        );
+        assert!(matches!(panel.command(Command::ActivateVisible(6)), open_with::Effect::None));
+        let _ = panel.event(open_with::Event::Query("07".into()));
+        assert!(
+            matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-07.desktop")
+        );
+    }
+
+    #[test]
     fn folder_settings_are_modal_and_discard_late_replies_after_reopening() {
         let mut s = search_state();
         let _ = update(&mut s, Message::Query("report".into()));
@@ -2124,7 +2414,7 @@ mod tests {
         s.apps[0].actions = names
             .iter()
             .enumerate()
-            .map(|(i, name)| crate::apps::DesktopAction {
+            .map(|(i, name)| ferroseek_desktop::apps::DesktopAction {
                 id: format!("action-{i}"),
                 name: (*name).into(),
                 exec: format!("synthetic-viewer --action-{i}"),
