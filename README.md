@@ -82,7 +82,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
 | Ctrl+Shift+C | Copy a file path |
-| Esc | Clear the action filter, close actions, clear the query, return from folder search, then close |
+| Esc | Clear the action filter, close actions, hide preview, clear the query, return from the folder context, then close |
 
 More navigation keys and history settings are in the [launcher guide](docs/LAUNCHER.md).
 

@@ -3624,6 +3624,39 @@ mod tests {
         assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
     }
 
+    #[test]
+    fn folder_back_button_restores_the_child_and_rejects_a_departed_header_click() {
+        let (mut s, folder) = browser_state();
+        let mut child = folder.clone();
+        child.id.push_str("/Nested");
+        child.path = Some("/synthetic/Reports/Nested".into());
+        child.name = "Nested".into();
+        let generation = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((vec![child.clone()], false)) });
+        let _ = command(&mut s, Command::BrowseFolder);
+        let generation = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((Vec::new(), false)) });
+        let departed = s.scope_generation;
+        let messages = pointer_messages(
+            &s,
+            iced::Point::new(70.0, 22.0),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(matches!(&messages[..], [Message::FolderBack { .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.search_folder.as_ref().unwrap().id, folder.id);
+        assert_eq!(s.selected().unwrap().target, Target::File(child.clone()));
+        let refresh = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation: refresh, result: Ok((vec![child.clone()], false)) });
+        let _ = update(&mut s, Message::FolderBack { generation: departed });
+        assert_eq!(s.search_folder.as_ref().unwrap().id, folder.id);
+        assert_eq!(s.selected().unwrap().target, Target::File(child));
+        assert!(s.query.is_empty());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn preview_data(text: &str) -> Result<crate::backend::PreviewData, String> {
         Ok(crate::backend::PreviewData {
             content: Ok(crate::backend::TextPreview::Text { text: text.into(), truncated: false }),
