@@ -82,9 +82,7 @@ export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" \
     "$XDG_RUNTIME_DIR" "$XDG_CONFIG_DIRS" "$XDG_DATA_DIRS"
 chmod 700 "$XDG_RUNTIME_DIR"
-# Keep screenshot authorization metadata without exposing host application dirs.
-[[ -f /usr/share/applications/org.kde.spectacle.desktop ]] || fail "Spectacle desktop entry not installed"
-cp /usr/share/applications/org.kde.spectacle.desktop "$XDG_DATA_HOME/applications/"
+unset XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID
 printf '[Icons]\nTheme=breeze-dark\n' > "$XDG_CONFIG_HOME/kdeglobals"
 printf '[Desktop Entry]\nType=Application\nName=Report Viewer\nComment=Synthetic test entry\nIcon=document-preview\nExec=true\n' \
     > "$XDG_DATA_HOME/applications/test.report-viewer.desktop"
@@ -147,12 +145,16 @@ else
     sleep 0.5 # initial index of the tiny tree
 fi
 
+# KDE's compositor/capture resources and authorization metadata are system data;
+# the launcher and daemon retain their separate synthetic application catalog.
+XDG_DATA_DIRS=/usr/local/share:/usr/share \
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
     kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
-sleep 1.5
+for _ in $(seq 100); do has_owner org.kde.KWin && break; sleep 0.05; done
+has_owner org.kde.KWin || fail "nested KWin did not register its control interface"
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
 if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then

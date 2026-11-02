@@ -107,8 +107,11 @@ def main():
         type_text("report")
 
     def capture(name):
-        subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
-                       check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with (out / (name + ".log")).open("w") as capture_log:
+            subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
+                           check=True, timeout=15, stdout=capture_log, stderr=capture_log,
+                           env={**os.environ, "XDG_DATA_DIRS": "/usr/local/share:/usr/share"})
+        assert (out / name).is_file(), "capture tool returned without an image; inspect its companion log"
         png = (out / name).read_bytes()
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
         assert struct.unpack(">II", png[16:24]) == (int(1280 * observed_scale), int(800 * observed_scale)), \

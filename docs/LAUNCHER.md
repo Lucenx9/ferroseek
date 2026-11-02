@@ -525,9 +525,12 @@ Wayland client headers and `plasma-wayland-protocols`. Its test-only input clien
 refuses sockets outside the isolated smoke-test namespace. The bounded profiles
 are `us-1x` (default), `fr-1x` and `us-1.5x`, selected with
 `FERROSEEK_SMOKE_PROFILE`. The input interface is enabled only in disposable KWin.
-The harness owns HOME, all XDG paths and runtime directory, and stages only its
-synthetic entries plus Spectacle's installed screenshot-authorization metadata.
-It cannot discover host application/service directories or a user-manager socket.
+The harness owns HOME, config/cache/state/data and runtime paths. Launcher and
+daemon application discovery uses only synthetic data. KWin and Spectacle read
+fixed system data directories for their graphical resources and screenshot
+authorization; caller-defined data/config paths are excluded. The private bus has
+no activation services, no real user-manager socket is visible, and inherited
+startup context is cleared.
 
 Before input, KWin's support information must report one 1280×800 logical output
 at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
