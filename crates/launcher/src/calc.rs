@@ -194,7 +194,7 @@ impl Parser {
             v = if op == '+' { v + r } else { v - r };
         }
         self.depth -= 1;
-        Some(v)
+        v.is_finite().then_some(v)
     }
 
     fn term(&mut self) -> Option<f64> {
@@ -210,7 +210,7 @@ impl Parser {
                 _ => v % r,
             };
         }
-        Some(v)
+        v.is_finite().then_some(v)
     }
 
     fn unary(&mut self) -> Option<f64> {
@@ -235,7 +235,8 @@ impl Parser {
         if let Some(Tok::Op('^')) = self.peek() {
             self.pos += 1;
             let exp = self.unary()?;
-            return Some(base.powf(exp));
+            let value = base.powf(exp);
+            return value.is_finite().then_some(value);
         }
         Some(base)
     }
@@ -400,6 +401,17 @@ mod tests {
         let max = format!("= {}", "1".repeat(MAX_INPUT - 2));
         assert!(evaluate(&max).is_some());
         assert_eq!(evaluate(&format!("{max}1")), None, "the prefix counts towards the limit");
+    }
+
+    #[test]
+    fn invalid_intermediate_results_cannot_become_valid_answers() {
+        for s in ["(-1)^0.5", "1^((-1)^0.5)", "1^(-1)^0.5", "1/(10^400)", "1/(1e308*10)", "1/(1e308+1e308)"] {
+            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(continuation(s), None, "{s:?}");
+            assert_eq!(evaluate(&format!("= {s}")), None, "{s:?}");
+        }
+        assert_eq!(evaluate("1/(10^300)"), Some(1e-300));
+        assert_eq!(evaluate("1^(-1)^2"), Some(1.0));
     }
 
     #[test]

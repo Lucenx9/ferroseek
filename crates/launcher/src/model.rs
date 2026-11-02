@@ -721,6 +721,9 @@ mod tests {
         assert!(calc_item("report").is_none());
         assert_eq!(calc_item("= 42").unwrap().title, "= 42");
         assert!(calc_item("=").is_none());
+        for query in ["1^((-1)^0.5)", "1/(10^400)", "= 1/(1e308+1e308)"] {
+            assert!(calc_item(query).is_none(), "{query}");
+        }
 
         let a = apps();
         let dir = tempfile::tempdir().unwrap();
