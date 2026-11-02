@@ -217,6 +217,10 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 ## Open with a selected application
 
+![Application chooser](assets/launcher-open-with.png)
+
+Rendered in a private virtual KWin session with synthetic document handlers.
+
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
 Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
 or a click. Typing filters application names and desktop IDs; the ID beneath
@@ -240,8 +244,8 @@ is recorded only after daemon acknowledgement.
 Compatibility: this first version lists installed desktop entries declaring the
 file's detected MIME type, an alias or a parent type and accepting one `%f`,
 `%F`, `%u` or `%U` document field. Single-file `%f`/`%u` can also appear within
-an option argument; list fields `%F`/`%U` must stand alone. It includes `NoDisplay` document handlers, honours hidden-entry masks,
-visibility and `TryExec`, and never accepts a caller-supplied command. Type
+an option argument; list fields `%F`/`%U` must stand alone. It includes `NoDisplay` document handlers,
+honours hidden-entry masks, visibility and `TryExec`, and never accepts a caller-supplied command. Type
 detection uses filename metadata from shared-mime-info and does not read file
 contents. Unrecognized types, folders and symbolic links are not supported by
 the chooser; normal **Open** remains available. Desktop association preference
