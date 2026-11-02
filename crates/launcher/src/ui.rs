@@ -2729,6 +2729,7 @@ mod tests {
         for (key, code, modifiers, typed) in [
             (Key::Character("x".into()), Code::KeyX, Modifiers::empty(), Some("x")),
             (Key::Named(keyboard::key::Named::ArrowRight), Code::ArrowRight, Modifiers::CTRL, None),
+            (Key::Named(keyboard::key::Named::ArrowRight), Code::ArrowRight, Modifiers::ALT, None),
             (Key::Character("n".into()), Code::KeyN, Modifiers::empty(), Some("n")),
             (Key::Character("x".into()), Code::KeyX, Modifiers::empty(), Some("x")),
             (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL, None),
@@ -2784,6 +2785,12 @@ mod tests {
                 }
                 messages
             };
+            if code == Code::ArrowRight && modifiers == Modifiers::CTRL {
+                assert!(messages.is_empty(), "word navigation must not enter a folder");
+                assert!(s.search_folder.is_none());
+                assert_eq!(s.query, "report");
+                continue;
+            }
             assert_eq!(messages.len(), 1);
             if code == Code::KeyX {
                 if s.search_folder.is_none() {
