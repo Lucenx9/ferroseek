@@ -662,6 +662,15 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn file_query(&self) -> bool {
+        if self.search_folder.is_some() {
+            let query = self.query.trim();
+            query.is_empty() || query.chars().count() >= MIN_FILE_QUERY
+        } else {
+            self.scope.file_query(&self.query)
+        }
+    }
+
     fn request_files(&self) -> Task<Message> {
         let (backend, query, folder, generation) = (
             self.backend.clone(),
@@ -690,6 +699,9 @@ impl Launcher {
     }
 
     fn refresh_folder(&mut self) -> Task<Message> {
+        if !self.file_query() {
+            return Task::none();
+        }
         if self.preview_enabled {
             self.cancel_preview(true);
         }
@@ -747,7 +759,7 @@ impl Launcher {
     fn back_folder_search(&mut self) -> Task<Message> {
         let Some(frame) = self.folder_search_history.pop() else { return Task::none() };
         self.restore_folder_search(frame);
-        let refresh = if self.search_folder.is_some() || self.scope.file_query(&self.query) {
+        let refresh = if self.file_query() {
             self.status = Status::Searching;
             self.request_files()
         } else {
@@ -1233,7 +1245,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             } else {
                 model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
             };
-            let file_query = s.search_folder.is_some() || s.scope.file_query(q);
+            let file_query = s.file_query();
             // Results of the previous query must not stay actionable while
             // this one is searched.
             s.files.clear();
@@ -3596,6 +3608,47 @@ mod tests {
         let _ = update(&mut s, Message::FolderListed { generation: current, result: Ok((Vec::new(), false)) });
         assert!(s.items.is_empty() && matches!(s.status, Status::Idle));
         assert!(s.search_folder.is_some(), "an empty folder does not fall back to global suggestions");
+    }
+
+    #[test]
+    fn folder_queries_wait_for_two_characters_before_searching() {
+        let (mut s, _) = browser_state();
+        for query in ["a", " é ", "日", "🦀"] {
+            let _ = update(&mut s, Message::Query("report".into()));
+            let previous = s.generation;
+            let _ = update(&mut s, Message::Files { generation: previous, result: Ok(Some(file_hits())) });
+            assert!(!s.items.is_empty());
+
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Idle, "short query: {query:?}");
+            assert!(s.files.is_empty() && s.items.is_empty());
+            let current = s.generation;
+            let _ = update(&mut s, Message::RefreshSearchStatus);
+            assert_eq!(s.generation, current, "refresh must not start a short search");
+            assert_eq!(s.status, Status::Idle);
+
+            let _ = update(&mut s, Message::Files { generation: previous, result: Ok(Some(file_hits())) });
+            let _ = update(&mut s, Message::FolderListed { generation: previous, result: Ok((file_hits(), true)) });
+            assert!(s.items.is_empty() && !s.folder_more);
+            assert_eq!(s.status, Status::Idle);
+        }
+
+        for query in ["ré", " 日本 ", "=x"] {
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Searching, "searchable query: {query:?}");
+            let generation = s.generation;
+            let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+            assert_eq!(s.items.len(), 2);
+        }
+
+        for query in ["", " \t "] {
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Searching);
+            let generation = s.generation;
+            let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+            assert_eq!(s.items.len(), 2);
+            assert!(s.folder_more && s.search_folder.is_some());
+        }
     }
 
     #[test]
