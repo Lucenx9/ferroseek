@@ -8,7 +8,8 @@
 //! mean reading files during a keystroke.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+
+use ferroseek_desktop::apps::data_dirs;
 
 pub struct MimeDb {
     /// Case-insensitive globs, keyed lowercase.
@@ -19,18 +20,6 @@ pub struct MimeDb {
     by_name_cs: HashMap<String, (u32, String)>,
     generic: HashMap<String, String>,
     related: HashMap<String, Vec<String>>,
-}
-
-fn data_dirs() -> Vec<std::path::PathBuf> {
-    let mut v = vec![];
-    if let Some(h) = std::env::var_os("XDG_DATA_HOME") {
-        v.push(h.into());
-    } else if let Some(h) = std::env::var_os("HOME") {
-        v.push(Path::new(&h).join(".local/share"));
-    }
-    let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    v.extend(sys.split(':').filter(|s| !s.is_empty()).map(Into::into));
-    v
 }
 
 impl MimeDb {
@@ -182,6 +171,7 @@ impl MimeDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn db() -> MimeDb {
         let mut d = MimeDb::empty();
@@ -207,6 +197,43 @@ mod tests {
         assert_eq!(d.mime_for("noext"), None);
         assert_eq!(d.icon_for("a.pdf"), "application-pdf");
         assert_eq!(d.icon_for("weird"), "unknown");
+    }
+
+    #[test]
+    fn mime_loading_ignores_invalid_xdg_paths() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_DATA_HOME";
+        if std::env::var_os(CASE).is_some() {
+            assert_eq!(MimeDb::load().mime_for("file.probe"), Some("text/x-user"));
+            assert!(MimeDb::load_for_handlers().handler_types("file.probe").contains(&"text/x-user".into()));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, glob) in [
+            ("home/.local/share", "50:text/x-user:*.probe\n"),
+            ("relative", "80:text/x-working-directory:*.probe\n"),
+            ("", "80:text/x-working-directory:*.probe\n"),
+            ("relative-system", "90:text/x-relative-system:*.probe\n"),
+        ] {
+            let mime = temp.path().join(relative).join("mime");
+            std::fs::create_dir_all(&mime).unwrap();
+            std::fs::write(mime.join("globs2"), glob).unwrap();
+        }
+        let system = temp.path().join("system");
+        let data_dirs = std::env::join_paths([Path::new("relative-system"), system.as_path()]).unwrap();
+        for data_home in [Path::new(""), Path::new("relative"), &temp.path().join("home/.local/share")] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mime::tests::mime_loading_ignores_invalid_xdg_paths"])
+                .current_dir(temp.path())
+                .env(CASE, "1")
+                .env("HOME", temp.path().join("home"))
+                .env("XDG_DATA_HOME", data_home)
+                .env("XDG_DATA_DIRS", &data_dirs)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        }
     }
 
     #[test]
