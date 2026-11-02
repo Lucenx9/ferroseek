@@ -173,7 +173,8 @@ def main():
                 process = subprocess.Popen(
                     [str(binary), "--private", "--query", "activation"], stdout=stream, stderr=stream,
                     env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
-                         "FERROSEEK_ACTIVATION_LOG": str(activation_log), "GSK_RENDERER": "cairo"},
+                         "FERROSEEK_ACTIVATION_LOG": str(activation_log), "GSK_RENDERER": "cairo",
+                         "GDK_BACKEND": "wayland", "GTK_A11Y": "none"},
                 )
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")

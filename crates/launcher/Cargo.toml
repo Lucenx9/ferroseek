@@ -27,6 +27,8 @@ winit-core = "=0.31.0-beta.2"
 zbus.workspace = true
 # Bound diagnostic calls with the runtime already driving the bus thread.
 zruntime = { version = "0.2", default-features = false, features = ["helper"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 freedesktop-icons = "0.4"
 log.workspace = true
 

@@ -72,14 +72,22 @@ fn unit_safe(id: &str) -> String {
 }
 
 pub fn launch(app: &App) -> io::Result<()> {
+    launch_with_token(app, None)
+}
+
+pub fn launch_with_token(app: &App, token: Option<&str>) -> io::Result<()> {
     let argv = command_line(app, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, None).map(drop)
+    spawn(app, argv, token).map(drop)
 }
 
 pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
+    launch_action_with_token(app, index, None)
+}
+
+pub fn launch_action_with_token(app: &App, index: usize, token: Option<&str>) -> io::Result<()> {
     let argv = app.action_argv(index).map_err(exec_error)?;
     let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, None).map(drop)
+    spawn(app, argv, token).map(drop)
 }
 
 /// Launch a selected document handler; the caller owns reaping the child.

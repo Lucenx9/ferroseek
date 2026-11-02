@@ -17,6 +17,7 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
+use crate::activation::Activation;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
@@ -70,6 +71,7 @@ static BOOT: Mutex<Option<Boot>> = Mutex::new(None);
 
 /// What the launcher starts with.
 pub struct Boot {
+    pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
     pub usage: Usage,
@@ -177,6 +179,7 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    activation: Activation,
     backend: Backend,
     apps: Vec<App>,
     usage: Usage,
@@ -225,6 +228,7 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
@@ -270,6 +274,7 @@ fn status_scroll_id() -> Id {
 }
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
+    let activation = boot_data.activation.clone();
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
     *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(boot_data);
     iced_layershell::application(boot, namespace, update, view)
@@ -277,6 +282,11 @@ pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), ic
         .theme(|_: &Launcher| Theme::Dark)
         .subscription(subscription)
         .settings(Settings {
+            with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
+                let connection = wayland_client::Connection::connect_to_env()?;
+                activation.attach(connection.clone());
+                Ok(connection)
+            })),
             layer_settings: LayerShellSettings {
                 anchor: Anchor::Top,
                 layer: Layer::Overlay,
@@ -301,10 +311,11 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { backend, apps, usage, favorites, initial_query, settings_path } =
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path } =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        activation,
         backend,
         apps,
         usage,
@@ -507,21 +518,32 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::Launch | Action::Desktop(_), Target::App(i)) => {
-                let app = &self.apps[*i];
-                let launched = match action {
-                    Action::Desktop(index) => crate::launch::launch_action(app, index),
-                    _ => crate::launch::launch(app),
+                let app = self.apps[*i].clone();
+                let valid = match action {
+                    Action::Desktop(index) => app.action_argv(index),
+                    _ => app.argv(),
                 };
-                match launched {
-                    Ok(()) => {
-                        self.usage.record(Kind::App, &app.id, &self.query, usage::now());
-                        iced::exit()
-                    }
-                    Err(e) => {
-                        self.status = Status::Error(format!("Cannot launch {}: {e}", item.title));
-                        self.resize()
-                    }
+                if let Err(error) = valid {
+                    self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
+                    return self.resize();
                 }
+                let id = app.id.clone();
+                let activation = self.activation.clone();
+                self.opening = Some((id.clone(), self.query.clone()));
+                self.status = Status::Notice("Opening application…".into());
+                Task::perform(
+                    async move {
+                        let app_id =
+                            if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
+                        let token = activation.token(app_id).await;
+                        let result = match action {
+                            Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
+                            _ => crate::launch::launch(&app, token.as_deref()),
+                        };
+                        result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
+                    },
+                    move |result| Message::ApplicationOpened { id: id.clone(), result },
+                )
             }
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
@@ -1388,6 +1410,22 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 .map(|_| action);
             a.map_or_else(Task::none, |a| s.perform(a))
         }
+        Message::ApplicationOpened { id, result } => {
+            if !s.opening.as_ref().is_some_and(|(pending, _)| *pending == id) {
+                return Task::none();
+            }
+            let (_, query) = s.opening.take().unwrap();
+            match result {
+                Ok(()) => {
+                    s.usage.record(Kind::App, &id, &query, usage::now());
+                    iced::exit()
+                }
+                Err(error) => {
+                    s.status = Status::Error(error);
+                    s.resize()
+                }
+            }
+        }
         Message::Opened(Ok(())) => {
             if let Some((id, query)) = s.opening.take() {
                 s.usage.record(Kind::File, &id, &query, usage::now());
@@ -2190,6 +2228,7 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: vec![app],
             usage: Usage::disabled(),
