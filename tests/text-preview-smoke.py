@@ -65,7 +65,9 @@ def main():
         file.write(b'raw path')
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
-        if uri(raw) in call('Search', 'preview-raw') and uri(child) in call('Search', 'preview-child'):
+        found = call('Search', 'preview')
+        required = {uri(docs / name) for name in fixtures} | {uri(raw), uri(child)}
+        if all(target in found for target in required):
             break
         time.sleep(0.03)
     else:
