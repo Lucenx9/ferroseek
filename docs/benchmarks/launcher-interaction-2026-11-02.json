@@ -133,6 +133,9 @@
     "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
     "profile": "release: thin LTO, codegen-units=4",
     "signal": "iced RedrawRequested event, not draw completion or compositor presentation",
-    "verification": "All 20 first-frame and final-query samples and both percentile summaries checked independently against per-process JSON logs."
+    "verification": "All 20 first-frame and final-query samples and both percentile summaries checked independently against per-process JSON logs.",
+    "launcher_args": [
+      "--private"
+    ]
   }
 }

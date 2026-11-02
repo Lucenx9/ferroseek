@@ -624,7 +624,9 @@ warm-cache regression check, not a new million-file or desktop benchmark.
 The isolated graphical harness measures the release launcher and real daemon
 together. It generates 10,007 synthetic files, waits for indexing to finish,
 and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and
-a private bus with no activation services. A separate test window establishes
+a private bus with no activation services. Launcher processes use `--private`,
+so history and favorites are disabled; application matching includes one synthetic
+entry and the runner's installed desktop entries. A separate test window establishes
 keyboard input before the launcher and receives input again after it closes.
 Test-only Wayland fake input types `report` into the real search widget, edits
 the action filter and returns to the main field. No UI messages are injected.
