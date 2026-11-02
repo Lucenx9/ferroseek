@@ -133,7 +133,7 @@ impl App {
 /// `$XDG_DATA_HOME` then `$XDG_DATA_DIRS`, with the specification defaults.
 pub fn data_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+    match std::env::var_os("XDG_DATA_HOME").filter(|v| Path::new(v).is_absolute()) {
         Some(d) => dirs.push(PathBuf::from(d)),
         None => {
             if let Some(h) = std::env::var_os("HOME") {
@@ -675,6 +675,37 @@ mod tests {
     fn lists_and_escapes() {
         assert_eq!(split_list(&unescape(r"a;b\;c;;d")), ["a", "b;c", "d"]);
         assert_eq!(unescape(r"a\sb\tc\\d"), "a b\tc\\d");
+    }
+
+    #[test]
+    fn application_discovery_ignores_relative_xdg_data_home() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_DATA_HOME";
+        if std::env::var_os(CASE).is_some() {
+            let apps = scan(&data_dirs(), &[], &[]);
+            assert_eq!(apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>(), ["User application"]);
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, name) in [
+            ("home/.local/share/applications/probe.desktop", "User application"),
+            ("relative/applications/probe.desktop", "Working directory application"),
+        ] {
+            let file = temp.path().join(relative);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, format!("[Desktop Entry]\nType=Application\nName={name}\nExec=probe\n")).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "apps::tests::application_discovery_ignores_relative_xdg_data_home"])
+            .current_dir(temp.path())
+            .env(CASE, "1")
+            .env("HOME", temp.path().join("home"))
+            .env("XDG_DATA_HOME", "relative")
+            .env("XDG_DATA_DIRS", temp.path().join("system"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]
