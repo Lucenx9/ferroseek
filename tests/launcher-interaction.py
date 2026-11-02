@@ -179,9 +179,11 @@ def main():
         target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
         entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"
         entry.write_text("[Desktop Entry]\nType=Application\nName=Activation Probe\n"
-                         f'Exec="{sys.executable}" "{target}" %f\nMimeType=text/plain;\n')
+                         f'Exec="{sys.executable}" "{target}" %f\nMimeType=text/plain;\nActions=Numbered;\n'
+                         '[Desktop Action Numbered]\nName=Numbered action\n'
+                         f'Exec=/usr/bin/env FERROSEEK_TEST_ACTION=numbered "{sys.executable}" "{target}"\n')
         serving_pid = None
-        for activation_number, mode in enumerate(["new", "existing", "pointer"], start=1):
+        for activation_number, mode in enumerate(["new", "existing", "pointer", "numbered", "action-numbered"], start=1):
             existing = mode != "new"
             if existing:
                 # A new unrelated window must own input before requesting the target again.
@@ -201,12 +203,28 @@ def main():
                 )
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")
-                if mode == "pointer":
+                query_edits = len([r for r in records(log) if r.get("event") == "query_start"])
+                if mode == "action-numbered":
+                    chord(29, 37)
+                    type_text("numbered")
+                    wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 8,
+                             "numbered action filter owns focus")
+                    capture("activation-action-numbered-selection.png")
+                    chord(29, 2)  # Physical Ctrl+Digit1, regardless of its printed symbol.
+                elif mode == "numbered":
+                    chord(29, 2)
+                elif mode == "pointer":
                     capture("activation-pointer-selection.png")
                     subprocess.run([str(helper), "--double-click", "400", "295"], check=True, timeout=5)
                 else:
                     tap(28)  # Enter is the actual activation input.
                 assert process.wait(timeout=5) == 0
+                if mode in ["numbered", "action-numbered"]:
+                    assert len([r for r in records(log) if r.get("event") == "query_start"]) == query_edits, \
+                        "numbered shortcut must not edit the main query"
+                if mode == "action-numbered":
+                    assert len([r for r in records(log) if r.get("event") == "action_input"]) == 8, \
+                        "numbered shortcut must not insert its symbol into the action filter"
                 starts = wait_for(lambda: [r for r in records(activation_log) if r.get("event") == "started"],
                                   "target process started")
                 if existing:
@@ -214,6 +232,8 @@ def main():
                                                               if r.get("event") == "started"]) == activation_number else None),
                                       "single-instance client started")
                 assert starts[-1]["token_present"], "user-triggered launch must receive a fresh activation token"
+                assert starts[-1]["action"] == ("numbered" if mode == "action-numbered" else None), \
+                    "the selected numbered result/action must determine the command"
                 activated = wait_for(lambda: (a if len(a := [r for r in records(activation_log)
                                                             if r.get("event") == "activated"]) >= activation_number
                                              else None), "application accepted activation")

@@ -17,7 +17,8 @@ def main():
             stream.write(json.dumps({"event": event, "pid": os.getpid(), **fields}) + "\n")
 
     # Record presence before the toolkit consumes/removes the startup token.
-    record("started", token_present=bool(os.environ.get("XDG_ACTIVATION_TOKEN")), arguments=sys.argv[1:])
+    record("started", token_present=bool(os.environ.get("XDG_ACTIVATION_TOKEN")), arguments=sys.argv[1:],
+           action=os.environ.get("FERROSEEK_TEST_ACTION"))
     import gi
     gi.require_version("Gtk", "4.0")
     from gi.repository import Gio, GLib, Gtk

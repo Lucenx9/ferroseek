@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [us-1x, fr-1x]
+        profile: [us-1x, fr-1x, us-1.5x]
     steps:
       - uses: actions/checkout@v4
       - name: Install isolated graphical test dependencies
