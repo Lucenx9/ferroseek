@@ -187,7 +187,8 @@ fn human(bytes: u64) -> String {
     let units = ["B", "K", "M", "G", "T"];
     let mut v = bytes as f64;
     let mut u = 0;
-    while v >= 1024.0 && u < units.len() - 1 {
+    // Compare the value as printed, so 1023.96K becomes 1.0M, not 1024.0K.
+    while (v * 10.0).round() >= 10240.0 && u < units.len() - 1 {
         v /= 1024.0;
         u += 1;
     }
