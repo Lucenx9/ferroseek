@@ -17,6 +17,10 @@ jobs:
   keyboard-and-latency:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [us-1x, fr-1x]
     steps:
       - uses: actions/checkout@v4
       - name: Install isolated graphical test dependencies
@@ -32,9 +36,10 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_LOGGING_RULES='*.debug=false'
           export FERROSEEK_SMOKE_INTERACTION=1
+          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
           xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: launcher-interaction
+          name: launcher-interaction-${{ matrix.profile }}
           path: target/launcher-interaction

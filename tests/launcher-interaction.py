@@ -102,6 +102,9 @@ def main():
         wait_for(lambda: records(probe_log), "focus probe mapped")
         tap(44)  # z: establish that input reaches the background test application
         wait_for(lambda: {"text": "z"} in records(probe_log), "initial probe input")
+        tap(2)  # Unshifted physical Digit1 proves the compositor's active layout.
+        symbol = "&" if os.environ.get("FERROSEEK_SMOKE_PROFILE") == "fr-1x" else "1"
+        wait_for(lambda: {"text": "z" + symbol} in records(probe_log), "requested keyboard layout is active")
         chord(29, 30)  # Ctrl+A
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
