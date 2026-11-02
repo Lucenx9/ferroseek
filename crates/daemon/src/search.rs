@@ -183,14 +183,19 @@ impl Search {
     /// Search strictly below a currently indexed directory. The path is kept
     /// separate from user query syntax, including spaces and non-UTF-8 bytes.
     async fn search_within(&self, folder_id: String, query: String) -> zbus::fdo::Result<Vec<FileResult>> {
+        use std::os::unix::fs::MetadataExt;
         let path =
             path_from_url(&folder_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid folder URL".into()))?;
         let (pool, mime, home) = (self.pool.clone(), self.mime.clone(), self.home.clone());
         zruntime::unblock(move || {
             let hits = pool
                 .with(|reader| {
-                    let indexed = reader.lookup(&path)?.is_some_and(|(_, meta)| meta.kind == Kind::Dir);
-                    if !indexed || !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                    let available = reader.lookup(&path)?.is_some_and(|(_, indexed)| {
+                        indexed.kind == Kind::Dir
+                            && std::fs::symlink_metadata(&path)
+                                .is_ok_and(|live| live.is_dir() && live.ino() == indexed.ino)
+                    });
+                    if !available {
                         return Ok(None);
                     }
                     if query.trim().chars().count() < 2 {

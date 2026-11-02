@@ -79,6 +79,7 @@ def main():
         replaced.rename(root / 'held-browser-directory')
         replaced.mkdir()
         call('ListDirectory', uri(replaced), ok=False)
+        call('SearchWithin', uri(replaced), 'item', ok=False)
         (folder / 'a-dir').rmdir()
         call('ListDirectory', uri(folder / 'a-dir'), ok=False)
     finally:

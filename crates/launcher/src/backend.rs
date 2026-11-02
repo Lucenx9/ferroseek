@@ -1023,6 +1023,69 @@ mod tests {
     }
 
     #[test]
+    fn queued_searches_and_lists_coalesce_without_crossing_open_requests() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let (blocked, blocked_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Run { id: "blocked".into(), action: "stall".into(), reply: blocked }).unwrap();
+            let (old_list, old_list_reply) = oneshot::channel();
+            tx.unbounded_send(Request::ListDirectory { folder: "obsolete-list".into(), reply: old_list }).unwrap();
+            let (old_search, old_search_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Search {
+                query: "report".into(),
+                folder: Some("obsolete-search".into()),
+                reply: old_search,
+            })
+            .unwrap();
+            let (first, first_reply) = oneshot::channel();
+            tx.unbounded_send(Request::ListDirectory { folder: "before-open".into(), reply: first }).unwrap();
+            let (open, open_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Run { id: "open-barrier".into(), action: String::new(), reply: open }).unwrap();
+            let (obsolete, obsolete_reply) = oneshot::channel();
+            tx.unbounded_send(Request::ListDirectory { folder: "obsolete-after".into(), reply: obsolete }).unwrap();
+            let (latest, latest_reply) = oneshot::channel();
+            tx.unbounded_send(Request::Search {
+                query: "report".into(),
+                folder: Some("after-open".into()),
+                reply: latest,
+            })
+            .unwrap();
+            drop(tx);
+            let verify = async {
+                assert!(blocked_reply.await.unwrap().is_err());
+                assert!(old_list_reply.await.is_err() && old_search_reply.await.is_err());
+                assert!(first_reply.await.unwrap().is_ok());
+                assert!(open_reply.await.unwrap().is_ok());
+                assert!(obsolete_reply.await.is_err());
+                assert!(latest_reply.await.unwrap().is_ok());
+                assert_eq!(
+                    requests.try_iter().collect::<Vec<_>>(),
+                    [
+                        ("blocked".into(), "stall".into()),
+                        ("before-open".into(), "list".into()),
+                        ("open-barrier".into(), String::new()),
+                        ("after-open".into(), "report".into())
+                    ]
+                );
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { open: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
+        });
+    }
+
+    #[test]
     fn directory_deadlines_release_the_queue_and_preserve_truncation() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
