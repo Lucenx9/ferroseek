@@ -29,6 +29,21 @@ fn search(db: &Path, q: &str) -> Vec<ferroseek_index::Hit> {
 }
 
 #[test]
+fn searching_old_timestamps_does_not_overflow() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    for (index, mtime_ns) in [i64::MIN, -8_000_000_000_000_000_000, 0, i64::MAX].into_iter().enumerate() {
+        tx.upsert(root, format!("report-{index}.txt").as_bytes(), Meta { mtime_ns, ..file(index as u64 + 2) }).unwrap();
+    }
+    tx.commit().unwrap();
+    let hits = search(&db, "report");
+    assert_eq!(hits.len(), 4);
+    assert!(hits.iter().all(|hit| hit.score == hits[0].score), "old and future dates receive no recency bonus");
+}
+
+#[test]
 fn create_reopen_and_clean_shutdown() {
     let (_t, db) = setup();
     let (w, o) = Writer::open(&db).unwrap();

@@ -337,8 +337,8 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         if hidden_ancestor {
             score -= 10.0;
         }
-        let age_days = (now_ns - c.mtime) as f64 / 86_400e9;
-        if c.mtime > 0 && age_days >= 0.0 {
+        if c.mtime > 0 && c.mtime <= now_ns {
+            let age_days = (now_ns - c.mtime) as f64 / 86_400e9;
             if age_days < 7.0 {
                 score += MAX_BONUS;
             } else if age_days < 30.0 {
