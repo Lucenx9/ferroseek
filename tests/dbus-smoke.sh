@@ -26,7 +26,8 @@ mkdir -p "$T/bin" "$T/runtime"
 chmod 700 "$T/runtime"
 cat > "$T/bin/xdg-open" <<'SH'
 #!/bin/sh
-printf '%s\n' "$XDG_ACTIVATION_TOKEN" "$#" "$1" > "$TEST_OPEN_LOG"
+printf '%s\n' "${XDG_ACTIVATION_TOKEN-unset}" "${DESKTOP_STARTUP_ID-unset}" "$#" "$1" > "$TEST_OPEN_LOG.tmp"
+mv "$TEST_OPEN_LOG.tmp" "$TEST_OPEN_LOG"
 SH
 chmod +x "$T/bin/xdg-open"
 export PATH="$T/bin:$PATH" XDG_RUNTIME_DIR="$T/runtime" TEST_OPEN_LOG="$T/open-log"
@@ -51,7 +52,7 @@ printf '%s\n' "$XDG_ACTIVATION_TOKEN" "$#" "$1" "$2" > "$TEST_OPEN_LOG"
 SH
 chmod +x "$T/bin/selected-opener"
 export FERROSEEK_CONFIG="$T/config.toml" FERROSEEK_DATA_DIR="$T/data" FERROSEEK_LOG=debug
-"$BIN" 2> "$T/daemon.log" &
+XDG_ACTIVATION_TOKEN=inherited-token DESKTOP_STARTUP_ID=inherited-startup "$BIN" 2> "$T/daemon.log" &
 PID=$!
 
 SVC=io.github.ferroseek.FerroSeek
@@ -144,7 +145,7 @@ echo "== Open indexed URL with activation token and a single path argument"
 url="file://$T/root/Documents/Quarterly%20Report.pdf"
 call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "" "test-token" > /dev/null
 for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
-[[ "$(cat "$T/open-log")" == "$(printf 'test-token\n1\n%s' "$T/root/Documents/Quarterly Report.pdf")" ]] || fail "indexed Open argument/token forwarding"
+[[ "$(cat "$T/open-log")" == "$(printf 'test-token\nunset\n1\n%s' "$T/root/Documents/Quarterly Report.pdf")" ]] || fail "indexed Open must forward only this operation token and one path argument"
 for pair in invalid-url unknown-action; do
     if [[ "$pair" == invalid-url ]]; then id="https://example.com"; action=""; else id="$url"; action="unknown"; fi
     if call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$id" "$action" "" > /dev/null 2>&1; then
