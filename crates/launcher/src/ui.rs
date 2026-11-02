@@ -2287,6 +2287,82 @@ mod tests {
     }
 
     #[test]
+    fn details_widget_and_subscription_route_keys_to_the_modal_view() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let captured = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let initial = s.details_generation;
+        let loaded = |generation| Message::DetailsLoaded {
+            generation,
+            result: Ok(crate::backend::FileDetails { mime: "application/pdf".into(), size: 4096, modified: -1 }),
+        };
+        let _ = update(&mut s, loaded(initial));
+        for (key, code, modifiers) in [
+            (Key::Named(keyboard::key::Named::ArrowDown), Code::ArrowDown, Modifiers::empty()),
+            (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL),
+            (Key::Character("C".into()), Code::KeyC, Modifiers::CTRL | Modifiers::SHIFT),
+            (Key::Named(keyboard::key::Named::Escape), Code::Escape, Modifiers::empty()),
+        ] {
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(720.0, 500.0);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                if let Some(message) = on_event(event, shell.event_status(), iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+                messages
+            };
+            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            for message in messages.drain(..) {
+                let _ = update(&mut s, message);
+            }
+            if code == Code::KeyR {
+                assert!(s.details_generation > initial);
+                let generation = s.details_generation;
+                let _ = update(&mut s, loaded(generation));
+            }
+            assert_eq!(s.query, "report");
+            assert_eq!(s.scope, Scope::Files);
+            assert!(s.opening.is_none());
+            assert!(s.usage.recent(usage::now(), 8).is_empty());
+        }
+        assert!(s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, captured);
+    }
+
+    #[test]
     fn details_copy_non_utf8_locations_as_lossless_file_urls() {
         use std::os::unix::ffi::OsStringExt;
         let mut file = file_hits().remove(0);
