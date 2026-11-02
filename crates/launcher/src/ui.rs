@@ -2662,6 +2662,82 @@ mod tests {
     }
 
     #[test]
+    fn preview_widget_and_subscription_route_keys_to_the_modal_view() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let captured = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Preview);
+        let initial = s.preview_generation;
+        let loaded = |generation| Message::PreviewLoaded {
+            generation,
+            result: Ok(crate::backend::TextPreview::Text { text: "synthetic text".into(), truncated: false }),
+        };
+        let _ = update(&mut s, loaded(initial));
+        for (key, code, modifiers) in [
+            (Key::Named(keyboard::key::Named::PageDown), Code::PageDown, Modifiers::empty()),
+            (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL),
+            (Key::Character("C".into()), Code::KeyC, Modifiers::CTRL | Modifiers::SHIFT),
+            (Key::Named(keyboard::key::Named::Escape), Code::Escape, Modifiers::empty()),
+        ] {
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(720.0, 500.0);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                if let Some(message) = on_event(event, shell.event_status(), iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+                messages
+            };
+            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            for message in messages.drain(..) {
+                let _ = update(&mut s, message);
+            }
+            if code == Code::KeyR {
+                assert!(s.preview_generation > initial);
+                let generation = s.preview_generation;
+                let _ = update(&mut s, loaded(generation));
+            }
+            assert_eq!(s.query, "report");
+            assert_eq!(s.scope, Scope::Files);
+            assert!(s.opening.is_none());
+            assert!(s.usage.recent(usage::now(), 8).is_empty());
+        }
+        assert!(s.text_preview.is_none());
+        assert_eq!(s.selected().unwrap().target, captured);
+    }
+
+    #[test]
     fn details_copy_non_utf8_locations_as_lossless_file_urls() {
         use std::os::unix::ffi::OsStringExt;
         let mut file = file_hits().remove(0);
@@ -2940,6 +3016,90 @@ mod tests {
         assert!(s.opening.is_none());
         let _ = command(&mut s, Command::Back);
         assert_eq!(s.selected().unwrap().target, target);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn preview_keeps_its_target_and_rejects_departed_widget_events_and_replies() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation: search, result: Ok(Some(files.clone())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Preview);
+        let old = s.preview_generation;
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, old, "only one read at a time");
+        for message in [
+            Message::Selected(Target::File(files[1].clone())),
+            Message::ShowFolders,
+            Message::ShowSearchStatus,
+            Message::ContextMenu(Target::File(files[1].clone())),
+            Message::ActionQuery("hidden".into()),
+            Message::PanelClicked { target: target.clone(), action: Action::Open },
+        ] {
+            let _ = update(&mut s, message);
+        }
+        let _ = command(&mut s, Command::Activate);
+        let _ = command(&mut s, Command::ActivateVisible(0));
+        assert!(s.opening.is_none());
+        assert!(s.folder_settings.is_none() && s.search_status.is_none());
+        let _ = update(
+            &mut s,
+            Message::Files { generation: search, result: Ok(Some(vec![files[1].clone(), files[0].clone()])) },
+        );
+        assert_eq!(Target::File(s.text_preview.as_ref().unwrap().file.clone()), target);
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: Err("unavailable".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let refreshing = s.preview_generation;
+        assert!(refreshing > old);
+        let _ = update(&mut s, Message::PreviewLoaded { generation: old, result: Err("late".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, refreshing);
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.selected().unwrap().target, target);
+        let _ = s.perform(Action::Preview);
+        let current = s.preview_generation;
+        let _ = update(&mut s, Message::Preview { generation: refreshing, event: preview::Event::Back });
+        let _ = update(&mut s, Message::PreviewLoaded { generation: refreshing, result: Err("closed".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.preview_generation, current);
+        assert!(s.text_preview.is_some());
+        assert!(
+            matches!(s.text_preview.as_mut().unwrap().event(preview::Event::CopyLocation), preview::Effect::Copy(path) if path == "/synthetic/report.txt")
+        );
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn preview_from_details_returns_to_its_parent_before_search() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search = s.generation;
+        let _ = update(&mut s, Message::Files { generation: search, result: Ok(Some(file_hits())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let details = s.details_generation;
+        let _ = update(&mut s, Message::Details { generation: details, event: details::Event::Preview });
+        assert!(s.text_preview.is_some() && s.file_details.is_some());
+        // A queued click from the hidden parent cannot dismiss it or start another preview.
+        let preview = s.preview_generation;
+        let _ = update(&mut s, Message::Details { generation: details, event: details::Event::Back });
+        let _ = update(&mut s, Message::Details { generation: details, event: details::Event::Preview });
+        assert_eq!(s.preview_generation, preview);
+        let _ = command(&mut s, Command::Back);
+        assert!(s.text_preview.is_none() && s.file_details.is_some());
+        assert_eq!(s.details_generation, details);
+        let _ = command(&mut s, Command::Back);
+        assert!(s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, target);
+        assert_eq!(s.query, "report");
+        assert!(s.opening.is_none());
         assert!(s.usage.recent(usage::now(), 8).is_empty());
     }
 

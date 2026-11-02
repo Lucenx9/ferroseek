@@ -262,6 +262,26 @@ worker, without reading file contents. The launcher requests details only on
 opening or refreshing the view, applies the existing read deadline and rejects
 late replies through a per-view generation. The view never opens the index.
 
+`Search1.TextPreview(file_url)` returns `(text, truncated)` on explicit entry or
+refresh. The daemon authorizes the indexed regular-file inode through the reader
+pool, then walks every path component with `openat(O_PATH | O_NOFOLLOW)`. Directory
+components require `O_DIRECTORY`; the final pinned descriptor must be a regular
+file with the indexed inode. Supported MIME filenames are checked before opening
+for reading. The worker reopens only its live `/proc/self/fd` descriptor, checks
+device/inode and rejects detected size/mtime changes across the bounded read.
+There is no index schema change or content indexing.
+
+The read cap is 64 KiB plus one detection byte; output is capped at 16,384 Unicode
+characters and 200 logical lines after CRLF/CR normalization. Invalid UTF-8 or binary
+controls in the inspected prefix produce `NotSupported`; a partial UTF-8 sequence
+at the byte limit is dropped. Unknown MIME types are unsupported. Failed identity
+checks produce `AccessDenied`; I/O failures produce `Failed`. This is a best-effort
+read of a pinned inode, not an atomic snapshot of concurrently written content.
+The launcher owns a fixed target and per-read generation, redacts text from Debug,
+and uses its three-second read deadline. A timeout releases the client bus queue;
+it does not cancel underlying filesystem work. Contents are neither persisted nor
+added to launch history. See [text preview limits](LAUNCHER.md#text-preview).
+
 `Search1` also exposes `Applications(file_url)` as desktop ID/name/icon tuples
 and `OpenWith(file_url, desktop_id, token)`. Both validate an available regular
 indexed file; OpenWith resolves eligible desktop entries again before dispatch.

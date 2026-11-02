@@ -243,7 +243,7 @@ and refreshes them; late replies cannot overwrite the current context.
 
 Folder searches contain no global suggestions, apps or calculator results. The
 All/Applications/Files filter is unavailable until returning to global search.
-File actions, including Open with and File details, remain available. Ctrl+I
+File actions, including Open with, File details and Preview text, remain available. Ctrl+I
 opens index status; Ctrl+comma opens folder settings. Applying folder settings
 returns to global search with the original query. Searching and moving between
 contexts do not record launch history. Matching launcher and daemon versions are
@@ -309,6 +309,43 @@ cannot be represented as UTF-8 text, the view shows and copies its lossless file
 URL instead. Viewing, refreshing and copying details do not record launch history.
 Folders and symbolic links are not supported by this view. Matching launcher and
 daemon versions are required.
+
+## Text preview
+
+Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
+`preview` or `contents`), or from **File details**. The preview reads only when
+opened or refreshed; selecting another result never reads its contents. The view
+stays on the captured file even if search results change. Esc returns to File
+details when opened there, otherwise to the original search and selected target
+when still available. No launch history is recorded.
+
+The view displays plain text, including Markdown or HTML source without rendering
+or executing it. Supported MIME types are `text/*`, JSON, XML, JavaScript, TOML and
+YAML, determined by the system MIME filename database. Unknown types, binary
+control characters and invalid UTF-8 in the inspected prefix have a distinct
+unsupported state. Empty files are identified explicitly. PDF, images and other
+rich previews are not available.
+
+Reads inspect at most 64 KiB plus one truncation-detection byte. Display is limited
+to 16,384 Unicode characters and 200 logical lines, whichever limit is reached
+first; a clipped preview says **Beginning of file**. An incomplete UTF-8 sequence
+at the byte boundary is omitted. CRLF and CR line endings display as LF. These
+limits apply before visual wrapping; the remainder of the file is not validated.
+
+Up/Down, Page Up/Down and Ctrl+Home/End scroll the text. **Refresh** (Ctrl+R)
+retries a failed read or fetches current content; it returns the scroll to the top.
+**Copy path** (Ctrl+Shift+C) copies the captured location, or its lossless file URL
+when the path contains non-UTF-8 bytes. The preview has no editor or content-copy
+command. Esc returns to the file actions for normal opening.
+
+Only indexed regular files are accepted. Symbolic links in any path component,
+changed file identities and unavailable paths are refused. After atomic file
+replacement, wait for indexing to catch up before refreshing. A file changed during
+the read is refused when detected. Reads use a pinned descriptor through Linux
+`/proc/self/fd`, never re-open the supplied path after validation. The launcher
+shows a timeout after three seconds; underlying filesystem work may still finish
+in the daemon. Matching launcher and daemon versions are required. File text is
+neither indexed nor persisted by this feature.
 
 ## Favorites
 

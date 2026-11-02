@@ -574,6 +574,16 @@ mod tests {
 
     #[zbus::interface(name = "io.github.ferroseek.Search1")]
     impl SearchService {
+        async fn text_preview(&self, id: &str) -> zbus::fdo::Result<(String, bool)> {
+            self.0.send((id.into(), "preview".into())).unwrap();
+            match id {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
+                "binary" => Err(zbus::fdo::Error::NotSupported("not UTF-8 text".into())),
+                _ => Ok(("synthetic text".into(), true)),
+            }
+        }
+
         async fn file_details(&self, id: &str) -> zbus::fdo::Result<(String, u64, i64)> {
             self.0.send((id.into(), "details".into())).unwrap();
             match id {
@@ -885,6 +895,53 @@ mod tests {
     }
 
     #[test]
+    fn text_preview_timeout_releases_the_bus_queue_without_retrying() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (tx, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                assert_eq!(
+                    backend.clone().text_preview("stall".into()).await.unwrap_err(),
+                    "Text preview timed out. Refresh to try again."
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "stall");
+                assert!(backend.clone().text_preview("reject".into()).await.is_err());
+                assert_eq!(requests.try_recv().unwrap().0, "reject");
+                assert_eq!(
+                    backend.clone().text_preview("file:///synthetic/report.pdf".into()).await.unwrap(),
+                    TextPreview::Text { text: "synthetic text".into(), truncated: true }
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "file:///synthetic/report.pdf");
+                assert_eq!(
+                    backend.clone().text_preview("binary".into()).await.unwrap(),
+                    TextPreview::Unsupported("not UTF-8 text".into())
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "binary");
+                assert!(requests.try_recv().is_err(), "reads must not retry automatically");
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
+        });
+    }
+
+    #[test]
     fn folder_queries_capture_scope_and_text_and_never_fall_back_to_global_search() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
@@ -989,5 +1046,14 @@ mod tests {
             let (result, ()) = iced::futures::future::join(backend.status(), respond).await;
             assert_eq!(result.unwrap_err(), "File-search status is unavailable. Try again.");
         });
+    }
+}
+
+#[cfg(test)]
+mod preview_diagnostics {
+    #[test]
+    fn debug_does_not_expose_file_contents() {
+        let preview = super::TextPreview::Text { text: "PRIVATE_FILE_CONTENTS".into(), truncated: false };
+        assert!(!format!("{preview:?}").contains("PRIVATE_FILE_CONTENTS"));
     }
 }
