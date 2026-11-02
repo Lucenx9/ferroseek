@@ -132,7 +132,7 @@ impl Panel {
             .copied()
             .filter_map(|action| {
                 let score = if matches!(action, Action::Desktop(_)) {
-                    let label = self.label(action).to_lowercase();
+                    let label = crate::matcher::fold(self.label(action));
                     if tokens.iter().map(String::as_str).eq(label.split_whitespace()) {
                         Some(crate::matcher::EXACT)
                     } else {

@@ -2,8 +2,8 @@
 //! Shared configuration and XDG paths; no index or graphical dependencies.
 
 use std::fs;
-use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::io::{self, Read};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -177,10 +177,22 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
+/// Open without waiting on FIFOs, then validate the descriptor before reading.
+/// Regular-file symlinks remain readable; folder editing separately guards saves.
+fn read_config(path: &Path) -> io::Result<String> {
+    let mut file = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "configuration must be a regular file"));
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    Ok(text)
+}
+
 impl Config {
     /// Loads `path`; a missing file means defaults.
     pub fn load(path: &Path) -> Result<Config, ConfigError> {
-        match fs::read_to_string(path) {
+        match read_config(path) {
             Ok(s) => Config::parse(&s).map_err(|e| match e {
                 ConfigError::Parse(_, m) => ConfigError::Parse(path.to_path_buf(), m),
                 other => other,
@@ -271,6 +283,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const CASE: &str = "FERROSEEK_TEST_FIFO_CONFIG";
+        if let Some(path) = std::env::var_os(CASE) {
+            let path = PathBuf::from(path);
+            if std::env::var_os("FERROSEEK_TEST_FOLDER_DOCUMENT").is_some() {
+                assert!(folders::Document::load(path).is_err());
+            } else {
+                assert!(matches!(Config::load(&path), Err(ConfigError::Io(_, error))
+                    if error.kind() == io::ErrorKind::InvalidInput));
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is NUL-terminated and points into this test's temp directory.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        for document in [false, true] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "tests::fifo_configuration_is_rejected_without_waiting_for_a_writer"])
+                .env(CASE, &path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if document {
+                command.env("FERROSEEK_TEST_FOLDER_DOCUMENT", "1");
+            }
+            let mut child = command.spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "configuration reader did not reject the FIFO");
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("configuration reader blocked waiting for a FIFO writer");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[test]
+    fn configuration_reads_keep_regular_file_symlinks_and_reject_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        assert_eq!(Config::load(&path).unwrap(), Config::default());
+        std::fs::write(&path, "roots = []").unwrap();
+        let link = temp.path().join("linked.toml");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(Config::load(&link).unwrap().roots.is_empty());
+        assert!(folders::Document::load(link).unwrap().config.roots.is_empty());
+        assert!(matches!(Config::load(Path::new("/dev/null")), Err(ConfigError::Io(_, error))
+            if error.kind() == io::ErrorKind::InvalidInput));
+        assert!(folders::Document::load(PathBuf::from("/dev/null")).is_err());
+    }
+
+    #[test]
+    fn nul_paths_are_rejected_when_parsing_or_updating_roots() {
+        for key in ["roots", "exclude_paths"] {
+            let text = format!(r#"{key} = ["/data/\u0000private"]"#);
+            assert!(matches!(Config::parse(&text), Err(ConfigError::Invalid(_))), "{key} accepted a NUL path");
+        }
+        assert!(matches!(Config::default().with_roots(vec!["/data/\0private".into()]), Err(ConfigError::Invalid(_))));
+        assert!(Config::parse(r#"roots = ["/data/valid path"]"#).is_ok());
+    }
+
+    #[test]
+    fn config_parse_validate_roundtrip() {
+        let c = Config::parse("roots = [\"/data\", \"/data/sub\", \"/other/\"]\nmax_cpu_percent = 20\n").unwrap();
+        assert_eq!(c.root_paths(), vec![PathBuf::from("/data"), PathBuf::from("/other")]);
+        assert!(Config::parse("max_cpu_percent = 0").is_err());
+        assert!(Config::parse("roots = [\"relative\"]").is_err());
+        assert!(Config::parse("unknown_key = 1").is_err());
+        let d = Config::default();
+        assert_eq!(Config::parse(&d.to_toml()).unwrap(), d);
+    }
+
+    #[test]
     fn repeated_slashes_after_tilde_stay_under_home() {
         const CHILD: &str = "FERROSEEK_TEST_TILDE_HOME";
         if std::env::var_os(CHILD).is_some() {
@@ -296,26 +394,5 @@ mod tests {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-
-    #[test]
-    fn nul_paths_are_rejected_when_parsing_or_updating_roots() {
-        for key in ["roots", "exclude_paths"] {
-            let text = format!(r#"{key} = ["/data/\u0000private"]"#);
-            assert!(matches!(Config::parse(&text), Err(ConfigError::Invalid(_))), "{key} accepted a NUL path");
-        }
-        assert!(matches!(Config::default().with_roots(vec!["/data/\0private".into()]), Err(ConfigError::Invalid(_))));
-        assert!(Config::parse(r#"roots = ["/data/valid path"]"#).is_ok());
-    }
-
-    #[test]
-    fn config_parse_validate_roundtrip() {
-        let c = Config::parse("roots = [\"/data\", \"/data/sub\", \"/other/\"]\nmax_cpu_percent = 20\n").unwrap();
-        assert_eq!(c.root_paths(), vec![PathBuf::from("/data"), PathBuf::from("/other")]);
-        assert!(Config::parse("max_cpu_percent = 0").is_err());
-        assert!(Config::parse("roots = [\"relative\"]").is_err());
-        assert!(Config::parse("unknown_key = 1").is_err());
-        let d = Config::default();
-        assert_eq!(Config::parse(&d.to_toml()).unwrap(), d);
     }
 }

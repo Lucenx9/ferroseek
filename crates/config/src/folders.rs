@@ -111,7 +111,7 @@ fn read(path: &Path) -> Result<Option<String>, String> {
     if std::fs::metadata(path).is_ok_and(|m| !m.is_file()) {
         return Err("Configuration must be a regular file.".into());
     }
-    match std::fs::read_to_string(path) {
+    match crate::read_config(path) {
         Ok(text) => Ok(Some(text)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("Cannot read settings: {e}")),
