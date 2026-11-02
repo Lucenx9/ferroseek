@@ -63,12 +63,17 @@ fn subsequence_score(token: &str, label: &str) -> Option<u32> {
     Some((100 + score).min(500))
 }
 
-/// Lower-cased, whitespace-split tokens of a query.
-pub fn tokens(query: &str) -> Vec<String> {
-    query.split_whitespace().map(str::to_lowercase).collect()
+/// Context-independent lowercase key with both Greek sigma forms unified.
+pub fn fold(label: &str) -> String {
+    label.chars().flat_map(char::to_lowercase).map(|c| if c == 'ς' { 'σ' } else { c }).collect()
 }
 
-/// Scores `labels` (already lower-cased) against query `tokens`. Labels are
+/// Normalized, whitespace-split tokens of a query.
+pub fn tokens(query: &str) -> Vec<String> {
+    query.split_whitespace().map(fold).collect()
+}
+
+/// Scores `labels` (already normalized with `fold`) against query `tokens`. Labels are
 /// ordered by importance: the first (the name) counts fully, later ones
 /// (generic name, keywords, …) are discounted. Returns `None` unless every
 /// token matches some label.
@@ -134,5 +139,11 @@ mod tests {
     fn unicode_is_handled() {
         assert!(s("àgo", "àgora").is_some());
         assert!(s("日本", "日本語 editor").is_some());
+    }
+
+    #[test]
+    fn greek_query_prefix_does_not_turn_sigma_into_a_different_letter() {
+        assert!(s("ΟΣ", "οσμοσ").is_some());
+        assert!(s("ος", "οσμοσ").is_some());
     }
 }

@@ -73,8 +73,8 @@ impl Panel {
             .iter()
             .enumerate()
             .filter_map(|(i, app)| {
-                let name = app.name.to_lowercase();
-                let id = app.id.to_lowercase();
+                let name = matcher::fold(&app.name);
+                let id = matcher::fold(&app.id);
                 let score = if tokens.is_empty() {
                     Some(0)
                 } else {

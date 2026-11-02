@@ -36,22 +36,22 @@ impl App {
     }
 }
 fn cached(entry: ferroseek_desktop::apps::App) -> App {
-    let mut search = vec![(entry.name.to_lowercase(), 100)];
+    let mut search = vec![(matcher::fold(&entry.name), 100)];
     if let Some(g) = &entry.generic_name {
-        search.push((g.to_lowercase(), 70));
+        search.push((matcher::fold(g), 70));
     }
     for k in &entry.keywords {
-        search.push((k.to_lowercase(), 60));
+        search.push((matcher::fold(k), 60));
     }
     // The ID's last component ("org.kde.dolphin" → "dolphin") finds apps
     // by their executable-like name.
     let stem = entry.id.trim_end_matches(".desktop");
-    let short = stem.rsplit('.').next().unwrap_or(stem).to_lowercase();
-    if short != entry.name.to_lowercase() {
+    let short = matcher::fold(stem.rsplit('.').next().unwrap_or(stem));
+    if short != matcher::fold(&entry.name) {
         search.push((short, 60));
     }
     if let Some(c) = &entry.comment {
-        search.push((c.to_lowercase(), 40));
+        search.push((matcher::fold(c), 40));
     }
     App { entry, search }
 }
@@ -65,6 +65,26 @@ pub fn parse(id: &str, file: &Path, text: &str, locales: &[String], desktops: &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn greek_names_match_prefixes_and_both_lowercase_sigma_forms() {
+        for name in ["ΟΣΜΟΣ", "οσμος", "οσμοσ"] {
+            let app = parse(
+                "org.example.App.desktop",
+                Path::new("/synthetic/app.desktop"),
+                &format!("[Desktop Entry]\nType=Application\nName={name}\nExec=viewer\n"),
+                &[],
+                &[],
+            )
+            .unwrap();
+            for query in ["ΟΣ", "οσ", "ος"] {
+                assert!(app.score(&matcher::tokens(query)).is_some(), "{query} must match {name}");
+            }
+            for query in ["ΟΣΜΟΣ", "οσμος", "οσμοσ"] {
+                assert_eq!(app.score(&matcher::tokens(query)), Some(matcher::EXACT));
+            }
+        }
+    }
+
     #[test]
     fn cached_application_labels_remain_searchable() {
         let app = parse(
