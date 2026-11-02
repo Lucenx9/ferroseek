@@ -104,12 +104,15 @@ fn read_pinned(pinned: &File) -> Result<(String, bool), Error> {
         }
         Err(_) => return Err(Error::Unsupported("The inspected text is not valid UTF-8.")),
     };
-    if text.chars().any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t')) {
+    if text.chars().any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t' | '\x0c')) {
         return Err(Error::Unsupported("The inspected text contains binary control characters."));
     }
-    let mut text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut text = text.replace("\r\n", "\n").replace(['\r', '\x0c'], "\n");
     let chars_end = text.char_indices().nth(MAX_CHARS).map_or(text.len(), |(index, _)| index);
-    let lines_end = text.match_indices('\n').nth(MAX_LINES - 1).map_or(text.len(), |(index, _)| index);
+    let lines_end = text.match_indices('\n').nth(MAX_LINES - 1).map_or(text.len(), |(index, _)| {
+        // A final line terminator does not introduce another logical line.
+        if index + 1 == text.len() { text.len() } else { index }
+    });
     let end = chars_end.min(lines_end);
     truncated |= end < text.len();
     text.truncate(end);
@@ -120,6 +123,21 @@ fn read_pinned(pinned: &File) -> Result<(String, bool), Error> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn line_limit_preserves_an_exactly_full_file_with_a_final_newline() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("lines.txt");
+        let exact = "line\n".repeat(MAX_LINES);
+        std::fs::write(&path, &exact).unwrap();
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        assert!(matches!(read(&path, inode, "text/plain"), Ok((text, false)) if text == exact));
+        std::fs::write(&path, format!("{exact}one more line\n")).unwrap();
+        assert!(matches!(read(&path, inode, "text/plain"), Ok((text, true)) if text == exact.trim_end_matches('\n')));
+        // Extra empty lines still count towards the line bound.
+        std::fs::write(&path, format!("{exact}\n")).unwrap();
+        assert!(matches!(read(&path, inode, "text/plain"), Ok((text, true)) if text.lines().count() == MAX_LINES));
+    }
 
     #[test]
     fn supported_mime_types_read_text_and_unknown_types_are_refused() {

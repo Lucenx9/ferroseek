@@ -83,6 +83,8 @@ def main():
     for controls in (b'hello\x7fworld', 'hello\u0085world'.encode(), 'hello\u009bworld'.encode()):
         (docs / 'preview-binary.txt').write_bytes(controls)
         assert 'NotSupported' in call('TextPreview', uri(docs / 'preview-binary.txt'), ok=False)
+    (docs / 'preview-binary.txt').write_bytes(b'page one\n\x0cpage two\n')
+    assert preview(docs / 'preview-binary.txt') == ('page one\n\npage two\n', False)
     for target in ('bad-url', 'file://host/path', 'file:///bad%00path', 'file:///etc/passwd', uri(docs)):
         call('TextPreview', target, ok=False)
     # Keep the indexed identity unchanged while replacing paths on disk.

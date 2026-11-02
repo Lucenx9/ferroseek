@@ -272,7 +272,7 @@ device/inode and rejects detected size/mtime changes across the bounded read.
 There is no index schema change or content indexing.
 
 The read cap is 64 KiB plus one detection byte; output is capped at 16,384 Unicode
-characters and 200 logical lines after CRLF/CR normalization. Invalid UTF-8 or binary
+characters and 200 logical lines after CRLF/CR/form-feed normalization. Invalid UTF-8 or binary
 controls in the inspected prefix produce `NotSupported`; a partial UTF-8 sequence
 at the byte limit is dropped. Unknown MIME types are unsupported. Failed identity
 checks produce `AccessDenied`; I/O failures produce `Failed`. This is a best-effort

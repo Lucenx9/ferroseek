@@ -322,14 +322,15 @@ when still available. No launch history is recorded.
 The view displays plain text, including Markdown or HTML source without rendering
 or executing it. Supported MIME types are `text/*`, JSON, XML, JavaScript, TOML and
 YAML, determined by the system MIME filename database. Unknown types, binary
-control characters and invalid UTF-8 in the inspected prefix have a distinct
+control characters (including terminal ESC sequences, DEL and C1) and invalid UTF-8
+in the inspected prefix have a distinct
 unsupported state. Empty files are identified explicitly. PDF, images and other
 rich previews are not available.
 
 Reads inspect at most 64 KiB plus one truncation-detection byte. Display is limited
 to 16,384 Unicode characters and 200 logical lines, whichever limit is reached
 first; a clipped preview says **Beginning of file**. An incomplete UTF-8 sequence
-at the byte boundary is omitted. CRLF and CR line endings display as LF. These
+at the byte boundary is omitted. CRLF, CR and form-feed page breaks display as LF. These
 limits apply before visual wrapping; the remainder of the file is not validated.
 
 Up/Down, Page Up/Down and Ctrl+Home/End scroll the text. **Refresh** (Ctrl+R)
