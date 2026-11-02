@@ -625,8 +625,9 @@ The isolated graphical harness measures the release launcher and real daemon
 together. It generates 10,007 synthetic files, waits for indexing to finish,
 and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and
 a private bus with no activation services. Launcher processes use `--private`,
-so history and favorites are disabled; application matching includes one synthetic
-entry and the runner's installed desktop entries. A separate test window establishes
+so history and favorites are disabled. Current profiles isolate application data
+to synthetic entries and staged screenshot-authorization metadata; historical runs
+below identify their earlier runner-application workload. A separate test window establishes
 keyboard input before the launcher and receives input again after it closes.
 Test-only Wayland fake input types `report` into the real search widget, edits
 the action filter and returns to the main field. No UI messages are injected.
@@ -640,7 +641,9 @@ LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 \
 
 The workflow `Launcher interaction` installs the Linux test dependencies and
 retains PNGs, per-process diagnostic logs and `latency.json`. The JSON records
-the OS, CPU, KWin version and every sample. There are 20 process launches by
+the OS, CPU, KWin version, keyboard profile, observed logical output geometry/scale
+and every sample. Current schema 2 also records the matching query generation,
+`query_ready_us` and `ready_to_frame_us`. There are 20 process launches by
 default (`FERROSEEK_SMOKE_TRIALS=2…100`); the first is reported separately and
 the remaining 19 use nearest-rank p50/p95 and maximum. Neither set claims cold
 caches: no caches are dropped and the daemon remains warm between launches.
@@ -656,10 +659,18 @@ caches: no caches are dropped and the daemon remains warm between launches.
   excluded. Logging and callbacks introduce measurement overhead.
 
 This workload is a repeatable diagnostic baseline, not a desktop speed claim
-or a CI speed threshold. It does not cover physical displays, multiple monitors,
-scaling, IMEs, application activation tokens, or existing target-window focus.
-The signal is `RedrawRequested`, before drawing completes; it does not measure
-completed rendering or monitor presentation.
+or a CI speed threshold. Current separate functional checks include activation
+context, existing synthetic targets, the named layouts and fractional-scale profile;
+these are not retroactive claims about the first recorded run below. Physical
+displays, multiple monitors, IMEs, other toolkits and real desktop associations
+remain outside the measured setup. The signal is `RedrawRequested`, before drawing
+completes; it does not measure completed rendering or monitor presentation.
+
+Current samples split the final edit into **results applied** (`query_ready_us`)
+and **results applied → redraw event** (`ready_to_frame_us`). Both come from the
+same successful generation. The second interval is the difference of query-relative
+microsecond durations; it includes scheduling until the redraw event, not rendering.
+Do not add independently sorted stage percentiles to infer a total percentile.
 
 ### First recorded run — 2026-11-02
 
@@ -681,3 +692,40 @@ file results, editing after asynchronous results, and background input after
 closing. The first also verified filter clearing, menu closure and main-field
 editing after those transitions. Inspected the three original screenshots.
 No startup optimization or cross-machine speed comparison is established.
+
+
+## 13. Launcher desktop profiles
+
+[Recorded run](https://github.com/Lucenx9/ferroseek/actions/runs/41529913635),
+commit `373b6c0952f43be5582a9edb20a98da962025d6b`, verified US 1×, French AZERTY
+1× and US 1.5× in virtual KWin 5.27.11 on Ubuntu 24.04. Each independent job used
+one observed 1280×800 logical output and the full keyboard/pointer activation
+checks. This is a virtual validation matrix, not physical Plasma 6 certification.
+
+All jobs report Linux 7.0.0-1017-azure, glibc 2.39 and a software renderer. US 1×
+used an AMD EPYC 9V74; the other two used EPYC 7763. The daemon was warm, the corpus
+contained 10,007 synthetic files, and each profile retained 20 numeric samples.
+The first process is separate from 19 repeats. Values are milliseconds:
+
+| Profile | First redraw, first process | First redraw p50 | Query ready p50 | Ready → redraw p50 | Total query p50 | Total query p95/max |
+|---|---:|---:|---:|---:|---:|---:|
+| US 1× | 844.325 | 215.921 | 11.315 | 7.867 | 21.291 | 46.396 |
+| AZERTY 1× | 1117.565 | 248.173 | 14.792 | 2.828 | 24.708 | 49.074 |
+| US 1.5× | 415.877 | 245.052 | 12.359 | 4.889 | 17.186 | 44.415 |
+
+[Environment, all samples and derivation](benchmarks/launcher-desktop-2026-11-02.json)
+explicitly label their derivation from this run's schema 1 reports and matching
+raw `query_ready`/`query_frame` events. Current schema 2 exports
+those intervals directly. The recorded jobs predate full application-data isolation
+in the current harness; they included runner-installed entries. This and differing
+hardware prevent treating the table as a layout comparison or an optimization gain.
+For n=19, nearest-rank p95 equals maximum. Per-stage percentiles are independent.
+
+To reproduce the current workload, use the command in section 12 with
+`FERROSEEK_SMOKE_PROFILE=us-1x`, `fr-1x` or `us-1.5x`; preserve each profile in its
+own output directory. The workflow runs all three. It checks actual KWin geometry,
+scale, ordinary key symbols and native screenshot sizes before assigning evidence
+to a profile. Preset queries wait for compositor keyboard focus; action text waits
+for confirmed widget focus. Typeahead before those transitions complete is not
+established by this suite. Raw support information, timings and original PNGs are
+retained as artifacts. No presentation or physical-desktop latency is measured.

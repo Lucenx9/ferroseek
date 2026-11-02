@@ -18,7 +18,8 @@ published release or verified compatibility with every Linux desktop.
   the engine and CLI; guided setup recommends the launcher on Wayland.
 - [ ] Validate real desktop sessions and publish an explicit compositor support
   matrix, including multiple monitors, display scaling and keyboard layouts.
-  Current graphical evidence is nested virtual KWin only.
+  Current graphical evidence is nested virtual KWin only: US 1×, AZERTY 1× and
+  US 1.5×. See the [validation matrix](LAUNCHER.md#desktop-validation).
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
   Application results/actions, file opens, selected handlers and reveal now request
@@ -45,7 +46,9 @@ published release or verified compatibility with every Linux desktop.
   together before choosing further performance work.
   A [first diagnostic baseline](BENCHMARKS.md#12-launcher-interaction-latency)
   covers real keyboard input and redraw events in virtual KWin; physical
-  presentation and real desktop measurements remain open.
+  presentation and real desktop measurements remain open. Per-profile reports
+  separate result readiness from redraw-event scheduling; see the
+  [recorded profiles](BENCHMARKS.md#13-launcher-desktop-profiles).
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;

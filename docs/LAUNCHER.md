@@ -6,9 +6,10 @@ applications, files and calculations on Wayland. It draws a layer-shell overlay,
 freedesktop desktop entries. It is a separate process: it never opens or
 writes the index and adds no background service.
 
-**Status:** experimental. Built and tested in a nested, virtual KWin
-(Plasma 6). Other compositors that implement `wlr-layer-shell` should work
-but have not been tested. The installer manages the launcher and its search engine with `--launcher`.
+**Status:** experimental. Automated graphical checks run in nested virtual KWin
+5.27.11 on Ubuntu 24.04. Other desktop sessions remain unverified; see the
+[validation matrix](#desktop-validation). The installer manages the launcher and
+its search engine with `--launcher`.
 
 ## Build and run
 
@@ -521,11 +522,22 @@ FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/laun
 This mode also requires Python 3 with PyQt5 and GTK 4 introspection bindings,
 a C compiler, `wayland-scanner`,
 Wayland client headers and `plasma-wayland-protocols`. Its test-only input client
-refuses sockets outside the isolated smoke-test namespace. This mode uses a US
-keymap and permits the test input interface only in disposable KWin. Twenty opens
-verify typing after the first redraw without clicking, editing after asynchronous
-results, action-filter focus and return to the main input, Escape/toggle and
-input returning to a background test application. PNGs, diagnostic logs and
+refuses sockets outside the isolated smoke-test namespace. The bounded profiles
+are `us-1x` (default), `fr-1x` and `us-1.5x`, selected with
+`FERROSEEK_SMOKE_PROFILE`. The input interface is enabled only in disposable KWin.
+The harness owns HOME, all XDG paths and runtime directory, and stages only its
+synthetic entries plus Spectacle's installed screenshot-authorization metadata.
+It cannot discover host application/service directories or a user-manager socket.
+
+Before input, KWin's support information must report one 1280×800 logical output
+at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
+1920×1200 at 1.5×. Ordinary typing and the unshifted Digit1 symbol (`1` or `&`)
+verify that the requested keyboard layout actually applies.
+
+Twenty measured opens wait for the first redraw and actual Wayland keyboard Enter
+before typing, without clicking or an arbitrary delay. They verify editing after
+asynchronous results, action-filter focus and return to the main input,
+Escape/toggle and input returning to a background test application. PNGs, diagnostic logs and
 `latency.json` remain in the output directory. It also opens a synthetic
 single-instance application, moves input to another test app, and reactivates
 the existing target through both Enter and a result-row double click. A persistent
@@ -535,7 +547,24 @@ an acknowledgement alone is insufficient. File cases cover new/existing document
 handlers, the application chooser, double click and FileManager1 reveal, including
 a long filename. An owned `xdg-open` stand-in routes default opens to the synthetic
 handler; these checks do not validate real desktop associations or file managers.
+Physical Ctrl+Digit1 also selects an application and a filtered declared action
+while their input fields have focus, preserving both query strings. Action-filter
+text waits for a widget focus query to return true. The suite does not establish
+typeahead handling between an opening shortcut and the asynchronous focus change.
 Other compositors, physical keyboards and IMEs remain unverified.
+
+### Desktop validation
+
+| Environment | Evidence | Still unverified |
+|---|---|---|
+| Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
+| Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
+| Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
+
+[Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)
+retain exact environment and source provenance. Multiple monitors, IMEs and
+multiple seats are not covered. KWin's virtual output count alone is insufficient:
+its 5.27 virtual backend initially overlaps outputs at the same coordinates.
 
 ### Local timing diagnostics
 
@@ -548,7 +577,10 @@ to retain a diagnostic session.
 `first_frame` measures from entry into `main` to the first redraw event;
 `query_ready` ends when current query results are applied, and `query_frame`
 ends at a subsequent redraw event. Superseded, hidden and failed queries have separate
-events and do not become successful frame samples. An old queued redraw cannot
+events and do not become successful frame samples. `keyboard_focus_enter` and
+`keyboard_focus_leave` report actual compositor keyboard focus without key contents;
+`actions_focused` reports a successful widget focus query in diagnostic mode.
+An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.
 Diagnostics can affect the timing they observe. See

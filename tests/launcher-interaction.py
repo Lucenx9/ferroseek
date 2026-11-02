@@ -65,8 +65,7 @@ def main():
     trials = int(os.environ.get("FERROSEEK_SMOKE_TRIALS", "20"))
     assert 2 <= trials <= 100
     probe_log = out / "focus-probe.jsonl"
-    probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
-    processes = [probe_process]
+    processes = []
     samples = []
     activation_log = out / "activation-target.jsonl"
     profile = os.environ.get("FERROSEEK_SMOKE_PROFILE", "us-1x")
@@ -122,6 +121,8 @@ def main():
                                 check=True, capture_output=True, text=True, timeout=5)
         return "true" in result.stdout
 
+    probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
+    processes.append(probe_process)
     try:
         # A physical input device remains connected after a click. Keep the
         # synthetic seat capabilities alive across short command-client calls.
@@ -146,8 +147,10 @@ def main():
                 process = subprocess.Popen([str(binary), "--private"], stdout=stream, stderr=stream,
                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
                 processes.append(process)
-                wait_for(lambda: any(r.get("event") == "first_frame" for r in records(log)), "first redraw")
-                text_report()  # no click or arbitrary focus delay after the first redraw
+                wait_for(lambda: any(r.get("event") == "first_frame" for r in records(log))
+                         and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
+                         "first redraw and compositor keyboard focus")
+                text_report()  # No click or arbitrary delay; both readiness signals are observed.
 
                 def frame(generation):
                     return next((r for r in records(log)
@@ -156,7 +159,12 @@ def main():
                 result = wait_for(lambda: frame(6), "six typed characters reached main input")
                 assert result["files"] == 15, "the real daemon must supply the capped file results"
                 first = next(r for r in records(log) if r.get("event") == "first_frame")
-                samples.append({"trial": trial + 1, "first_frame_us": first["elapsed_us"],
+                ready = next(r for r in records(log)
+                             if r.get("event") == "query_ready" and r["generation"] == result["generation"])
+                assert 0 <= ready["query_us"] <= result["query_us"], "results must precede their redraw event"
+                samples.append({"trial": trial + 1, "generation": result["generation"],
+                                "first_frame_us": first["elapsed_us"], "query_ready_us": ready["query_us"],
+                                "ready_to_frame_us": result["query_us"] - ready["query_us"],
                                 "query_frame_us": result["query_us"]})
                 # Test focus after the asynchronous reply before any command can refocus a field.
                 tap(14)
@@ -166,7 +174,7 @@ def main():
                 if trial == 0:
                     capture("interaction-results.png")
                     chord(29, 37)  # Ctrl+K, then type into the focused action filter.
-                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                    wait_for(lambda: any(r.get("event") == "actions_focused"
                                          for r in records(log)), "action filter focused")
                     tap(19)
                     wait_for(lambda: any(r.get("event") == "action_input" for r in records(log)),
@@ -225,12 +233,12 @@ def main():
                 )
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log))
-                         and any(r.get("event") == "[DEBUG-desktop-focus]keyboard_enter" for r in records(log)),
+                         and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
                          "target selected and compositor keyboard focus received")
                 query_edits = len([r for r in records(log) if r.get("event") == "query_start"])
                 if mode == "action-numbered":
                     chord(29, 37)
-                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                    wait_for(lambda: any(r.get("event") == "actions_focused"
                                          for r in records(log)), "numbered action field focused")
                     type_text("numbered")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 8,
@@ -311,11 +319,11 @@ def main():
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" and r.get("files") == 1
                                      for r in records(log))
-                         and any(r.get("event") == "[DEBUG-desktop-focus]keyboard_enter" for r in records(log)),
+                         and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
                          "indexed document selected and compositor keyboard focus received")
                 if mode == "file-with":
                     chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
-                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                    wait_for(lambda: any(r.get("event") == "actions_focused"
                                          for r in records(log)), "Open with action field focused")
                     type_text("with")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 4,
@@ -371,17 +379,20 @@ def main():
                     "p95_us": values[math.ceil(len(values) * .95) - 1], "max_us": values[-1]}
 
         # First process reported separately; no cache-dropping, so neither set is a cold-cache result.
-        report = {"schema": 1, "environment": {"platform": platform.platform(),
+        report = {"schema": 2, "environment": {"platform": platform.platform(),
                   "cpu": subprocess.check_output(["lscpu"], text=True),
                   "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
                   "profile": profile, "keyboard_layout": layout,
                   "output": {"logical_geometry": geometry, "scale": observed_scale}},
                   "corpus_files": 10007, "first_trial": samples[0], "samples": samples,
                   "repeat_first_frame": summary([s["first_frame_us"] for s in samples[1:]]),
+                  "repeat_query_ready": summary([s["query_ready_us"] for s in samples[1:]]),
+                  "repeat_ready_to_frame": summary([s["ready_to_frame_us"] for s in samples[1:]]),
                   "repeat_query_frame": summary([s["query_frame_us"] for s in samples[1:]]),
                   "limits": "Diagnostic redraw callback, not compositor presentation. Software-rendered virtual KWin; warm daemon; synthetic corpus; configured keyboard layout verified by ordinary input. Input dispatch and physical display latency are excluded."}
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
-        print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_frame")}))
+        print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_ready",
+                                                  "repeat_ready_to_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
     finally:
         if sys.exc_info()[0] is not None:

@@ -77,8 +77,14 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*"; for l in "$T"/*.log; do echo "--- $l"; tail -20 "$l"; done; exit 1; }
 
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
-    XDG_CACHE_HOME="$T/home/.cache" XDG_STATE_HOME="$T/home/.local/state"
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
+    XDG_CACHE_HOME="$T/home/.cache" XDG_STATE_HOME="$T/home/.local/state" \
+    XDG_RUNTIME_DIR="$T/runtime" XDG_CONFIG_DIRS="$T/empty-config" XDG_DATA_DIRS="$T/empty-data"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" \
+    "$XDG_RUNTIME_DIR" "$XDG_CONFIG_DIRS" "$XDG_DATA_DIRS"
+chmod 700 "$XDG_RUNTIME_DIR"
+# Keep screenshot authorization metadata without exposing host application dirs.
+[[ -f /usr/share/applications/org.kde.spectacle.desktop ]] || fail "Spectacle desktop entry not installed"
+cp /usr/share/applications/org.kde.spectacle.desktop "$XDG_DATA_HOME/applications/"
 printf '[Icons]\nTheme=breeze-dark\n' > "$XDG_CONFIG_HOME/kdeglobals"
 printf '[Desktop Entry]\nType=Application\nName=Report Viewer\nComment=Synthetic test entry\nIcon=document-preview\nExec=true\n' \
     > "$XDG_DATA_HOME/applications/test.report-viewer.desktop"

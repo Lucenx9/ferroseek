@@ -1059,7 +1059,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     if let Message::ActionsFocusChecked(focused) = message {
         if focused && s.panel.is_some() {
-            timing::event("[DEBUG-desktop-focus]actions_focused");
+            timing::event("actions_focused");
         }
         return Task::none();
     }
@@ -1619,10 +1619,8 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::CopyPath => return s.perform(Action::CopyPath),
         Command::NextScope | Command::PreviousScope => unreachable!("handled before the action panel"),
         Command::ToggleActions | Command::OpenActions => {
-            timing::event("[DEBUG-desktop-focus]actions_command");
             if let Some(item) = s.selected() {
                 s.panel = Some(s.panel_for(item));
-                timing::event("[DEBUG-desktop-focus]actions_opened");
                 let focus = widget::operation::focus(actions_id());
                 return if timing::enabled() {
                     focus.chain(widget::operation::is_focused(actions_id()).map(Message::ActionsFocusChecked))
