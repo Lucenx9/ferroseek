@@ -45,6 +45,13 @@ int main(int argc, char **argv)
     }
     org_kde_kwin_fake_input_authenticate(input, "FerroSeek isolated test", "Keyboard focus regression");
     if (wl_display_roundtrip(display) < 0) return 1;
+    if (argc == 2 && !strcmp(argv[1], "--hold")) {
+        puts("ready");
+        fflush(stdout);
+        (void)getchar(); /* Keep seat capabilities present until test cleanup. */
+        wl_display_disconnect(display);
+        return 0;
+    }
     for (int i = 1; i < argc; i++) {
         char *end;
         if (!strcmp(argv[i], "--double-click")) {

@@ -6,6 +6,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import select
 import signal
 import subprocess
 import sys
@@ -91,6 +92,13 @@ def main():
         return "true" in result.stdout
 
     try:
+        # A physical input device remains connected after a click. Keep the
+        # synthetic seat capabilities alive across short command-client calls.
+        input_device = subprocess.Popen([str(helper), "--hold"], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, text=True)
+        processes.append(input_device)
+        wait_for(lambda: select.select([input_device.stdout], [], [], 0)[0], "input device registered")
+        assert input_device.stdout.readline().strip() == "ready"
         wait_for(lambda: records(probe_log), "focus probe mapped")
         tap(44)  # z: establish that input reaches the background test application
         wait_for(lambda: {"text": "z"} in records(probe_log), "initial probe input")
