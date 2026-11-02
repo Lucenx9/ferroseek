@@ -25,7 +25,17 @@ fn launch_context_is_fresh_for_apps_and_declared_actions() {
             "[Desktop Entry]\nType=Application\nName=Context Probe\nExec=\"{}\" normal \"two words\" \"semi;literal\" %c\nPath={}\nActions=new;\n[Desktop Action new]\nName=New window\nExec=\"{}\" action \"two words\" %c\n",
             capture.display(), work.display(), capture.display()
         )).unwrap();
-        for case in ["app-none", "app-fresh", "action-none", "action-fresh"] {
+        for case in [
+            "app-none",
+            "app-fresh",
+            "app-empty",
+            "action-none",
+            "action-fresh",
+            "action-empty",
+            "missing-app",
+            "missing-action",
+            "invalid-action",
+        ] {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "launch_context_is_fresh_for_apps_and_declared_actions", "--nocapture"])
                 .env("FERROSEEK_TEST_CONTEXT_CASE", case)
@@ -55,16 +65,29 @@ fn launch_context_is_fresh_for_apps_and_declared_actions() {
 
     let desktop = PathBuf::from(std::env::var_os("FERROSEEK_TEST_CONTEXT_DESKTOP").unwrap());
     let text = fs::read_to_string(&desktop).unwrap();
+    let text = if case.starts_with("missing-") { text.replace("capture command", "unavailable command") } else { text };
     let app = apps::parse("org.ferroseek.Context.desktop", &desktop, &text, &[], &[]).unwrap();
-    match case.as_str() {
+    let output = PathBuf::from(std::env::var_os("FERROSEEK_TEST_CONTEXT_OUTPUT").unwrap());
+    let result = match case.as_str() {
         "app-none" => launch::launch_with_token(&app, None),
         "app-fresh" => launch::launch_with_token(&app, Some("fresh-app")),
+        "app-empty" => launch::launch_with_token(&app, Some("")),
         "action-none" => launch::launch_action_with_token(&app, 0, None),
         "action-fresh" => launch::launch_action_with_token(&app, 0, Some("fresh-action")),
+        "action-empty" => launch::launch_action_with_token(&app, 0, Some("")),
+        "missing-app" => launch::launch_with_token(&app, Some("fresh-app")),
+        "missing-action" => launch::launch_action_with_token(&app, 0, Some("fresh-action")),
+        "invalid-action" => launch::launch_action_with_token(&app, usize::MAX, Some("fresh-action")),
         _ => panic!("unknown fixture case"),
+    };
+    if case.starts_with("missing-") || case == "invalid-action" {
+        let expected =
+            if case == "invalid-action" { std::io::ErrorKind::InvalidInput } else { std::io::ErrorKind::NotFound };
+        assert_eq!(result.unwrap_err().kind(), expected);
+        assert!(!output.exists(), "a refused command must not run a child");
+        return;
     }
-    .unwrap();
-    let output = PathBuf::from(std::env::var_os("FERROSEEK_TEST_CONTEXT_OUTPUT").unwrap());
+    result.unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !output.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));

@@ -159,16 +159,17 @@ def main():
         entry.write_text("[Desktop Entry]\nType=Application\nName=Activation Probe\n"
                          f'Exec="{sys.executable}" "{target}"\n')
         serving_pid = None
-        for existing in [False, True]:
+        for activation_number, mode in enumerate(["new", "existing", "pointer"], start=1):
+            existing = mode != "new"
             if existing:
                 # A new unrelated window must own input before requesting the target again.
-                background = out / "activation-background.jsonl"
+                background = out / f"activation-background-{mode}.jsonl"
                 background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
                 processes.append(background_process)
                 wait_for(lambda: records(background), "second background window")
                 tap(44)
                 wait_for(lambda: {"text": "z"} in records(background), "unrelated window owns input")
-            log = out / ("activate-existing.jsonl" if existing else "activate-new.jsonl")
+            log = out / f"activate-{mode}.jsonl"
             with log.open("w") as stream:
                 process = subprocess.Popen(
                     [str(binary), "--private", "--query", "activation"], stdout=stream, stderr=stream,
@@ -178,30 +179,34 @@ def main():
                 )
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")
-                tap(28)  # Enter is the actual activation input.
+                if mode == "pointer":
+                    capture("activation-pointer-selection.png")
+                    subprocess.run([str(helper), "--double-click", "400", "295"], check=True, timeout=5)
+                else:
+                    tap(28)  # Enter is the actual activation input.
                 assert process.wait(timeout=5) == 0
                 starts = wait_for(lambda: [r for r in records(activation_log) if r.get("event") == "started"],
                                   "target process started")
                 if existing:
                     starts = wait_for(lambda: (s if len(s := [r for r in records(activation_log)
-                                                              if r.get("event") == "started"]) == 2 else None),
+                                                              if r.get("event") == "started"]) == activation_number else None),
                                       "single-instance client started")
                 assert starts[-1]["token_present"], "user-triggered launch must receive a fresh activation token"
                 activated = wait_for(lambda: (a if len(a := [r for r in records(activation_log)
-                                                            if r.get("event") == "activated"]) >= (2 if existing else 1)
+                                                            if r.get("event") == "activated"]) >= activation_number
                                              else None), "application accepted activation")
                 if existing:
                     assert activated[-1]["pid"] == serving_pid, "reactivate the existing instance"
                 else:
                     serving_pid = activated[-1]["pid"]
                 wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
-                                     and r.get("activation") == (2 if existing else 1)
+                                     and r.get("activation") == activation_number
                                      for r in records(activation_log)), "target window activated")
                 tap(44)
-                expected = "zz" if existing else "z"
+                expected = "z" * activation_number
                 wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
                                      for r in records(activation_log)), "chosen application owns keyboard focus")
-                capture("activation-existing.png" if existing else "activation-new.png")
+                capture(f"activation-{mode}.png")
 
         def summary(values):
             values = sorted(values)
