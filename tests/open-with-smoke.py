@@ -104,9 +104,10 @@ os.replace(temp, out)
     # The registered executable exists, but exec cannot start its interpreter.
     # This is a proven pre-dispatch failure, so another choice must remain possible.
     saved_helper = helper.read_bytes()
-    helper.write_text('#!/nonexistent/ferroseek-test-interpreter\n')
-    refused = call('OpenWith', url, 'matrix-handler.desktop', '', ok=False)
-    assert 'SpawnExecFailed' in refused.stderr, 'a known pre-dispatch error was reported as uncertain'
+    for invalid_program in ('#!/nonexistent/ferroseek-test-interpreter\n', 'invalid executable format\n'):
+        helper.write_text(invalid_program)
+        refused = call('OpenWith', url, 'matrix-handler.desktop', '', ok=False)
+        assert 'SpawnExecFailed' in refused.stderr, 'a known pre-dispatch error was reported as uncertain'
     helper.write_bytes(saved_helper)
     # A stub user scope records separate launches without contacting systemd.
     scope_log = root / 'selected-scopes.jsonl'
