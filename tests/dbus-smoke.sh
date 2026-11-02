@@ -143,9 +143,16 @@ grep -q "not in the index" "$T/open-out" || fail "unindexed Open not refused"
 
 echo "== Open indexed URL with activation token and a single path argument"
 url="file://$T/root/Documents/Quarterly%20Report.pdf"
-call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "" "test-token" > /dev/null
-for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
-[[ "$(cat "$T/open-log")" == "$(printf 'test-token\nunset\n1\n%s' "$T/root/Documents/Quarterly Report.pdf")" ]] || fail "indexed Open must forward only this operation token and one path argument"
+for action in "" open-parent; do
+    for token in test-token ""; do
+        rm -f "$T/open-log"
+        call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$url" "$action" "$token" > /dev/null
+        for _ in $(seq 100); do [[ -f "$T/open-log" ]] && break; sleep 0.01; done
+        expected_path="$T/root/Documents/Quarterly Report.pdf"
+        [[ "$action" != open-parent ]] || expected_path="$T/root/Documents"
+        [[ "$(cat "$T/open-log")" == "$(printf '%s\nunset\n1\n%s' "${token:-unset}" "$expected_path")" ]] || fail "file open/folder fallback must forward only this operation token and one path argument"
+    done
+done
 for pair in invalid-url unknown-action; do
     if [[ "$pair" == invalid-url ]]; then id="https://example.com"; action=""; else id="$url"; action="unknown"; fi
     if call --object-path /io/github/ferroseek/Search --method io.github.ferroseek.Search1.Open "$id" "$action" "" > /dev/null 2>&1; then
