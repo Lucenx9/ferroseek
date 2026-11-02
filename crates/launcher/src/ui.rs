@@ -376,10 +376,12 @@ impl Launcher {
             .items
             .iter()
             .map(|item| {
+                let generic = crate::icons::generic_mime_icon(&item.icon);
+                let file_fallbacks = [generic.as_deref().unwrap_or_default(), "text-x-generic", "unknown"];
                 let fallbacks: &[&str] = match item.target {
                     Target::App(_) => &["application-x-executable"],
                     Target::File(ref f) if f.is_dir => &["folder"],
-                    Target::File(_) => &["text-x-generic", "unknown"],
+                    Target::File(_) => &file_fallbacks,
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                 };
                 icons.get(&item.icon, fallbacks)
