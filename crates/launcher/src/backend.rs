@@ -380,24 +380,10 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts, activ
             let _ = reply.send(r);
         }
         Request::Run { id, action, reply } => {
-            if !reply.is_canceled() {
-                // Acquire at dispatch, so queued reads cannot age the token.
-                // The desktop chooses the target application for file actions.
-                let token = activation.token(String::new()).await;
-                if !reply.is_canceled() {
-                    let _ = reply
-                        .send(run(conn, "Open", &id, &action, token.as_deref().unwrap_or(""), timeouts.open).await);
-                }
-            }
+            run(conn, "Open", &id, &action, activation, reply, timeouts.open).await;
         }
         Request::RunWith { id, app, reply } => {
-            if !reply.is_canceled() {
-                let token = activation.token(String::new()).await;
-                if !reply.is_canceled() {
-                    let _ = reply
-                        .send(run(conn, "OpenWith", &id, &app, token.as_deref().unwrap_or(""), timeouts.open).await);
-                }
-            }
+            run(conn, "OpenWith", &id, &app, activation, reply, timeouts.open).await;
         }
         Request::TextPreview { id, validity, reply } => {
             if !validity.is_active() {
@@ -472,18 +458,29 @@ async fn run(
     method: &str,
     id: &str,
     argument: &str,
-    token: &str,
+    activation: &Activation,
+    reply: oneshot::Sender<Result<(), RunError>>,
     timeout: Duration,
-) -> Result<(), RunError> {
-    let body = (id, argument, token);
+) {
+    if reply.is_canceled() {
+        return;
+    }
+    // Acquire at dispatch, so queued reads cannot age the token.
+    // The desktop chooses the target application for file actions.
+    let token = activation.token(String::new()).await;
+    if reply.is_canceled() {
+        return;
+    }
+    let body = (id, argument, token.as_deref().unwrap_or(""));
     let request = conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), method, &body);
-    match zruntime::SharedRuntime::current() {
+    let result = match zruntime::SharedRuntime::current() {
         Ok(runtime) => match runtime.timeout(timeout, request).await {
             Ok(result) => result.map(|_| ()).map_err(open_error),
             Err(_) => Err(RunError::Unconfirmed(OPEN_TIMED_OUT.into())),
         },
         Err(e) => Err(RunError::Failed(e.to_string())),
-    }
+    };
+    let _ = reply.send(result);
 }
 
 async fn folder_policy(conn: &zbus::Connection) -> Result<Option<FolderPolicy>, String> {
