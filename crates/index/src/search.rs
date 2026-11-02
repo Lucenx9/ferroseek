@@ -204,8 +204,11 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                         continue;
                     }
                 }
-                cands.entry(id).or_insert(c);
-                accepted += 1;
+                // An earlier stage's candidate is not new; it must not use this budget.
+                if let std::collections::hash_map::Entry::Vacant(slot) = cands.entry(id) {
+                    slot.insert(c);
+                    accepted += 1;
+                }
                 if accepted >= cap {
                     break;
                 }
