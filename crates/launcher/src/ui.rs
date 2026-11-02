@@ -357,7 +357,8 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
-    Subscription::batch([event::listen_with(on_event), Subscription::run(ui_events)])
+    let events = if timing::enabled() { event::listen_raw(on_event) } else { event::listen_with(on_event) };
+    Subscription::batch([events, Subscription::run(ui_events)])
 }
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
@@ -1027,7 +1028,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     if let Message::TimingFrame(at) = message {
-        timing::frame(at);
+        let visible = s.panel.is_none()
+            && s.file_details.is_none()
+            && s.application_picker.is_none()
+            && s.folder_settings.is_none()
+            && s.search_status.is_none();
+        timing::frame(at, s.generation, visible);
         return Task::none();
     }
     if (s.application_picker.is_some() || s.file_details.is_some())
@@ -1263,7 +1269,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.status = if file_query { Status::Searching } else { Status::Idle };
             s.rebuild(false);
             if !file_query {
-                timing::ready(s.generation, s.items.len(), true);
+                timing::ready(s.generation, s.items.len(), s.files.len(), true);
             }
             let search = if file_query { s.request_files() } else { Task::none() };
             Task::batch([search, s.resize()])
@@ -1321,7 +1327,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             let had_panel = s.panel.is_some();
             s.rebuild(true);
-            timing::ready(generation, s.items.len(), success);
+            timing::ready(generation, s.items.len(), s.files.len(), success);
             let focus =
                 if had_panel && s.panel.is_none() { widget::operation::focus(search_id()) } else { Task::none() };
             Task::batch([s.resize(), focus, s.sync_preview()])

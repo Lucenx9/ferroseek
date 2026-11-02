@@ -493,13 +493,13 @@ an existing target application, other compositors, physical keyboards or IMEs.
 
 `FERROSEEK_LAUNCHER_TIMINGS=1 ferroseek-launcher` writes JSON records to stderr.
 It is disabled by default, adds no persistent log, and records only event names,
-generations, row counts and monotonic microsecond durations. Queries, paths,
+generations, result/file counts and monotonic microsecond durations. Queries, paths,
 application names and file contents are omitted. Redirect stderr explicitly
 to retain a diagnostic session.
 
 `first_frame` measures from entry into `main` to the first redraw event;
 `query_ready` ends when current query results are applied, and `query_frame`
-ends at a subsequent redraw event. Superseded and failed queries have separate
+ends at a subsequent redraw event. Superseded, hidden and failed queries have separate
 events and do not become successful frame samples. An old queued redraw cannot
 complete newer results. These are application redraw signals, **not compositor
 presentation or physical input-to-display latency**. Diagnostics can affect the

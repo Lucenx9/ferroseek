@@ -110,10 +110,14 @@ def main():
                                  if r.get("event") == "query_frame" and r["generation"] == generation), None)
 
                 result = wait_for(lambda: frame(6), "six typed characters reached main input")
-                assert result["rows"] > 0
+                assert result["files"] == 15, "the real daemon must supply the capped file results"
                 first = next(r for r in records(log) if r.get("event") == "first_frame")
                 samples.append({"trial": trial + 1, "first_frame_us": first["elapsed_us"],
                                 "query_frame_us": result["query_us"]})
+                # Test focus after the asynchronous reply before any command can refocus a field.
+                tap(14)
+                edited = wait_for(lambda: frame(7), "main input kept focus after asynchronous results")
+                assert edited["files"] == 15
 
                 if trial == 0:
                     capture("interaction-results.png")
@@ -121,18 +125,18 @@ def main():
                     tap(19)
                     wait_for(lambda: any(r.get("event") == "action_input" for r in records(log)),
                              "action filter owns focus")
-                    assert len([r for r in records(log) if r.get("event") == "query_start"]) == 6
+                    assert len([r for r in records(log) if r.get("event") == "query_start"]) == 7
                     capture("interaction-actions.png")
                     tap(1)  # Escape clears the filter
                     tap(1)  # Escape closes actions
                     tap(14)  # Backspace must now edit the main field
-                    wait_for(lambda: frame(7), "main input regained focus after closing actions")
+                    wait_for(lambda: frame(8), "main input regained focus after closing actions")
                     capture("interaction-return.png")
                     # No synthetic UI messages: the public toggle closes the real instance.
                     subprocess.run([str(binary), "--private"], check=True, timeout=5)
                 else:
                     tap(1)  # clear the query
-                    wait_for(lambda: frame(7), "Escape cleared the query")
+                    wait_for(lambda: frame(8), "Escape cleared the query")
                     tap(1)  # close
 
                 assert process.wait(timeout=5) == 0

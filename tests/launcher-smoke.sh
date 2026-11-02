@@ -56,9 +56,13 @@ XML
 fi
 
 T=$(mktemp -d /tmp/ferroseek-launcher-smoke-XXXXXX)
+mkdir -p "$OUT"
 cleanup() {
     kill ${LPID:-} ${DPID:-} ${KPID:-} 2>/dev/null || true
     wait 2>/dev/null || true
+    if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+        cp "$T"/*.log "$OUT/" 2>/dev/null || true
+    fi
     rm -rf "$T"
 }
 trap cleanup EXIT
@@ -125,7 +129,6 @@ for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; 
 sleep 1.5
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
-mkdir -p "$OUT"
 if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
     XML=$(pkg-config --variable=pkgdatadir plasma-wayland-protocols)/fake-input.xml
     wayland-scanner client-header "$XML" "$T/fake-input-client-protocol.h"

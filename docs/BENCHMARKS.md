@@ -649,7 +649,7 @@ caches: no caches are dropped and the daemon remains warm between launches.
   event after current results are applied. Includes application matching,
   backend queueing, D-Bus/search, result processing and the redraw callback;
   excludes injected-key dispatch before receipt and compositor presentation.
-- Superseded queries, failures and stale results do not count as successful
+- Superseded or hidden queries, failures and stale results do not count as successful
   query samples. Pending redraw callbacks older than result application are
   excluded. Logging and callbacks introduce measurement overhead.
 
