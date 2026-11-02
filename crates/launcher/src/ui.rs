@@ -2724,9 +2724,13 @@ mod tests {
         let generation = s.generation;
         let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![folder])) });
         s.cursor.select_target(&target, &s.items);
+        let mut departed_root_input = None;
+        let mut departed_child_input = None;
         for (key, code, modifiers, typed) in [
+            (Key::Character("x".into()), Code::KeyX, Modifiers::empty(), Some("x")),
             (Key::Named(keyboard::key::Named::ArrowRight), Code::ArrowRight, Modifiers::CTRL, None),
             (Key::Character("n".into()), Code::KeyN, Modifiers::empty(), Some("n")),
+            (Key::Character("x".into()), Code::KeyX, Modifiers::empty(), Some("x")),
             (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL, None),
             (Key::Named(keyboard::key::Named::ArrowLeft), Code::ArrowLeft, Modifiers::ALT, None),
         ] {
@@ -2781,11 +2785,23 @@ mod tests {
                 messages
             };
             assert_eq!(messages.len(), 1);
+            if code == Code::KeyX {
+                if s.search_folder.is_none() {
+                    departed_root_input = messages.into_iter().next();
+                } else {
+                    departed_child_input = messages.into_iter().next();
+                }
+                continue;
+            }
             for message in messages {
                 let _ = update(&mut s, message);
             }
             if code == Code::ArrowRight {
+                let _ = update(&mut s, departed_root_input.take().unwrap());
                 assert!(s.query.is_empty() && s.search_folder.is_some());
+            }
+            if code == Code::ArrowLeft {
+                let _ = update(&mut s, departed_child_input.take().unwrap());
             }
             if code == Code::KeyN || code == Code::KeyR {
                 assert_eq!(s.query, "n");

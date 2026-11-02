@@ -218,6 +218,10 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 ## Search in a folder
 
+![Scoped folder search](assets/launcher-folder-search.png)
+
+Rendered in a private virtual KWin session with a synthetic indexed tree.
+
 Select a folder result and press **Ctrl+Right**, or choose **Search in folder**
 from Actions (Ctrl+K; search for `within`). The header shows the captured location.
 Type at least two characters to search indexed files and folders strictly below
