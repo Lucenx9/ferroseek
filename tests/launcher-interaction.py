@@ -6,6 +6,8 @@ import math
 import os
 from pathlib import Path
 import platform
+import select
+import signal
 import subprocess
 import sys
 import time
@@ -63,6 +65,7 @@ def main():
     probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
     processes = [probe_process]
     samples = []
+    activation_log = out / "activation-target.jsonl"
 
     def keys(*codes):
         subprocess.run([str(helper), *map(str, codes)], check=True, timeout=5)
@@ -89,6 +92,13 @@ def main():
         return "true" in result.stdout
 
     try:
+        # A physical input device remains connected after a click. Keep the
+        # synthetic seat capabilities alive across short command-client calls.
+        input_device = subprocess.Popen([str(helper), "--hold"], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, text=True)
+        processes.append(input_device)
+        wait_for(lambda: select.select([input_device.stdout], [], [], 0)[0], "input device registered")
+        assert input_device.stdout.readline().strip() == "ready"
         wait_for(lambda: records(probe_log), "focus probe mapped")
         tap(44)  # z: establish that input reaches the background test application
         wait_for(lambda: {"text": "z"} in records(probe_log), "initial probe input")
@@ -151,6 +161,61 @@ def main():
                 tap(14)
                 wait_for(lambda: {"text": ""} in records(probe_log), "probe reset")
 
+        # Launch a real single-instance target, then reactivate it from another app.
+        target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
+        entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"
+        entry.write_text("[Desktop Entry]\nType=Application\nName=Activation Probe\n"
+                         f'Exec="{sys.executable}" "{target}"\n')
+        serving_pid = None
+        for activation_number, mode in enumerate(["new", "existing", "pointer"], start=1):
+            existing = mode != "new"
+            if existing:
+                # A new unrelated window must own input before requesting the target again.
+                background = out / f"activation-background-{mode}.jsonl"
+                background_process = subprocess.Popen([sys.executable, __file__, "--probe", str(background)])
+                processes.append(background_process)
+                wait_for(lambda: records(background), "second background window")
+                tap(44)
+                wait_for(lambda: {"text": "z"} in records(background), "unrelated window owns input")
+            log = out / f"activate-{mode}.jsonl"
+            with log.open("w") as stream:
+                process = subprocess.Popen(
+                    [str(binary), "--private", "--query", "activation"], stdout=stream, stderr=stream,
+                    env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
+                         "FERROSEEK_ACTIVATION_LOG": str(activation_log), "GSK_RENDERER": "cairo",
+                         "GDK_BACKEND": "wayland", "GTK_A11Y": "none"},
+                )
+                processes.append(process)
+                wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")
+                if mode == "pointer":
+                    capture("activation-pointer-selection.png")
+                    subprocess.run([str(helper), "--double-click", "400", "295"], check=True, timeout=5)
+                else:
+                    tap(28)  # Enter is the actual activation input.
+                assert process.wait(timeout=5) == 0
+                starts = wait_for(lambda: [r for r in records(activation_log) if r.get("event") == "started"],
+                                  "target process started")
+                if existing:
+                    starts = wait_for(lambda: (s if len(s := [r for r in records(activation_log)
+                                                              if r.get("event") == "started"]) == activation_number else None),
+                                      "single-instance client started")
+                assert starts[-1]["token_present"], "user-triggered launch must receive a fresh activation token"
+                activated = wait_for(lambda: (a if len(a := [r for r in records(activation_log)
+                                                            if r.get("event") == "activated"]) >= activation_number
+                                             else None), "application accepted activation")
+                if existing:
+                    assert activated[-1]["pid"] == serving_pid, "reactivate the existing instance"
+                else:
+                    serving_pid = activated[-1]["pid"]
+                wait_for(lambda: any(r.get("event") == "focus" and r.get("active")
+                                     and r.get("activation") == activation_number
+                                     for r in records(activation_log)), "target window activated")
+                tap(44)
+                expected = "z" * activation_number
+                wait_for(lambda: any(r.get("event") == "input" and r.get("text") == expected
+                                     for r in records(activation_log)), "chosen application owns keyboard focus")
+                capture(f"activation-{mode}.png")
+
         def summary(values):
             values = sorted(values)
             return {"n": len(values), "p50_us": values[math.ceil(len(values) * .5) - 1],
@@ -168,6 +233,18 @@ def main():
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
     finally:
+        if sys.exc_info()[0] is not None:
+            try:
+                capture("interaction-failure.png")
+            except (OSError, subprocess.SubprocessError):
+                pass
+        for pid in {r["pid"] for r in records(activation_log) if r.get("event") == "started"}:
+            try:
+                command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                if b"launcher-activation-probe.py" in command:
+                    os.kill(pid, signal.SIGTERM)
+            except (FileNotFoundError, ProcessLookupError):
+                pass
         for process in reversed(processes):
             if process.poll() is None:
                 process.terminate()

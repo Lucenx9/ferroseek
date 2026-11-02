@@ -558,12 +558,16 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
-    pub async fn list_directory(self, folder: String) -> Result<(Vec<FileHit>, bool), String> {
+    pub fn list_directory(self, folder: String) -> impl Future<Output = Result<(Vec<FileHit>, bool), String>> {
         let (reply, rx) = oneshot::channel();
-        self.tx
+        let sent = self
+            .tx
             .unbounded_send(Request::ListDirectory { folder, reply })
-            .map_err(|_| "bus thread stopped".to_string())?;
-        rx.await.map_err(|_| "bus thread stopped".to_string())?
+            .map_err(|_| "bus thread stopped".to_string());
+        async move {
+            sent?;
+            rx.await.map_err(|_| "bus thread stopped".to_string())?
+        }
     }
 
     pub async fn text_preview(self, id: String, validity: PreviewRequest) -> Result<PreviewData, String> {
@@ -615,22 +619,35 @@ impl Backend {
 
     /// File results for `query`; `Err` if the daemon is unreachable. A
     /// superseded search resolves to `Ok(None)`.
-    pub async fn search(self, query: String) -> Result<Option<Vec<FileHit>>, String> {
-        self.search_in(None, query).await
+    pub fn search(self, query: String) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
+        self.search_in(None, query)
     }
 
-    pub async fn search_within(self, folder: String, query: String) -> Result<Option<Vec<FileHit>>, String> {
-        self.search_in(Some(folder), query).await
+    pub fn search_within(
+        self,
+        folder: String,
+        query: String,
+    ) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
+        self.search_in(Some(folder), query)
     }
 
-    async fn search_in(self, folder: Option<String>, query: String) -> Result<Option<Vec<FileHit>>, String> {
+    fn search_in(
+        self,
+        folder: Option<String>,
+        query: String,
+    ) -> impl Future<Output = Result<Option<Vec<FileHit>>, String>> {
         let (reply, rx) = oneshot::channel();
-        self.tx
+        // Preserve UI intent order even when completion futures are polled out of order.
+        let sent = self
+            .tx
             .unbounded_send(Request::Search { query, folder, reply })
-            .map_err(|_| "bus thread stopped".to_string())?;
-        match rx.await {
-            Ok(r) => r.map(Some),
-            Err(oneshot::Canceled) => Ok(None),
+            .map_err(|_| "bus thread stopped".to_string());
+        async move {
+            sent?;
+            match rx.await {
+                Ok(r) => r.map(Some),
+                Err(oneshot::Canceled) => Ok(None),
+            }
         }
     }
 
@@ -1036,6 +1053,51 @@ mod tests {
             };
             iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
         });
+    }
+
+    #[test]
+    fn search_intent_order_survives_reversed_future_polling() {
+        use iced::futures::FutureExt;
+
+        for listing in [false, true] {
+            let (_temp, _bus, address) = private_bus();
+            zbus::block_on(async {
+                let (observed, requests) = std::sync::mpsc::channel();
+                let _service = zbus::connection::Builder::address(address.trim())
+                    .name(DAEMON_BUS_NAME)
+                    .serve_at(SEARCH_PATH, SearchService(observed))
+                    .build()
+                    .await
+                    .unwrap();
+                let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+                let (tx, rx) = mpsc::unbounded();
+                let backend = Backend { tx };
+                let older = backend.clone().search_within("obsolete".into(), "report".into());
+                let newer = if listing {
+                    backend.clone().list_directory("latest".into()).map(|result| result.map(|_| true)).boxed_local()
+                } else {
+                    backend
+                        .clone()
+                        .search_within("latest".into(), "report".into())
+                        .map(|result| result.map(|files| files.is_some()))
+                        .boxed_local()
+                };
+                drop(backend);
+                // Prime both completions in reverse order before serving the queue.
+                // Scheduling must not change which UI intent supersedes the other.
+                let replies = iced::futures::future::join(newer, older);
+                iced::futures::pin_mut!(replies);
+                assert!(iced::futures::poll!(&mut replies).is_pending());
+                let (_, (newer, older)) =
+                    iced::futures::future::join(serve(conn, rx, Timeouts::default()), replies).await;
+                assert!(newer.unwrap(), "latest intent was discarded (listing={listing})");
+                assert!(older.unwrap().is_none(), "obsolete intent survived (listing={listing})");
+                assert_eq!(
+                    requests.try_iter().collect::<Vec<_>>(),
+                    [("latest".into(), if listing { "list" } else { "report" }.into())]
+                );
+            });
+        }
     }
 
     #[test]

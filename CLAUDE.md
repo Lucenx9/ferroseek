@@ -195,5 +195,5 @@ rather than only the local default (1.94). Graphical checks use
   history writes are locked read-modify-write, `0600`, honour `--private`.
 - Graphical smoke tests use nested `kwin_wayland --virtual`, temp HOME/XDG and
   a private bus with an EMPTY activation dir to exclude user daemons and portals.
-- No XDG activation token yet: iced_layershell 0.19 does not expose the
-  layer surface (`window::run` is unhandled).
+- Application activation shares iced's Wayland connection; preserve input
+  context, bounded waits and cancellation. See docs/LAUNCHER.md.

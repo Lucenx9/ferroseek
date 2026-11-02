@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Test-only keyboard input on the disposable KWin socket, never the desktop. */
+/* Test-only input on the disposable KWin socket, never the desktop. */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,8 +45,32 @@ int main(int argc, char **argv)
     }
     org_kde_kwin_fake_input_authenticate(input, "FerroSeek isolated test", "Keyboard focus regression");
     if (wl_display_roundtrip(display) < 0) return 1;
+    if (argc == 2 && !strcmp(argv[1], "--hold")) {
+        puts("ready");
+        fflush(stdout);
+        (void)getchar(); /* Keep seat capabilities present until test cleanup. */
+        wl_display_disconnect(display);
+        return 0;
+    }
     for (int i = 1; i < argc; i++) {
         char *end;
+        if (!strcmp(argv[i], "--double-click")) {
+            if (i + 2 >= argc) return 1;
+            errno = 0;
+            long x = strtol(argv[++i], &end, 10);
+            if (errno || *end || x < 0 || x > 4096) return 1;
+            long y = strtol(argv[++i], &end, 10);
+            if (errno || *end || y < 0 || y > 4096) return 1;
+            org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_int((int)x), wl_fixed_from_int((int)y));
+            if (wl_display_roundtrip(display) < 0) return 1;
+            for (int click = 0; click < 2; click++) {
+                org_kde_kwin_fake_input_button(input, 0x110, 1); /* BTN_LEFT */
+                if (wl_display_roundtrip(display) < 0) return 1;
+                org_kde_kwin_fake_input_button(input, 0x110, 0);
+                if (wl_display_roundtrip(display) < 0) return 1;
+            }
+            continue;
+        }
         errno = 0;
         long key = strtol(argv[i], &end, 10);
         if (errno || *end || key == 0 || key < -255 || key > 255) return 1;

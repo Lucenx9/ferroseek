@@ -5,6 +5,7 @@
 //! One instance at a time: running the command again while it is open
 //! closes it, so a single desktop shortcut toggles the launcher.
 
+mod activation;
 mod apps;
 mod backend;
 mod calc;
@@ -99,6 +100,7 @@ fn main() -> ExitCode {
     };
     match ui::run(
         ui::Boot {
+            activation: activation::Activation::default(),
             backend,
             apps,
             usage: history,

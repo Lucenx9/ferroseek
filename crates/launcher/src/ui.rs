@@ -17,6 +17,7 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
+use crate::activation::Activation;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
@@ -70,6 +71,7 @@ static BOOT: Mutex<Option<Boot>> = Mutex::new(None);
 
 /// What the launcher starts with.
 pub struct Boot {
+    pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
     pub usage: Usage,
@@ -177,6 +179,7 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    activation: Activation,
     backend: Backend,
     apps: Vec<App>,
     usage: Usage,
@@ -184,6 +187,7 @@ pub struct Launcher {
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
+    application_launch: Option<iced::task::Handle>,
     /// A dispatched action lost its confirmation; never duplicate it in this session.
     unconfirmed_open: bool,
     icons: Icons,
@@ -225,6 +229,7 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
@@ -270,6 +275,7 @@ fn status_scroll_id() -> Id {
 }
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
+    let activation = boot_data.activation.clone();
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
     *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(boot_data);
     iced_layershell::application(boot, namespace, update, view)
@@ -277,6 +283,11 @@ pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), ic
         .theme(|_: &Launcher| Theme::Dark)
         .subscription(subscription)
         .settings(Settings {
+            with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
+                let connection = wayland_client::Connection::connect_to_env()?;
+                activation.attach(connection.clone());
+                Ok(connection)
+            })),
             layer_settings: LayerShellSettings {
                 anchor: Anchor::Top,
                 layer: Layer::Overlay,
@@ -301,15 +312,17 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { backend, apps, usage, favorites, initial_query, settings_path } =
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path } =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        activation,
         backend,
         apps,
         usage,
         favorites,
         opening: None,
+        application_launch: None,
         unconfirmed_open: false,
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
@@ -507,21 +520,35 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::Launch | Action::Desktop(_), Target::App(i)) => {
-                let app = &self.apps[*i];
-                let launched = match action {
-                    Action::Desktop(index) => crate::launch::launch_action(app, index),
-                    _ => crate::launch::launch(app),
+                let app = self.apps[*i].clone();
+                let valid = match action {
+                    Action::Desktop(index) => app.action_argv(index),
+                    _ => app.argv(),
                 };
-                match launched {
-                    Ok(()) => {
-                        self.usage.record(Kind::App, &app.id, &self.query, usage::now());
-                        iced::exit()
-                    }
-                    Err(e) => {
-                        self.status = Status::Error(format!("Cannot launch {}: {e}", item.title));
-                        self.resize()
-                    }
+                if let Err(error) = valid {
+                    self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
+                    return self.resize();
                 }
+                let id = app.id.clone();
+                let activation = self.activation.clone();
+                self.opening = Some((id.clone(), self.query.clone()));
+                self.status = Status::Notice("Opening application…".into());
+                let (task, handle) = Task::perform(
+                    async move {
+                        let app_id =
+                            if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
+                        let token = activation.token(app_id).await;
+                        let result = match action {
+                            Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
+                            _ => crate::launch::launch(&app, token.as_deref()),
+                        };
+                        result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
+                    },
+                    move |result| Message::ApplicationOpened { id: id.clone(), result },
+                )
+                .abortable();
+                self.application_launch = Some(handle.abort_on_drop());
+                task
             }
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
@@ -692,16 +719,12 @@ impl Launcher {
                 result,
             });
         }
-        Task::perform(
-            async move {
-                if let Some(folder) = folder {
-                    backend.search_within(folder, query).await
-                } else {
-                    backend.search(query).await
-                }
-            },
-            move |result| Message::Files { generation, result },
-        )
+        let deliver = move |result| Message::Files { generation, result };
+        if let Some(folder) = folder {
+            Task::perform(backend.search_within(folder, query), deliver)
+        } else {
+            Task::perform(backend.search(query), deliver)
+        }
     }
 
     fn refresh_folder(&mut self) -> Task<Message> {
@@ -1388,6 +1411,23 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 .map(|_| action);
             a.map_or_else(Task::none, |a| s.perform(a))
         }
+        Message::ApplicationOpened { id, result } => {
+            if !s.opening.as_ref().is_some_and(|(pending, _)| *pending == id) {
+                return Task::none();
+            }
+            let (_, query) = s.opening.take().unwrap();
+            s.application_launch = None;
+            match result {
+                Ok(()) => {
+                    s.usage.record(Kind::App, &id, &query, usage::now());
+                    iced::exit()
+                }
+                Err(error) => {
+                    s.status = Status::Error(error);
+                    s.resize()
+                }
+            }
+        }
         Message::Opened(Ok(())) => {
             if let Some((id, query)) = s.opening.take() {
                 s.usage.record(Kind::File, &id, &query, usage::now());
@@ -1413,7 +1453,10 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             s.resize()
         }
-        Message::Ui(UiEvent::Toggle) => iced::exit(),
+        Message::Ui(UiEvent::Toggle) => {
+            s.application_launch = None;
+            iced::exit()
+        }
         // Layer-shell requests generated by `to_layer_message` are handled
         // by the runtime before they reach here.
         _ => Task::none(),
@@ -1574,6 +1617,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
         }
         Command::Back => {
             if s.query.is_empty() {
+                s.application_launch = None;
                 return iced::exit();
             }
             // Apply the clear synchronously so it cannot arrive in a later context.
@@ -2190,11 +2234,13 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: vec![app],
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
             opening: None,
+            application_launch: None,
             unconfirmed_open: false,
             icons: Icons::disabled(),
             query: String::new(),
@@ -4174,6 +4220,157 @@ mod tests {
         assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 8);
         let _ = command(&mut s, Command::First);
         assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 0);
+    }
+
+    #[test]
+    fn application_confirmation_keeps_the_original_target_and_query() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = search_state();
+        s.usage = Usage::load(Some(root.path().join("usage")));
+        s.apps.push(
+            crate::apps::parse(
+                "other.desktop",
+                std::path::Path::new("/synthetic/other.desktop"),
+                "[Desktop Entry]\nType=Application\nName=Other\nExec=missing\n",
+                &[],
+                &[],
+            )
+            .unwrap(),
+        );
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _pending = command(&mut s, Command::Activate);
+        assert_eq!(s.usage.boost(Kind::App, "report.desktop", "report", usage::now()), 0);
+        let _ = update(&mut s, Message::Query("other".into()));
+        assert_eq!(command(&mut s, Command::Activate).units(), 0, "a second Enter must not start another open");
+        let _ = update(&mut s, Message::ApplicationOpened { id: "other.desktop".into(), result: Ok(()) });
+        assert_eq!(s.usage.boost(Kind::App, "other.desktop", "other", usage::now()), 0);
+        let _ = update(&mut s, Message::ApplicationOpened { id: "report.desktop".into(), result: Ok(()) });
+        let now = usage::now();
+        assert!(
+            s.usage.boost(Kind::App, "report.desktop", "report", now)
+                > s.usage.boost(Kind::App, "report.desktop", "unrelated", now)
+        );
+        assert_eq!(s.usage.boost(Kind::File, "report.desktop", "report", now), 0);
+        assert_eq!(s.usage.boost(Kind::App, "other.desktop", "other", now), 0);
+        let boost = s.usage.boost(Kind::App, "report.desktop", "report", now);
+        let _ = update(&mut s, Message::ApplicationOpened { id: "report.desktop".into(), result: Ok(()) });
+        assert_eq!(s.usage.boost(Kind::App, "report.desktop", "report", now), boost);
+    }
+
+    #[test]
+    fn application_submission_error_keeps_actions_usable_without_recording_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = application_actions(&["New window"]);
+        s.usage = Usage::load(Some(root.path().join("usage")));
+        let id = s.apps[0].id.clone();
+        let _pending = s.perform(Action::Desktop(0));
+        let _ =
+            update(&mut s, Message::ApplicationOpened { id: id.clone(), result: Err("Cannot launch target".into()) });
+        assert!(s.panel.is_some() && s.opening.is_none());
+        assert!(matches!(s.status, Status::Error(_)));
+        assert_eq!(s.usage.boost(Kind::App, &id, "report", usage::now()), 0);
+        assert!(s.perform(Action::Desktop(0)).units() > 0, "an explicitly retried action is permitted");
+    }
+
+    #[test]
+    fn application_tasks_preserve_the_target_and_respect_closing() {
+        let case = std::env::var("FERROSEEK_TEST_CANCEL_APP");
+        let Ok(case) = case else {
+            let root = tempfile::tempdir().unwrap();
+            for case in ["escape", "toggle", "dispatch-app", "dispatch-action"] {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "ui::tests::application_tasks_preserve_the_target_and_respect_closing",
+                        "--nocapture",
+                    ])
+                    .env("FERROSEEK_TEST_CANCEL_APP", case)
+                    .env("FERROSEEK_TEST_CANCEL_ROOT", root.path())
+                    .env("FERROSEEK_TEST_DISPATCH_OUTPUT", root.path().join(case))
+                    .env("HOME", root.path())
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("XDG_CONFIG_HOME", root.path().join("config"))
+                    .env("XDG_DATA_HOME", root.path().join("data"))
+                    .env("XDG_STATE_HOME", root.path().join("state"))
+                    .env("XDG_CACHE_HOME", root.path().join("cache"))
+                    .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
+                    .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{case}: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        };
+        let root = std::path::PathBuf::from(std::env::var_os("FERROSEEK_TEST_CANCEL_ROOT").unwrap());
+        let dispatch = case.starts_with("dispatch-");
+        let mut s = if dispatch { application_actions(&["New window"]) } else { search_state() };
+        if dispatch {
+            use std::os::unix::fs::PermissionsExt;
+            let capture = root.join(format!("capture-{case}"));
+            std::fs::write(&capture, "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$FERROSEEK_TEST_DISPATCH_OUTPUT.tmp\"\nmv \"$FERROSEEK_TEST_DISPATCH_OUTPUT.tmp\" \"$FERROSEEK_TEST_DISPATCH_OUTPUT\"\n").unwrap();
+            std::fs::set_permissions(&capture, std::fs::Permissions::from_mode(0o700)).unwrap();
+            s.apps[0].exec = format!("\"{}\" captured-app", capture.display());
+            s.apps[0].actions[0].exec = format!("\"{}\" captured-action", capture.display());
+            s.apps.push(
+                crate::apps::parse(
+                    "other.desktop",
+                    std::path::Path::new("/synthetic/other.desktop"),
+                    &format!(
+                        "[Desktop Entry]\nType=Application\nName=Other\nExec=\"{}\" wrong-target\n",
+                        capture.display()
+                    ),
+                    &[],
+                    &[],
+                )
+                .unwrap(),
+            );
+            s.usage = Usage::load(Some(root.join(format!("usage-{case}"))));
+        } else {
+            s.apps[0].exec = format!("\"{}\"", root.join("nonexistent-command").display());
+        }
+        let _ = update(&mut s, Message::Query("report".into()));
+        let task =
+            if case == "dispatch-action" { s.perform(Action::Desktop(0)) } else { command(&mut s, Command::Activate) };
+        if dispatch {
+            let _ = update(&mut s, Message::Query("other".into()));
+            assert_eq!(command(&mut s, Command::Activate).units(), 0);
+        } else if case == "escape" {
+            let _ = update(&mut s, Message::Query(String::new()));
+            let _ = command(&mut s, Command::Back);
+        } else {
+            let _ = update(&mut s, Message::Ui(UiEvent::Toggle));
+        }
+        let output = iced::futures::executor::block_on(async {
+            if let Some(stream) = iced_runtime::task::into_stream(task) {
+                stream.collect::<Vec<_>>().await
+            } else {
+                Vec::new()
+            }
+        });
+        if dispatch {
+            assert_eq!(output.len(), 1);
+            for action in output {
+                if let iced_runtime::Action::Output(message) = action {
+                    let _ = update(&mut s, message);
+                }
+            }
+            let path = std::path::PathBuf::from(std::env::var_os("FERROSEEK_TEST_DISPATCH_OUTPUT").unwrap());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !path.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let expected = if case == "dispatch-action" { "captured-action\n" } else { "captured-app\n" };
+            assert_eq!(std::fs::read_to_string(path).unwrap(), expected);
+            assert!(s.usage.boost(Kind::App, "report.desktop", "report", usage::now()) > 0);
+            assert_eq!(s.usage.boost(Kind::App, "other.desktop", "other", usage::now()), 0);
+        } else {
+            assert!(output.is_empty(), "closing must abort deferred submission, not produce a launch result");
+        }
     }
 
     #[test]
