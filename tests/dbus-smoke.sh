@@ -11,7 +11,35 @@ set -euo pipefail
 BIN=${1:-target/debug/ferroseekd}
 BIN=$(realpath "$BIN")
 if [[ "${FERROSEEK_SMOKE_ISOLATED:-}" != 1 ]]; then
-    exec env FERROSEEK_SMOKE_ISOLATED=1 dbus-run-session -- "$0" "$BIN"
+    TEST_BUS_ROOT=$(mktemp -d /tmp/ferroseek-dbus-session-XXXXXX)
+    trap 'rm -rf "$TEST_BUS_ROOT"' EXIT
+    mkdir -p "$TEST_BUS_ROOT/services" "$TEST_BUS_ROOT/host-data/dbus-1/services"
+    # A sentinel in a standard directory makes accidental default-bus config fail
+    # even on CI hosts without a file manager. It must never be activatable.
+    cat > "$TEST_BUS_ROOT/host-data/dbus-1/services/org.ferroseek.Unexpected.service" <<'SERVICE'
+[D-BUS Service]
+Name=org.ferroseek.Unexpected
+Exec=/usr/bin/false
+SERVICE
+    sed "s|@SERVICEDIR@|$TEST_BUS_ROOT/services|" > "$TEST_BUS_ROOT/bus.conf" <<'XML'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "https://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <keep_umask/>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <servicedir>@SERVICEDIR@</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+XML
+    FERROSEEK_SMOKE_ISOLATED=1 XDG_DATA_HOME="$TEST_BUS_ROOT/host-data" \
+        dbus-run-session --config-file="$TEST_BUS_ROOT/bus.conf" -- "$0" "$BIN"
+    exit
 fi
 
 T=$(mktemp -d)
@@ -59,6 +87,10 @@ SVC=io.github.ferroseek.FerroSeek
 call() { gdbus call --session --dest "$SVC" "$@"; }
 fail() { echo "FAIL: $*"; echo "--- daemon log"; cat "$T/daemon.log"; exit 1; }
 file_status() { call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.FileSearchStatus; }
+
+activatable=$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+    --method org.freedesktop.DBus.ListActivatableNames)
+[[ "$activatable" != *org.ferroseek.Unexpected* ]] || fail "standard service directories leaked into the test bus"
 
 for _ in $(seq 100); do
     call --object-path /io/github/ferroseek/FerroSeek --method io.github.ferroseek.FerroSeek1.Status \
