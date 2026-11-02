@@ -176,3 +176,17 @@ fn format_size(bytes: u64) -> String {
     }
     format!("{value:.1} {unit} ({bytes} bytes)")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::format_size;
+
+    #[test]
+    fn displayed_sizes_use_the_next_unit_when_rounding_crosses_its_boundary() {
+        assert_eq!(format_size(1023), "1023 bytes");
+        assert_eq!(format_size(1024), "1.0 KiB (1024 bytes)");
+        assert_eq!(format_size(1_048_000), "1023.4 KiB (1048000 bytes)");
+        assert_eq!(format_size(1_048_575), "1.0 MiB (1048575 bytes)");
+        assert_eq!(format_size(1_073_741_823), "1.0 GiB (1073741823 bytes)");
+    }
+}
