@@ -130,7 +130,8 @@ sleep 1.5
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
 if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
-    XML=$(pkg-config --variable=pkgdatadir plasma-wayland-protocols)/fake-input.xml
+    XML=/usr/share/plasma-wayland-protocols/fake-input.xml
+    [[ -f "$XML" ]] || fail "plasma-wayland-protocols/fake-input.xml not installed"
     wayland-scanner client-header "$XML" "$T/fake-input-client-protocol.h"
     wayland-scanner private-code "$XML" "$T/fake-input-protocol.c"
     cc -std=c11 -Wall -Wextra -Werror -I"$T" tests/launcher-input.c "$T/fake-input-protocol.c" \
