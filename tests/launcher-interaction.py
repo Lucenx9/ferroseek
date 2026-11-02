@@ -165,7 +165,9 @@ def main():
 
                 if trial == 0:
                     capture("interaction-results.png")
-                    chord(29, 37)  # Ctrl+K, then type into the action filter
+                    chord(29, 37)  # Ctrl+K, then type into the focused action filter.
+                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                                         for r in records(log)), "action filter focused")
                     tap(19)
                     wait_for(lambda: any(r.get("event") == "action_input" for r in records(log)),
                              "action filter owns focus")
@@ -228,6 +230,8 @@ def main():
                 query_edits = len([r for r in records(log) if r.get("event") == "query_start"])
                 if mode == "action-numbered":
                     chord(29, 37)
+                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                                         for r in records(log)), "numbered action field focused")
                     type_text("numbered")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 8,
                              "numbered action filter owns focus")
@@ -311,6 +315,8 @@ def main():
                          "indexed document selected and compositor keyboard focus received")
                 if mode == "file-with":
                     chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
+                    wait_for(lambda: any(r.get("event") == "[DEBUG-desktop-focus]actions_focused"
+                                         for r in records(log)), "Open with action field focused")
                     type_text("with")
                     wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 4,
                              "Open with action filtered")

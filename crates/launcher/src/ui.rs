@@ -231,6 +231,7 @@ pub struct Launcher {
 pub enum Message {
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
+    ActionsFocusChecked(bool),
     Query(String),
     ContextQuery { generation: u64, query: String },
     Scope(Scope),
@@ -1056,6 +1057,12 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::ActionsFocusChecked(focused) = message {
+        if focused && s.panel.is_some() {
+            timing::event("[DEBUG-desktop-focus]actions_focused");
+        }
+        return Task::none();
+    }
     if let Message::TimingFrame(at) = message {
         let visible = s.panel.is_none()
             && s.file_details.is_none()
@@ -1616,7 +1623,12 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             if let Some(item) = s.selected() {
                 s.panel = Some(s.panel_for(item));
                 timing::event("[DEBUG-desktop-focus]actions_opened");
-                return widget::operation::focus(actions_id());
+                let focus = widget::operation::focus(actions_id());
+                return if timing::enabled() {
+                    focus.chain(widget::operation::is_focused(actions_id()).map(Message::ActionsFocusChecked))
+                } else {
+                    focus
+                };
             }
         }
         Command::BrowseFolder | Command::BackFolder | Command::ScrollPreview(_) => {
