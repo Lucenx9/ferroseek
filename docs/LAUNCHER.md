@@ -55,7 +55,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 | Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |
-| Esc | clear the action filter, close actions, clear the query, then close |
+| Esc | clear the action filter, close actions, clear the query, return from folder search, then close |
 
 Choose **All**, **Applications** or **Files** beside the search field to narrow
 results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab

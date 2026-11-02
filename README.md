@@ -79,8 +79,9 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
+| Alt+Right / Alt+Left | Search in the selected folder / return to the previous search |
 | Ctrl+Shift+C | Copy a file path |
-| Esc | Close actions, clear the query, then close the launcher |
+| Esc | Clear the action filter, close actions, clear the query, return from folder search, then close |
 
 More navigation keys and history settings are in the [launcher guide](docs/LAUNCHER.md).
 
