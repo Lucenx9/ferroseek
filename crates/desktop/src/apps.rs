@@ -73,6 +73,15 @@ impl App {
                             Some('%') => expanded.push("%"),
                             Some('c') => expanded.push(&self.name),
                             Some('k') => expanded.push(&self.file),
+                            Some(code @ ('f' | 'u')) if index > 0 => {
+                                documents += 1;
+                                if code == 'f' {
+                                    expanded.push(path);
+                                } else {
+                                    expanded.push(uri);
+                                }
+                            }
+                            Some('d' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
                             _ => return Err(ExecError::InvalidFieldCode),
                         }
                     }

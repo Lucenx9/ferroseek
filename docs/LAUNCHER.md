@@ -238,8 +238,9 @@ reply uses the same duplicate-open protection as normal file opening. History
 is recorded only after daemon acknowledgement.
 
 Compatibility: this first version lists installed desktop entries declaring the
-file's detected MIME type and accepting a standalone `%f`, `%F`, `%u` or `%U`
-argument. It includes `NoDisplay` document handlers, honours hidden-entry masks,
+file's detected MIME type, an alias or a parent type and accepting one `%f`,
+`%F`, `%u` or `%U` document field. Single-file `%f`/`%u` can also appear within
+an option argument; list fields `%F`/`%U` must stand alone. It includes `NoDisplay` document handlers, honours hidden-entry masks,
 visibility and `TryExec`, and never accepts a caller-supplied command. Type
 detection uses filename metadata from shared-mime-info and does not read file
 contents. Unrecognized types, folders and symbolic links are not supported by

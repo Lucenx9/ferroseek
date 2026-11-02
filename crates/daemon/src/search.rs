@@ -52,6 +52,20 @@ impl Search {
     }
 }
 
+fn applications_for_file(path: &Path) -> Vec<ferroseek_desktop::apps::App> {
+    let db = MimeDb::load_for_handlers();
+    let types = db.handler_types(&path.file_name().unwrap_or_default().to_string_lossy());
+    if types.is_empty() {
+        return Vec::new();
+    }
+    ferroseek_desktop::apps::file_handlers(
+        &ferroseek_desktop::apps::data_dirs(),
+        &ferroseek_desktop::apps::current_locales(),
+        &ferroseek_desktop::apps::current_desktops(),
+        &types,
+    )
+}
+
 /// `file://` URL with every byte outside RFC 3986 unreserved/`/` escaped,
 /// so any path (including non-UTF-8 bytes) becomes a valid D-Bus string.
 pub fn file_url(p: &Path) -> String {
@@ -133,21 +147,14 @@ impl Search {
         .await
     }
 
-    /// Installed handlers declaring the indexed file's MIME type.
+    /// Installed handlers declaring the indexed file's MIME type or a parent.
     async fn applications(&self, match_id: String) -> zbus::fdo::Result<Vec<(String, String, String)>> {
         let path = self.indexed_file(&match_id).await?;
-        let mime = self.mime.clone();
         zruntime::unblock(move || {
-            let db = mime.get_or_init(MimeDb::load);
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let Some(mime_type) = db.mime_for(&name) else { return Ok(Vec::new()) };
-            let apps = ferroseek_desktop::apps::file_handlers(
-                &ferroseek_desktop::apps::data_dirs(),
-                &ferroseek_desktop::apps::current_locales(),
-                &ferroseek_desktop::apps::current_desktops(),
-                &[mime_type.to_string()],
-            );
-            Ok(apps.into_iter().map(|app| (app.id, app.name, app.icon.unwrap_or_default())).collect())
+            Ok(applications_for_file(&path)
+                .into_iter()
+                .map(|app| (app.id, app.name, app.icon.unwrap_or_default()))
+                .collect())
         })
         .await
     }
@@ -156,26 +163,13 @@ impl Search {
     /// modifying the desktop's default application association.
     async fn open_with(&self, match_id: String, application_id: String, token: String) -> zbus::fdo::Result<()> {
         let path = self.indexed_file(&match_id).await?;
-        let mime = self.mime.clone();
         zruntime::unblock(move || {
-            let db = mime.get_or_init(MimeDb::load);
-            let name = path.file_name().unwrap_or_default().to_string_lossy();
-            let mime_type = db
-                .mime_for(&name)
-                .ok_or_else(|| zbus::fdo::Error::InvalidArgs("File type is not recognized".into()))?;
-            let app = ferroseek_desktop::apps::file_handlers(
-                &ferroseek_desktop::apps::data_dirs(),
-                &ferroseek_desktop::apps::current_locales(),
-                &ferroseek_desktop::apps::current_desktops(),
-                &[mime_type.to_string()],
-            )
-            .into_iter()
-            .find(|app| app.id == application_id)
-            .ok_or_else(|| {
-                zbus::fdo::Error::InvalidArgs(
-                    "Application is no longer available for this file. Reload the application list.".into(),
-                )
-            })?;
+            let app =
+                applications_for_file(&path).into_iter().find(|app| app.id == application_id).ok_or_else(|| {
+                    zbus::fdo::Error::InvalidArgs(
+                        "Application is no longer available for this file. Reload the application list.".into(),
+                    )
+                })?;
             let uri = file_url(&path);
             let mut child = ferroseek_desktop::launch::launch_file(
                 &app,
