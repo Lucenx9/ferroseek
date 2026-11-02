@@ -254,6 +254,10 @@ matching launcher and daemon versions for this interface.
 
 ## File details
 
+![File details](assets/launcher-file-details.png)
+
+Rendered in a private virtual KWin session with a synthetic file.
+
 For an indexed regular file, open **Actions** (Ctrl+K), search for **File details**
 or `properties`, and press Enter. The view shows the full name and location,
 detected MIME type, current size and last modification time in UTC. Sizes include

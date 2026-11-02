@@ -170,7 +170,8 @@ fn format_size(bytes: u64) -> String {
     for next in ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"] {
         value /= 1024.0;
         unit = next;
-        if value < 1024.0 {
+        // Select the unit from the rounded value users will see.
+        if (value * 10.0).round() / 10.0 < 1024.0 {
             break;
         }
     }
