@@ -77,8 +77,10 @@ pub struct Usage {
 
 /// Lower-case, single-spaced, at most `MAX_QUERY_CHARS`; `None` if empty.
 pub fn normalize_query(q: &str) -> Option<String> {
-    let n: String =
-        q.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().chars().take(MAX_QUERY_CHARS).collect();
+    let n: String = crate::matcher::fold(&q.split_whitespace().collect::<Vec<_>>().join(" "))
+        .chars()
+        .take(MAX_QUERY_CHARS)
+        .collect();
     (!n.is_empty()).then_some(n)
 }
 
@@ -462,6 +464,23 @@ mod tests {
         assert!(r.by_query.iter().any(|(q, _)| q == "fir"), "the strongest query is kept");
         assert_eq!(normalize_query(&"x".repeat(100)).unwrap().len(), MAX_QUERY_CHARS);
         assert_eq!(normalize_query("  \t "), None);
+        u.record(Kind::App, "osmos.desktop", "ΟΣΜΟΣ", t);
+        let general_only = u.boost(Kind::App, "osmos.desktop", "", t);
+        for query in ["ΟΣ", "οσ", "ος"] {
+            assert!(u.boost(Kind::App, "osmos.desktop", query, t) > general_only, "{query}");
+        }
+    }
+
+    #[test]
+    fn legacy_greek_history_queries_receive_prefix_boosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-usage");
+        std::fs::write(&path, "app\t1\t1000\tosmos.desktop\nqapp\t1\t1000\tοσμος\tosmos.desktop\n").unwrap();
+        let usage = Usage::load(Some(path));
+        let general_only = usage.boost(Kind::App, "osmos.desktop", "", 1000);
+        for query in ["ΟΣ", "οσ", "ος", "ΟΣΜΟΣ", "οσμοσ"] {
+            assert!(usage.boost(Kind::App, "osmos.desktop", query, 1000) > general_only, "{query}");
+        }
     }
 
     #[test]
