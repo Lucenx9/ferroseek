@@ -148,22 +148,25 @@ impl MimeDb {
         }
     }
 
-    /// MIME type for a file name, by literal name, then longest extension.
+    /// MIME type by literal name, then suffix weight and length.
     pub fn mime_for(&self, name: &str) -> Option<&str> {
         if let Some((_, m)) = self.by_name_cs.get(name).or_else(|| self.by_name.get(&name.to_lowercase())) {
             return Some(m);
         }
-        // "a.tar.gz": try "tar.gz" before "gz"; also case-sensitive first.
+        // Longest suffix and case-sensitive matches win equal-weight ties.
+        let mut best: Option<&(u32, String)> = None;
         for (i, _) in name.match_indices('.') {
             let ext = &name[i + 1..];
             if ext.is_empty() {
                 continue;
             }
-            if let Some((_, m)) = self.by_ext_cs.get(ext).or_else(|| self.by_ext.get(&ext.to_lowercase())) {
-                return Some(m);
+            for hit in [self.by_ext_cs.get(ext), self.by_ext.get(&ext.to_lowercase())].into_iter().flatten() {
+                if best.is_none_or(|(weight, _)| hit.0 > *weight) {
+                    best = Some(hit);
+                }
             }
         }
-        None
+        best.map(|(_, mime)| mime.as_str())
     }
 
     /// Freedesktop icon name for a file name (`application/pdf` →
@@ -204,6 +207,22 @@ mod tests {
         assert_eq!(d.mime_for("noext"), None);
         assert_eq!(d.icon_for("a.pdf"), "application-pdf");
         assert_eq!(d.icon_for("weird"), "unknown");
+    }
+
+    #[test]
+    fn suffix_weight_precedes_length_and_case_sensitivity() {
+        let mut d = MimeDb::empty();
+        d.add_globs2("50:application/x-compressed-tar:*.tar.gz\n80:application/gzip:*.gz\n");
+        assert_eq!(d.mime_for("archive.tar.gz"), Some("application/gzip"));
+        assert_eq!(d.icon_for("archive.tar.gz"), "application-gzip");
+        assert!(d.handler_types("archive.tar.gz").contains(&"application/gzip".to_string()));
+
+        d.add_globs2("40:text/x-specific:*.SRC:cs\n70:text/plain:*.src\n");
+        assert_eq!(d.mime_for("file.SRC"), Some("text/plain"));
+        assert_eq!(d.mime_for("file.src"), Some("text/plain"));
+        d.add_globs2("90:text/x-specific:*.SRC:cs\n");
+        assert_eq!(d.mime_for("file.SRC"), Some("text/x-specific"));
+        assert_eq!(d.mime_for("file.src"), Some("text/plain"));
     }
 
     #[test]
