@@ -246,6 +246,13 @@ transactional policy path. Pause, throttling and other settings are retained.
 The launcher's policy read checks the current unique bus owner to avoid service
 activation during first-run editing; explicit Save & apply may activate it.
 
+`Search1.FileDetails(file_url)` returns MIME type (empty when unknown), current
+size in bytes and signed modification seconds since the Unix epoch. It validates
+an indexed regular file and reads current filesystem attributes in a blocking
+worker, without reading file contents. The launcher requests details only on
+opening or refreshing the view, applies the existing read deadline and rejects
+late replies through a per-view generation. The view never opens the index.
+
 `Search1` also exposes `Applications(file_url)` as desktop ID/name/icon tuples
 and `OpenWith(file_url, desktop_id, token)`. Both validate an available regular
 indexed file; OpenWith resolves eligible desktop entries again before dispatch.
