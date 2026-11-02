@@ -1052,7 +1052,8 @@ mod tests {
                 Action::CopyPath,
                 Action::CopyName,
                 Action::ResetRanking,
-                Action::AddFavorite
+                Action::AddFavorite,
+                Action::OpenWith
             ]
         );
         let mut odd = file("a", false);
@@ -1122,6 +1123,7 @@ mod tests {
         for action in [
             Action::Launch,
             Action::Open,
+            Action::OpenWith,
             Action::Reveal,
             Action::CopyPath,
             Action::CopyName,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A secondary application chooser bound to one immutable file result.
 use iced::alignment::Vertical;
-use iced::widget::{self, Id, button, column, container, image, row, space, svg, text, text_input};
+use iced::widget::{Id, button, column, container, image, row, space, svg, text, text_input};
 use iced::{Background, Border, Element, Length};
 
 use crate::backend::{ApplicationChoice, FileHit};
@@ -255,7 +255,7 @@ impl Panel {
                     .spacing(12)
                     .align_y(Vertical::Center);
                     let mut choice = button(container(content).height(Length::Fill).center_y(Length::Fill))
-                        .height(48)
+                        .height(44)
                         .width(Length::Fill)
                         .padding([0, 16])
                         .style(move |_, status| button::Style {
@@ -297,7 +297,8 @@ impl Panel {
         let footer = row![back, space::horizontal(), ui::hint("Enter", "Open")].align_y(Vertical::Center);
         container(
             column![
-                container(column![title, target].spacing(7)).padding([10, 16]),
+                container(column![title, container(target).width(Length::Fill).clip(true)].spacing(7))
+                    .padding([10, 16]),
                 container(input).padding([0, 16]),
                 container(body).padding([10, 8]).height(Length::Fill),
                 container(footer).height(34).padding([0, 10]).center_y(34)

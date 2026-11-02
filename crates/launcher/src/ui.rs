@@ -731,11 +731,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     }
     match message {
         Message::ApplicationsLoaded { generation, result } => {
-            if generation == s.application_generation {
-                if let Some(panel) = &mut s.application_picker {
-                    panel.loaded(result, &mut s.icons);
-                    return widget::operation::focus(open_with::input_id());
-                }
+            if generation == s.application_generation
+                && let Some(panel) = &mut s.application_picker
+            {
+                panel.loaded(result, &mut s.icons);
+                return widget::operation::focus(open_with::input_id());
             }
             Task::none()
         }
