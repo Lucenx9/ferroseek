@@ -1289,7 +1289,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::ActionQuery(q) => {
             if let Some(panel) = &mut s.panel {
                 panel.filter(q);
-                timing::action_input();
+                timing::event("action_input");
             }
             Task::none()
         }
@@ -1509,10 +1509,12 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             Command::Last => p.cursor.move_by(action_count as isize, action_count),
             Command::Back if !p.query.is_empty() => {
                 p.filter(String::new());
+                timing::event("action_filter_cleared");
                 return widget::operation::focus(actions_id());
             }
             Command::Back | Command::ToggleActions => {
                 s.panel = None;
+                timing::event("actions_closed");
                 return widget::operation::focus(search_id());
             }
             _ => {}

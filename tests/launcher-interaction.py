@@ -128,7 +128,11 @@ def main():
                     assert len([r for r in records(log) if r.get("event") == "query_start"]) == 7
                     capture("interaction-actions.png")
                     tap(1)  # Escape clears the filter
+                    wait_for(lambda: any(r.get("event") == "action_filter_cleared" for r in records(log)),
+                             "Escape cleared the action filter")
                     tap(1)  # Escape closes actions
+                    wait_for(lambda: any(r.get("event") == "actions_closed" for r in records(log)),
+                             "Escape closed the action panel")
                     tap(14)  # Backspace must now edit the main field
                     wait_for(lambda: frame(8), "main input regained focus after closing actions")
                     capture("interaction-return.png")

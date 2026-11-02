@@ -46,10 +46,10 @@ pub fn frame(at: Instant, generation: u64, visible: bool) {
     with_trace(|trace| trace.frame(at, generation, visible));
 }
 
-pub fn action_input() {
+pub fn event(event: &'static str) {
     with_trace(|trace| {
         let at = Instant::now();
-        trace.record("action_input", at, 0, 0, 0, at);
+        trace.record(event, at, 0, 0, 0, at);
     });
 }
 
