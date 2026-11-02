@@ -23,7 +23,7 @@ been published yet.
 - Run application actions such as new or private windows from the actions menu,
   when the application's `.desktop` file declares them.
 - Find files and folders by name or path in configured indexing roots.
-- Search inside a selected indexed folder and its subfolders; return to the previous search.
+- Browse indexed direct folder contents, or type to search its subfolders; return to the previous query and selection.
 - Inspect an indexed file's full location, type, current size and modification time.
 - Enable a text preview beside file results, with current metadata; navigate files without opening an application.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
@@ -80,9 +80,9 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
-| Alt+Right / Alt+Left | Search in the selected folder / return to the previous search |
+| Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
 | Ctrl+Shift+C | Copy a file path |
-| Esc | Clear the action filter, close actions, clear the query, return from folder search, then close |
+| Esc | Clear the action filter, close actions, hide preview, clear the query, return from the folder context, then close |
 
 More navigation keys and history settings are in the [launcher guide](docs/LAUNCHER.md).
 

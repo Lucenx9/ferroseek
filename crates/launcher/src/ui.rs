@@ -169,6 +169,7 @@ struct FolderSearchFrame {
     query: String,
     scope: Scope,
     folder: Option<FileHit>,
+    more: bool,
     files: Vec<FileHit>,
     cursor: Cursor,
     selected: Option<Target>,
@@ -188,6 +189,7 @@ pub struct Launcher {
     query: String,
     scope: Scope,
     search_folder: Option<FileHit>,
+    folder_more: bool,
     folder_search_history: Vec<FolderSearchFrame>,
     scope_generation: u64,
     app_hits: Vec<(usize, u32)>,
@@ -240,6 +242,7 @@ pub enum Message {
     RefreshSearchStatus,
     CloseSearchStatus,
     SearchStatusLoaded { generation: u64, result: Result<SearchStatus, String> },
+    FolderListed { generation: u64, result: Result<(Vec<FileHit>, bool), String> },
     Files { generation: u64, result: Result<Option<Vec<FileHit>>, String> },
     Cmd(Command),
     Wheel(f32),
@@ -310,6 +313,7 @@ fn boot() -> (Launcher, Task<Message>) {
         query: String::new(),
         scope: Scope::All,
         search_folder: None,
+        folder_more: false,
         folder_search_history: Vec::new(),
         scope_generation: 0,
         app_hits: Vec::new(),
@@ -399,7 +403,11 @@ impl Launcher {
         let previous = keep_selection.then(|| self.selected().map(|i| i.target.clone())).flatten();
         self.items = if self.search_folder.is_some() {
             let mut files = self.files.clone();
-            model::order_files(&mut files, |file| self.usage.boost(Kind::File, &file.id, &self.query, usage::now()));
+            if !self.query.trim().is_empty() {
+                model::order_files(&mut files, |file| {
+                    self.usage.boost(Kind::File, &file.id, &self.query, usage::now())
+                });
+            }
             model::build_items(&[], &[], &files)
         } else if self.query.trim().is_empty() {
             model::home_items(
@@ -482,7 +490,7 @@ impl Launcher {
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens =
             matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
-        if (opens || matches!(action, Action::Details | Action::Preview | Action::SearchFolder))
+        if (opens || matches!(action, Action::Details | Action::Preview | Action::BrowseFolder))
             && self.opening.is_some()
         {
             return Task::none(); // one open at a time; the launcher exits after it
@@ -514,7 +522,7 @@ impl Launcher {
                 self.opening = Some((f.id.clone(), self.query.clone()));
                 Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened)
             }
-            (Action::SearchFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
+            (Action::BrowseFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
                 self.enter_folder_search(folder.clone())
             }
             (Action::Preview, Target::File(file)) if !file.is_dir && file.path.is_some() => {
@@ -654,6 +662,15 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn file_query(&self) -> bool {
+        if self.search_folder.is_some() {
+            let query = self.query.trim();
+            query.is_empty() || query.chars().count() >= MIN_FILE_QUERY
+        } else {
+            self.scope.file_query(&self.query)
+        }
+    }
+
     fn request_files(&self) -> Task<Message> {
         let (backend, query, folder, generation) = (
             self.backend.clone(),
@@ -661,6 +678,14 @@ impl Launcher {
             self.search_folder.as_ref().map(|folder| folder.id.clone()),
             self.generation,
         );
+        if query.trim().is_empty()
+            && let Some(folder) = folder.as_ref()
+        {
+            return Task::perform(backend.list_directory(folder.clone()), move |result| Message::FolderListed {
+                generation,
+                result,
+            });
+        }
         Task::perform(
             async move {
                 if let Some(folder) = folder {
@@ -673,6 +698,18 @@ impl Launcher {
         )
     }
 
+    fn refresh_folder(&mut self) -> Task<Message> {
+        if !self.file_query() {
+            return Task::none();
+        }
+        if self.preview_enabled {
+            self.cancel_preview(true);
+        }
+        self.generation += 1;
+        self.status = Status::Searching;
+        Task::batch([self.request_files(), self.resize()])
+    }
+
     fn enter_folder_search(&mut self, folder: FileHit) -> Task<Message> {
         if self.folder_search_history.len() >= 32 {
             self.status = Status::Error("Return to a previous folder before narrowing further.".into());
@@ -682,6 +719,7 @@ impl Launcher {
             query: self.query.clone(),
             scope: self.scope,
             folder: self.search_folder.take(),
+            more: self.folder_more,
             files: self.files.clone(),
             cursor: self.cursor,
             selected: self.selected().map(|item| item.target.clone()),
@@ -697,6 +735,7 @@ impl Launcher {
         self.query = frame.query;
         self.scope = frame.scope;
         self.search_folder = frame.folder;
+        self.folder_more = frame.more;
         self.files = frame.files;
         self.generation += 1;
         self.scope_generation += 1;
@@ -720,7 +759,7 @@ impl Launcher {
     fn back_folder_search(&mut self) -> Task<Message> {
         let Some(frame) = self.folder_search_history.pop() else { return Task::none() };
         self.restore_folder_search(frame);
-        let refresh = if self.search_folder.is_some() || self.scope.file_query(&self.query) {
+        let refresh = if self.file_query() {
             self.status = Status::Searching;
             self.request_files()
         } else {
@@ -1059,6 +1098,15 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let effect = panel.event(event);
             s.preview_effect(effect)
         }
+        Message::RefreshSearchStatus
+            if s.search_folder.is_some()
+                && s.file_details.is_none()
+                && s.application_picker.is_none()
+                && s.folder_settings.is_none()
+                && s.search_status.is_none() =>
+        {
+            s.refresh_folder()
+        }
         Message::RefreshSearchStatus if s.preview_visible() && s.text_preview.is_some() => {
             let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
             s.preview_effect(effect)
@@ -1158,10 +1206,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             Task::batch([load, s.resize()])
         }
         Message::RefreshSearchStatus if s.search_status.is_some() => s.refresh_search_status(),
-        Message::RefreshSearchStatus if s.search_folder.is_some() => {
-            let query = s.query.clone();
-            update(s, Message::Query(query))
-        }
         Message::RefreshSearchStatus => Task::none(),
         Message::CloseSearchStatus => {
             s.search_status = None;
@@ -1201,10 +1245,11 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             } else {
                 model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
             };
-            let file_query = s.search_folder.is_some() || s.scope.file_query(q);
+            let file_query = s.file_query();
             // Results of the previous query must not stay actionable while
             // this one is searched.
             s.files.clear();
+            s.folder_more = false;
             s.status = if file_query { Status::Searching } else { Status::Idle };
             s.rebuild(false);
             let search = if file_query { s.request_files() } else { Task::none() };
@@ -1228,6 +1273,16 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::FolderListed { generation, result } => {
+            if generation != s.generation {
+                return Task::none();
+            }
+            let result = result.map(|(files, more)| {
+                s.folder_more = more;
+                Some(files)
+            });
+            update(s, Message::Files { generation, result })
+        }
         Message::Files { generation, result } => {
             if generation != s.generation {
                 return Task::none(); // a newer query is in flight
@@ -1242,14 +1297,18 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 Ok(None) => return Task::none(),
                 Err(e) => {
                     s.files.clear();
-                    s.status = Status::Error(format!("File search unavailable: {e}"));
+                    s.status = Status::Error(if s.search_folder.is_some() {
+                        e
+                    } else {
+                        format!("File search unavailable: {e}")
+                    });
                 }
             }
             let had_panel = s.panel.is_some();
             s.rebuild(true);
             let focus =
                 if had_panel && s.panel.is_none() { widget::operation::focus(search_id()) } else { Task::none() };
-            Task::batch([s.resize(), focus])
+            Task::batch([s.resize(), focus, s.sync_preview()])
         }
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
@@ -1404,7 +1463,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
             return Task::none();
         }
-        Command::SearchFolder => return s.perform(Action::SearchFolder),
+        Command::BrowseFolder => return s.perform(Action::BrowseFolder),
         Command::BackFolder => return s.back_folder_search(),
         _ => {}
     }
@@ -1479,7 +1538,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
                 return widget::operation::focus(actions_id());
             }
         }
-        Command::SearchFolder | Command::BackFolder | Command::ScrollPreview(_) => {
+        Command::BrowseFolder | Command::BackFolder | Command::ScrollPreview(_) => {
             unreachable!("handled before action navigation")
         }
         Command::Back if s.search_folder.is_some() => {
@@ -1794,9 +1853,13 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
 fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
         let (msg, help) = match &s.status {
+            Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => ("Loading folder…", ""),
             Status::Searching => ("Searching…", ""),
             Status::Error(_) if s.search_folder.is_some() => {
-                ("Folder search unavailable", "Refresh to retry, or return to your previous search.")
+                ("Folder unavailable", "Refresh to retry, or return to your previous search.")
+            }
+            _ if s.search_folder.is_some() && s.query.trim().is_empty() => {
+                ("No indexed items in this folder", "Refresh, or type at least 2 characters to search subfolders.")
             }
             _ if s.search_folder.is_some() && s.query.trim().chars().count() < MIN_FILE_QUERY => {
                 ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
@@ -1905,10 +1968,18 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     let (msg, color) = match &s.status {
         Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
-        Status::Searching => ("Searching…".to_string(), palette::DIM),
-        Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => {
-            ("Folder search".into(), palette::DIM)
+        Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
+            ("Loading folder…".into(), palette::DIM)
         }
+        Status::Searching => ("Searching…".to_string(), palette::DIM),
+        Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
+            if s.folder_more {
+                format!("First {} indexed items · Type to search", s.items.len())
+            } else {
+                format!("{} indexed items", s.items.len())
+            },
+            palette::DIM,
+        ),
         Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
             ("Calculator".to_string(), palette::DIM)
         }
@@ -1927,8 +1998,8 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
-        if acts.contains(&Action::SearchFolder) {
-            hints = hints.push(hint("Alt+→", "Search here"));
+        if acts.contains(&Action::BrowseFolder) {
+            hints = hints.push(hint("Alt+→", "Browse here"));
         }
         hints = hints.push(
             button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
@@ -2105,6 +2176,7 @@ mod tests {
             query: String::new(),
             scope: Scope::All,
             search_folder: None,
+            folder_more: false,
             folder_search_history: Vec::new(),
             scope_generation: 0,
             app_hits: Vec::new(),
@@ -2919,7 +2991,7 @@ mod tests {
         let _ = update(&mut s, Message::ActionQuery("within".into()));
         let actions = s.panel.as_ref().unwrap().filtered_actions();
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].label(), "Search in folder");
+        assert_eq!(actions[0].label(), "Browse folder");
         let _ = command(&mut s, Command::Activate);
         assert_eq!(s.scope, Scope::Files);
         assert!(s.query.is_empty());
@@ -2955,7 +3027,7 @@ mod tests {
         let _ = update(&mut s, Message::Files { generation: root_generation, result: Ok(Some(vec![parent.clone()])) });
         let root_target = Target::File(parent.clone());
         s.cursor.select_target(&root_target, &s.items);
-        let _ = command(&mut s, Command::SearchFolder);
+        let _ = command(&mut s, Command::BrowseFolder);
         let parent_back = s.scope_generation;
         let _ = update(&mut s, Message::ContextQuery { generation: root_input, query: "late global input".into() });
         assert!(s.query.is_empty());
@@ -2969,7 +3041,7 @@ mod tests {
         let parent_query = s.generation;
         let child = search_folder_hit("/synthetic/Reports/Child");
         let _ = update(&mut s, Message::Files { generation: parent_query, result: Ok(Some(vec![child.clone()])) });
-        let _ = command(&mut s, Command::SearchFolder);
+        let _ = command(&mut s, Command::BrowseFolder);
         assert_eq!(s.search_folder.as_ref(), Some(&child));
         let _ = update(&mut s, Message::FolderBack { generation: parent_back });
         assert_eq!(s.search_folder.as_ref(), Some(&child));
@@ -3012,7 +3084,7 @@ mod tests {
             Message::Files { generation, result: Ok(Some(vec![search_folder_hit("/synthetic/Reports")])) },
         );
         s.cursor.select_target(&Target::File(search_folder_hit("/synthetic/Reports")), &s.items);
-        let _ = command(&mut s, Command::SearchFolder);
+        let _ = command(&mut s, Command::BrowseFolder);
         let _ = update(&mut s, Message::Query("local query".into()));
         let stale = s.generation;
         let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
@@ -3469,6 +3541,172 @@ mod tests {
         assert_eq!(s.query, "report");
         assert_eq!(s.scope, Scope::Files);
         assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    fn browser_state() -> (Launcher, FileHit) {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut folder = file_hits().remove(0);
+        folder.id = "file:///synthetic/Reports".into();
+        folder.path = Some("/synthetic/Reports".into());
+        folder.name = "Reports".into();
+        folder.is_dir = true;
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![folder.clone()])) });
+        let _ = command(&mut s, Command::BrowseFolder);
+        (s, folder)
+    }
+
+    #[test]
+    fn browsing_rejects_old_lists_and_restores_parent_selection_and_limit_state() {
+        let (mut s, folder) = browser_state();
+        let generation = s.generation;
+        let mut child = folder.clone();
+        child.id.push_str("/Nested");
+        child.path = Some("/synthetic/Reports/Nested".into());
+        child.name = "Nested".into();
+        let file = file_hits().remove(0);
+        let children = vec![child.clone(), file.clone()];
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((children.clone(), true)) });
+        assert!(s.folder_more);
+        assert_eq!(s.selected().unwrap().target, Target::File(child.clone()));
+        assert_eq!(s.preview_generation, 0, "listing alone does not read file content");
+        let _ = command(&mut s, Command::BrowseFolder);
+        let nested = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation: nested, result: Ok((vec![file], false)) });
+        let _ = command(&mut s, Command::BackFolder);
+        assert_eq!(s.search_folder.as_ref().unwrap().id, folder.id);
+        assert_eq!(s.selected().unwrap().target, Target::File(child));
+        assert!(s.folder_more);
+        let _ = update(&mut s, Message::FolderListed { generation: nested, result: Ok((Vec::new(), false)) });
+        assert_eq!(s.items.len(), 2);
+        assert!(s.folder_more);
+        let _ = command(&mut s, Command::BackFolder);
+        assert!(s.search_folder.is_none());
+        assert_eq!(s.query, "report");
+        assert!(!s.folder_more);
+        assert_eq!(s.selected().unwrap().target, Target::File(folder));
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn listing_and_recursive_queries_cannot_replace_each_others_results() {
+        let (mut s, _) = browser_state();
+        let listing = s.generation;
+        let _ = update(&mut s, Message::Query("report".into()));
+        let recursive = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation: listing, result: Ok((file_hits(), true)) });
+        assert!(s.items.is_empty() && !s.folder_more);
+        let _ = update(&mut s, Message::Files { generation: recursive, result: Ok(Some(file_hits())) });
+        assert_eq!(s.items.len(), 2);
+        let _ = update(&mut s, Message::Query(String::new()));
+        let current = s.generation;
+        let _ = update(&mut s, Message::Files { generation: recursive, result: Ok(Some(file_hits())) });
+        assert!(s.items.is_empty());
+        let _ = update(&mut s, Message::FolderListed { generation: current, result: Ok((Vec::new(), false)) });
+        assert!(s.items.is_empty() && matches!(s.status, Status::Idle));
+        assert!(s.search_folder.is_some(), "an empty folder does not fall back to global suggestions");
+    }
+
+    #[test]
+    fn folder_queries_wait_for_two_characters_before_searching() {
+        let (mut s, _) = browser_state();
+        for query in ["a", " é ", "日", "🦀"] {
+            let _ = update(&mut s, Message::Query("report".into()));
+            let previous = s.generation;
+            let _ = update(&mut s, Message::Files { generation: previous, result: Ok(Some(file_hits())) });
+            assert!(!s.items.is_empty());
+
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Idle, "short query: {query:?}");
+            assert!(s.files.is_empty() && s.items.is_empty());
+            let current = s.generation;
+            let _ = update(&mut s, Message::RefreshSearchStatus);
+            assert_eq!(s.generation, current, "refresh must not start a short search");
+            assert_eq!(s.status, Status::Idle);
+
+            let _ = update(&mut s, Message::Files { generation: previous, result: Ok(Some(file_hits())) });
+            let _ = update(&mut s, Message::FolderListed { generation: previous, result: Ok((file_hits(), true)) });
+            assert!(s.items.is_empty() && !s.folder_more);
+            assert_eq!(s.status, Status::Idle);
+        }
+
+        for query in ["ré", " 日本 ", "=x"] {
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Searching, "searchable query: {query:?}");
+            let generation = s.generation;
+            let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+            assert_eq!(s.items.len(), 2);
+        }
+
+        for query in ["", " \t "] {
+            let _ = update(&mut s, Message::Query(query.into()));
+            assert_eq!(s.status, Status::Searching);
+            let generation = s.generation;
+            let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+            assert_eq!(s.items.len(), 2);
+            assert!(s.folder_more && s.search_folder.is_some());
+        }
+    }
+
+    #[test]
+    fn folder_refresh_preserves_selection_and_reloads_an_enabled_preview() {
+        let (mut s, _) = browser_state();
+        let generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((files.clone(), false)) });
+        let _ = command(&mut s, Command::Down);
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Preview);
+        let pending = s.preview_request.clone().unwrap();
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert!(!pending.is_active());
+        assert_eq!(s.selected().unwrap().target, target);
+        let refresh = s.generation;
+        let _ = update(
+            &mut s,
+            Message::FolderListed {
+                generation: refresh,
+                result: Ok((vec![files[1].clone(), files[0].clone()], false)),
+            },
+        );
+        assert_eq!(s.selected().unwrap().target, target);
+        assert!(s.preview_request.as_ref().unwrap().is_active());
+        assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
+    }
+
+    #[test]
+    fn folder_back_button_restores_the_child_and_rejects_a_departed_header_click() {
+        let (mut s, folder) = browser_state();
+        let mut child = folder.clone();
+        child.id.push_str("/Nested");
+        child.path = Some("/synthetic/Reports/Nested".into());
+        child.name = "Nested".into();
+        let generation = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((vec![child.clone()], false)) });
+        let _ = command(&mut s, Command::BrowseFolder);
+        let generation = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation, result: Ok((Vec::new(), false)) });
+        let departed = s.scope_generation;
+        let messages = pointer_messages(
+            &s,
+            iced::Point::new(70.0, 22.0),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(matches!(&messages[..], [Message::FolderBack { .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert_eq!(s.search_folder.as_ref().unwrap().id, folder.id);
+        assert_eq!(s.selected().unwrap().target, Target::File(child.clone()));
+        let refresh = s.generation;
+        let _ = update(&mut s, Message::FolderListed { generation: refresh, result: Ok((vec![child.clone()], false)) });
+        let _ = update(&mut s, Message::FolderBack { generation: departed });
+        assert_eq!(s.search_folder.as_ref().unwrap().id, folder.id);
+        assert_eq!(s.selected().unwrap().target, Target::File(child));
+        assert!(s.query.is_empty());
         assert!(s.usage.recent(usage::now(), 8).is_empty());
     }
 

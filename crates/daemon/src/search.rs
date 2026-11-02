@@ -13,6 +13,7 @@ use crate::open;
 use crate::pool::Pool;
 
 const SEARCH_LIMIT: usize = 15;
+const DIRECTORY_LIMIT: usize = 200;
 const ACTION_OPEN_PARENT: &str = "open-parent";
 
 /// URL, name, icon, parent display path and directory flag.
@@ -157,17 +158,44 @@ impl Search {
         .await
     }
 
+    /// Bounded indexed direct children; no filesystem directory enumeration.
+    async fn list_directory(&self, folder_id: String) -> zbus::fdo::Result<(Vec<FileResult>, bool)> {
+        use std::os::unix::fs::MetadataExt;
+        let path =
+            path_from_url(&folder_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid folder URL".into()))?;
+        let (pool, mime, home) = (self.pool.clone(), self.mime.clone(), self.home.clone());
+        zruntime::unblock(move || {
+            let listing = pool
+                .with(|reader| reader.directory_entries(&path, DIRECTORY_LIMIT))
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?
+                .filter(|listing| {
+                    std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir() && meta.ino() == listing.meta.ino)
+                })
+                .ok_or_else(|| {
+                    zbus::fdo::Error::AccessDenied("Folder is no longer an available indexed directory".into())
+                })?;
+            let mime = mime.get_or_init(MimeDb::load);
+            Ok((listing.entries.iter().map(|hit| to_result(hit, mime, &home)).collect(), listing.truncated))
+        })
+        .await
+    }
+
     /// Search strictly below a currently indexed directory. The path is kept
     /// separate from user query syntax, including spaces and non-UTF-8 bytes.
     async fn search_within(&self, folder_id: String, query: String) -> zbus::fdo::Result<Vec<FileResult>> {
+        use std::os::unix::fs::MetadataExt;
         let path =
             path_from_url(&folder_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid folder URL".into()))?;
         let (pool, mime, home) = (self.pool.clone(), self.mime.clone(), self.home.clone());
         zruntime::unblock(move || {
             let hits = pool
                 .with(|reader| {
-                    let indexed = reader.lookup(&path)?.is_some_and(|(_, meta)| meta.kind == Kind::Dir);
-                    if !indexed || !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                    let available = reader.lookup(&path)?.is_some_and(|(_, indexed)| {
+                        indexed.kind == Kind::Dir
+                            && std::fs::symlink_metadata(&path)
+                                .is_ok_and(|live| live.is_dir() && live.ino() == indexed.ino)
+                    });
+                    if !available {
                         return Ok(None);
                     }
                     if query.trim().chars().count() < 2 {

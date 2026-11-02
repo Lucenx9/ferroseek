@@ -205,6 +205,14 @@ impl Writer {
     }
 }
 
+/// Indexed direct children of one directory, read from one snapshot.
+#[derive(Debug)]
+pub struct DirectoryEntries {
+    pub meta: Meta,
+    pub entries: Vec<Hit>,
+    pub truncated: bool,
+}
+
 /// A read-only handle; cheap to open, safe to use concurrently with the
 /// writer.
 pub struct Reader {
@@ -237,6 +245,15 @@ impl Reader {
     /// Resolves an absolute path to its entry, if indexed.
     pub fn lookup(&self, path: &Path) -> Result<Option<(Id, Meta)>> {
         tree::lookup_path(&self.conn, path)
+    }
+
+    /// Lists only direct regular-file/directory children, folders first and then
+    /// folded name/raw-byte order. None means the path is not an indexed directory.
+    pub fn directory_entries(&self, path: &Path, limit: usize) -> Result<Option<DirectoryEntries>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let entries = tree::directory_entries(&tx, path, limit)?;
+        tx.commit()?;
+        Ok(entries)
     }
 
     pub fn stats(&self) -> Result<Stats> {

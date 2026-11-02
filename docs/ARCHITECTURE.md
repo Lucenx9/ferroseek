@@ -246,14 +246,28 @@ transactional policy path. Pause, throttling and other settings are retained.
 The launcher's policy read checks the current unique bus owner to avoid service
 activation during first-run editing; explicit Save & apply may activate it.
 
+`Search1.ListDirectory(folder_url)` returns indexed direct file/directory children
+and a truncation flag, capped at 200. Reader::directory_entries authorizes the
+indexed parent and reads its children in one read transaction, using the existing
+parent index and no schema change. SQL stays in crates/index. Directories sort
+first, then folded key and raw name; symlinks and special entries are omitted.
+The daemon verifies the live parent directory inode before returning the listing.
+Unavailable, replaced, symbolic-link or unindexed parents are refused; there is
+no global fallback and no filesystem directory enumeration. Empty indexed folders
+and rejected folders remain distinguishable.
+
 `Search1.SearchWithin(folder_url, query)` validates a currently indexed live
-regular directory and applies `SearchOptions.within` to the existing ranked
-index search. The explicit folder URL remains separate from query syntax and
-never falls back to global search. It does not list filesystem contents or
-change the index schema. Normal and scoped queries share the launcher's queued
-search coalescing and read deadline. Captured query/folder pairs and generations
-protect responses; a bounded in-memory return stack preserves query, global
-filter, result snapshot and selection. Returning refreshes that snapshot.
+regular directory and applies SearchOptions.within to the existing ranked search.
+The explicit folder URL remains separate from query syntax. In folder contexts,
+empty queries call ListDirectory; two or more characters call SearchWithin.
+Normal/scoped searches and directory lists share queued search coalescing and the
+existing read deadline. Captured context/query generations reject late responses.
+
+A bounded in-memory return stack preserves query, global filter, folder, list,
+truncation and selected identity. Returning shows and refreshes that snapshot.
+Folder refresh keeps selection and refreshes an enabled preview after results
+arrive; it does not enable content reads by itself. Browsing is index-backed and
+inherits configured coverage and freshness limitations.
 
 `Search1.FileDetails(file_url)` returns MIME type (empty when unknown), current
 size in bytes and signed modification seconds since the Unix epoch. It validates

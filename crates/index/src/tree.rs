@@ -342,3 +342,33 @@ pub(crate) fn lookup_path(conn: &Connection, path: &Path) -> Result<Option<(Id, 
         .optional()?;
     Ok(meta.map(|m| (id, m)))
 }
+
+/// The caller supplies a read transaction so authorization and listing share a snapshot.
+pub(crate) fn directory_entries(
+    conn: &Connection,
+    path: &Path,
+    limit: usize,
+) -> Result<Option<crate::DirectoryEntries>> {
+    let Some((parent, meta)) = lookup_path(conn, path)?.filter(|(_, meta)| meta.kind == Kind::Dir) else {
+        return Ok(None);
+    };
+    let mut statement = conn.prepare_cached(
+        "SELECT name, id, kind, size, mtime, ino FROM entries WHERE parent = ?1 AND kind IN (0, 1) ORDER BY kind DESC, key, name LIMIT ?2"
+    )?;
+    let rows = statement.query_map(params![parent, limit.saturating_add(1).min(i64::MAX as usize) as i64], |row| {
+        let name: Vec<u8> = row.get(0)?;
+        let child = row_meta(row, 2)?;
+        Ok(crate::Hit {
+            id: row.get(1)?,
+            path: path.join(OsStr::from_bytes(&name)),
+            kind: child.kind,
+            size: child.size,
+            mtime_ns: child.mtime_ns,
+            score: 0.0,
+        })
+    })?;
+    let mut entries = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let truncated = entries.len() > limit;
+    entries.truncate(limit);
+    Ok(Some(crate::DirectoryEntries { meta, entries, truncated }))
+}

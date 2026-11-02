@@ -32,7 +32,8 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Add other preview formats after defining their decoder and resource limits.
 - [x] Search within indexed folders and subfolders; restore previous queries,
   search scopes and selections when returning.
-- [ ] Browse immediate folder contents while preserving navigation state.
+- [x] Browse bounded indexed direct folder contents, preserving return state and
+  selection, with recursive search available by typing.
 - [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,
   size and position. Keep focus, navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
@@ -42,8 +43,7 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then immediate folder browsing; quicklinks and keyword
-commands. Each interaction change needs keyboard, pointer, long-label and
+then quicklinks and keyword commands. Each interaction change needs keyboard, pointer, long-label and
 asynchronous/error checks, plus inspection of rendered UI.
 
 See [launcher setup and current limits](LAUNCHER.md).

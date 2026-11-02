@@ -261,7 +261,7 @@ pub enum Action {
     OpenWith,
     Details,
     Preview,
-    SearchFolder,
+    BrowseFolder,
     Reveal,
     CopyPath,
     CopyName,
@@ -282,7 +282,7 @@ impl Action {
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
             Action::Preview => "Preview text",
-            Action::SearchFolder => "Search in folder",
+            Action::BrowseFolder => "Browse folder",
             Action::Reveal => "Show in folder",
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
@@ -310,7 +310,7 @@ impl Action {
             Self::OpenWith => &["application", "choose app", "handler"],
             Self::Details => &["info", "properties", "size", "modified"],
             Self::Preview => &["read", "contents"],
-            Self::SearchFolder => &["within", "directory search", "inside", "subfolders"],
+            Self::BrowseFolder => &["within", "directory search", "inside", "subfolders", "search in folder"],
             Self::Reveal => &["reveal", "directory", "parent"],
             Self::CopyName => &["filename", "title"],
             Self::CopyPath => &["location"],
@@ -330,7 +330,7 @@ impl Action {
             Action::Launch | Action::Open | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
-            Action::SearchFolder => "Alt+Right",
+            Action::BrowseFolder => "Alt+Right",
             Action::CopyName
             | Action::OpenWith
             | Action::Details
@@ -358,7 +358,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
     }
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: true, .. })) {
-        actions.push(Action::SearchFolder);
+        actions.push(Action::BrowseFolder);
     }
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: false, .. })) {
         actions.push(Action::OpenWith);
@@ -508,7 +508,7 @@ pub enum Command {
     ToggleActions,
     OpenActions,
     CopyPath,
-    SearchFolder,
+    BrowseFolder,
     BackFolder,
     ScrollPreview(i8),
     /// Close the panel, else clear the query, else hide.
@@ -551,7 +551,7 @@ pub fn numbered_command(key: &Key, physical: Physical, mods: Modifiers) -> Optio
 pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
     let ctrl = mods.control();
     match key {
-        Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Command::SearchFolder),
+        Key::Named(Named::ArrowRight) if mods == Modifiers::ALT => Some(Command::BrowseFolder),
         Key::Named(Named::ArrowLeft) if mods == Modifiers::ALT => Some(Command::BackFolder),
         Key::Named(Named::ArrowUp) if ctrl => Some(Command::PreviousSection),
         Key::Named(Named::ArrowDown) if ctrl => Some(Command::NextSection),
