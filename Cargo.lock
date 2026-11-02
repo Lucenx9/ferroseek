@@ -1075,6 +1075,7 @@ dependencies = [
  "freedesktop-icons",
  "iced",
  "iced_layershell",
+ "iced_runtime",
  "log",
  "tempfile",
  "wayland-client",

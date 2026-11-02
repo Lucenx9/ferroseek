@@ -33,5 +33,6 @@ freedesktop-icons = "0.4"
 log.workspace = true
 
 [dev-dependencies]
+iced_runtime = "0.14"
 ferroseek-engine.workspace = true
 tempfile.workspace = true

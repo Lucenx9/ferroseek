@@ -26,7 +26,7 @@ fn launch_context_is_fresh_for_apps_and_declared_actions() {
             capture.display(), work.display(), capture.display()
         )).unwrap();
         for case in ["app-none", "app-fresh", "action-none", "action-fresh"] {
-            let status = Command::new(std::env::current_exe().unwrap())
+            let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "launch_context_is_fresh_for_apps_and_declared_actions", "--nocapture"])
                 .env("FERROSEEK_TEST_CONTEXT_CASE", case)
                 .env("FERROSEEK_TEST_CONTEXT_DESKTOP", &desktop)
@@ -34,11 +34,21 @@ fn launch_context_is_fresh_for_apps_and_declared_actions() {
                 .env("XDG_ACTIVATION_TOKEN", "inherited-token")
                 .env("DESKTOP_STARTUP_ID", "inherited-startup")
                 .env("HOME", root)
+                .env("PATH", "/usr/bin:/bin")
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_STATE_HOME", root.join("state"))
+                .env("XDG_CACHE_HOME", root.join("cache"))
                 .env("XDG_RUNTIME_DIR", root.join("runtime"))
                 .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
-                .status()
+                .output()
                 .unwrap();
-            assert!(status.success(), "launch case: {case}");
+            assert!(
+                output.status.success(),
+                "launch case {case}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         return;
     };

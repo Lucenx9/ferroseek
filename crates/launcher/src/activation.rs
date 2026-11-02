@@ -330,3 +330,140 @@ impl Dispatch<xdg_activation_token_v1::XdgActivationTokenV1, Reply> for Worker {
 }
 
 delegate_noop!(Worker: ignore xdg_activation_v1::XdgActivationV1);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::Shutdown;
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+
+    enum Mode {
+        EmptyRegistry,
+        NoSeat,
+        Stall,
+        Disconnect,
+    }
+
+    struct Server {
+        socket: UnixStream,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.socket.shutdown(Shutdown::Both);
+            let result = self.thread.take().unwrap().join();
+            if !std::thread::panicking() {
+                assert!(result.is_ok(), "protocol peer failed");
+            }
+        }
+    }
+
+    // Minimal core-protocol peer: no globals, callback replies or a stalled peer.
+    // This mocks the compositor boundary, not the activation worker's internals.
+    fn compositor(mode: Mode) -> (Activation, Server, mpsc::Receiver<()>) {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let socket = peer.try_clone().unwrap();
+        let (send, seen) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            if matches!(mode, Mode::Disconnect) {
+                let _ = peer.shutdown(Shutdown::Both);
+                return;
+            }
+            loop {
+                let mut header = [0; 8];
+                if peer.read_exact(&mut header).is_err() {
+                    break;
+                }
+                let object = u32::from_ne_bytes(header[..4].try_into().unwrap());
+                let header = u32::from_ne_bytes(header[4..].try_into().unwrap());
+                let size = (header >> 16) as usize;
+                assert!((8..=256).contains(&size));
+                let mut body = vec![0; size - 8];
+                if peer.read_exact(&mut body).is_err() {
+                    break;
+                }
+                if object != 1 {
+                    assert!(matches!(mode, Mode::NoSeat)); // registry bind / manager destroy
+                    continue;
+                }
+                match header & 0xffff {
+                    1 => {
+                        // get_registry: optionally advertise activation, but no seat
+                        if matches!(mode, Mode::NoSeat) {
+                            let mut global = 7_u32.to_ne_bytes().to_vec();
+                            let name = b"xdg_activation_v1\0";
+                            global.extend_from_slice(&(name.len() as u32).to_ne_bytes());
+                            global.extend_from_slice(name);
+                            while global.len() % 4 != 0 {
+                                global.push(0);
+                            }
+                            global.extend_from_slice(&1_u32.to_ne_bytes());
+                            let registry = u32::from_ne_bytes(body[..4].try_into().unwrap());
+                            let mut message = registry.to_ne_bytes().to_vec();
+                            message.extend_from_slice(&((global.len() as u32 + 8) << 16).to_ne_bytes());
+                            message.extend(global);
+                            if peer.write_all(&message).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    0 => {
+                        // sync: callback.done followed by display.delete_id
+                        let _ = send.send(());
+                        if matches!(mode, Mode::Stall) {
+                            continue;
+                        }
+                        let id = u32::from_ne_bytes(body[..4].try_into().unwrap());
+                        let words = [id, 12 << 16, 0, 1, (12 << 16) | 1, id];
+                        let response: Vec<_> = words.iter().flat_map(|word| word.to_ne_bytes()).collect();
+                        if peer.write_all(&response).is_err() {
+                            break;
+                        }
+                    }
+                    opcode => panic!("unexpected core request {opcode}"),
+                }
+            }
+        });
+        let activation = Activation::default();
+        activation.attach(Connection::from_socket(client).unwrap());
+        (activation, Server { socket, thread: Some(thread) }, seen)
+    }
+
+    fn request(activation: &Activation) -> Option<String> {
+        let runtime = zruntime::SharedRuntime::current().unwrap();
+        iced::futures::executor::block_on(
+            runtime.timeout(Duration::from_secs(3), activation.token("org.ferroseek.Test".into())),
+        )
+        .expect("activation must not hang when a compositor cannot answer")
+    }
+
+    #[test]
+    fn missing_activation_protocol_falls_back_without_context() {
+        let (activation, _server, seen) = compositor(Mode::EmptyRegistry);
+        assert!(request(&activation).is_none());
+        seen.recv_timeout(Duration::from_secs(1)).expect("request reached the real protocol peer");
+    }
+
+    #[test]
+    fn silent_compositor_has_a_bounded_context_wait() {
+        let (activation, _server, seen) = compositor(Mode::Stall);
+        assert!(request(&activation).is_none());
+        seen.recv_timeout(Duration::from_secs(1)).expect("peer held the requested barrier open");
+    }
+
+    #[test]
+    fn activation_protocol_without_a_focused_seat_does_not_invent_context() {
+        let (activation, _server, seen) = compositor(Mode::NoSeat);
+        assert!(request(&activation).is_none());
+        seen.recv_timeout(Duration::from_secs(1)).expect("context lookup reached the compositor");
+    }
+
+    #[test]
+    fn disconnected_compositor_does_not_confirm_context() {
+        let (activation, _server, _) = compositor(Mode::Disconnect);
+        assert!(request(&activation).is_none());
+    }
+}

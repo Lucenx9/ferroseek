@@ -4216,6 +4216,106 @@ mod tests {
     }
 
     #[test]
+    fn application_confirmation_keeps_the_original_target_and_query() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = search_state();
+        s.usage = Usage::load(Some(root.path().join("usage")));
+        s.apps.push(
+            crate::apps::parse(
+                "other.desktop",
+                std::path::Path::new("/synthetic/other.desktop"),
+                "[Desktop Entry]\nType=Application\nName=Other\nExec=missing\n",
+                &[],
+                &[],
+            )
+            .unwrap(),
+        );
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _pending = command(&mut s, Command::Activate);
+        assert_eq!(s.usage.boost(Kind::App, "report.desktop", "report", usage::now()), 0);
+        let _ = update(&mut s, Message::Query("other".into()));
+        assert_eq!(command(&mut s, Command::Activate).units(), 0, "a second Enter must not start another open");
+        let _ = update(&mut s, Message::ApplicationOpened { id: "other.desktop".into(), result: Ok(()) });
+        assert_eq!(s.usage.boost(Kind::App, "other.desktop", "other", usage::now()), 0);
+        let _ = update(&mut s, Message::ApplicationOpened { id: "report.desktop".into(), result: Ok(()) });
+        let now = usage::now();
+        assert!(
+            s.usage.boost(Kind::App, "report.desktop", "report", now)
+                > s.usage.boost(Kind::App, "report.desktop", "unrelated", now)
+        );
+        assert_eq!(s.usage.boost(Kind::File, "report.desktop", "report", now), 0);
+        assert_eq!(s.usage.boost(Kind::App, "other.desktop", "other", now), 0);
+        let boost = s.usage.boost(Kind::App, "report.desktop", "report", now);
+        let _ = update(&mut s, Message::ApplicationOpened { id: "report.desktop".into(), result: Ok(()) });
+        assert_eq!(s.usage.boost(Kind::App, "report.desktop", "report", now), boost);
+    }
+
+    #[test]
+    fn application_submission_error_keeps_actions_usable_without_recording_usage() {
+        let root = tempfile::tempdir().unwrap();
+        let mut s = application_actions(&["New window"]);
+        s.usage = Usage::load(Some(root.path().join("usage")));
+        let id = s.apps[0].id.clone();
+        let _pending = s.perform(Action::Desktop(0));
+        let _ =
+            update(&mut s, Message::ApplicationOpened { id: id.clone(), result: Err("Cannot launch target".into()) });
+        assert!(s.panel.is_some() && s.opening.is_none());
+        assert!(matches!(s.status, Status::Error(_)));
+        assert_eq!(s.usage.boost(Kind::App, &id, "report", usage::now()), 0);
+        assert!(s.perform(Action::Desktop(0)).units() > 0, "an explicitly retried action is permitted");
+    }
+
+    #[test]
+    fn closing_cancels_an_unsubmitted_application() {
+        let case = std::env::var("FERROSEEK_TEST_CANCEL_APP");
+        let Ok(case) = case else {
+            let root = tempfile::tempdir().unwrap();
+            for case in ["escape", "toggle"] {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "ui::tests::closing_cancels_an_unsubmitted_application", "--nocapture"])
+                    .env("FERROSEEK_TEST_CANCEL_APP", case)
+                    .env("FERROSEEK_TEST_CANCEL_ROOT", root.path())
+                    .env("HOME", root.path())
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("XDG_CONFIG_HOME", root.path().join("config"))
+                    .env("XDG_DATA_HOME", root.path().join("data"))
+                    .env("XDG_STATE_HOME", root.path().join("state"))
+                    .env("XDG_CACHE_HOME", root.path().join("cache"))
+                    .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
+                    .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{case}: {}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            return;
+        };
+        let root = std::path::PathBuf::from(std::env::var_os("FERROSEEK_TEST_CANCEL_ROOT").unwrap());
+        let mut s = search_state();
+        s.apps[0].exec = format!("\"{}\"", root.join("nonexistent-command").display());
+        let _ = update(&mut s, Message::Query("report".into()));
+        let task = command(&mut s, Command::Activate);
+        if case == "escape" {
+            let _ = update(&mut s, Message::Query(String::new()));
+            let _ = command(&mut s, Command::Back);
+        } else {
+            let _ = update(&mut s, Message::Ui(UiEvent::Toggle));
+        }
+        let output = iced::futures::executor::block_on(async {
+            if let Some(stream) = iced_runtime::task::into_stream(task) {
+                stream.collect::<Vec<_>>().await
+            } else {
+                Vec::new()
+            }
+        });
+        assert!(output.is_empty(), "closing must abort deferred submission, not produce a launch result");
+    }
+
+    #[test]
     fn invalid_application_action_keeps_the_menu_usable_and_does_not_record_usage() {
         let mut s = application_actions(&["New window"]);
         let invalid = Action::Desktop(usize::MAX);
