@@ -66,6 +66,13 @@ impl Icons {
     }
 }
 
+/// The shared-mime-info default for a MIME icon name missing from the theme
+/// (`image-png` → `image-x-generic`). Themes such as Adwaita ship only these.
+pub fn generic_mime_icon(name: &str) -> Option<String> {
+    let (media, _) = name.split_once('-')?;
+    Some(format!("{media}-x-generic"))
+}
+
 fn load(p: &Path) -> Option<Icon> {
     match p.extension().and_then(|e| e.to_str()) {
         Some("svg" | "svgz") => Some(Icon::Svg(svg::Handle::from_path(p))),
@@ -118,5 +125,15 @@ mod tests {
         assert_eq!(ini_value(t, "Icons", "Theme").as_deref(), Some("Papirus-Dark"));
         assert_eq!(ini_value("[Icons]\nTheme=\n", "Icons", "Theme"), None);
         assert_eq!(ini_value("[General]\nTheme=a\n", "Icons", "Theme"), None);
+    }
+
+    #[test]
+    fn mime_icons_fall_back_to_their_media_type() {
+        assert_eq!(generic_mime_icon("image-png").as_deref(), Some("image-x-generic"));
+        assert_eq!(
+            generic_mime_icon("application-vnd.oasis.opendocument.text").as_deref(),
+            Some("application-x-generic")
+        );
+        assert_eq!(generic_mime_icon("unknown"), None);
     }
 }
