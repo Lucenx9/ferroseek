@@ -108,7 +108,7 @@ impl Panel {
                     button(text(copy).size(12)).on_press(Event::CopyLocation).style(ui::status_button_style)
                 ]
                 .align_y(Vertical::Center),
-                text(location).size(15).wrapping(text::Wrapping::Glyph)
+                text(location).size(15).wrapping(text::Wrapping::WordOrGlyph)
             ]
             .spacing(4),
         ]
@@ -155,7 +155,7 @@ impl Panel {
 fn field(label: &str, value: &str) -> Element<'static, Event> {
     column![
         text(label.to_owned()).size(12).color(palette::DIM),
-        text(value.to_owned()).size(15).wrapping(text::Wrapping::Glyph)
+        text(value.to_owned()).size(15).wrapping(text::Wrapping::WordOrGlyph)
     ]
     .spacing(4)
     .into()
