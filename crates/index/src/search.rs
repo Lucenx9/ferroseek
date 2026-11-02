@@ -299,21 +299,14 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         .collect();
     ranked.sort_by(|a, b| b.1.score.total_cmp(&a.1.score).then(a.0.cmp(&b.0)));
 
-    // Stage 2 needs paths. Filters that depend on the path must see every
-    // candidate; otherwise only the head of the name ranking matters.
-    let path_filtered =
-        !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden || opts.accept.is_some();
-    // `accept` alone already ran on every candidate before its budget (see
-    // add_rows). Instead of truncating the name ranking (which can drop the
-    // best *final* score), such searches stop early with an exact bound: the
-    // only positive adjustment below is the recency bonus, so a candidate
-    // can never end above `name score + MAX_BONUS`.
-    let accept_only = opts.accept.is_some() && q.path_tokens.is_empty() && opts.within.is_none() && opts.include_hidden;
-    if !path_filtered {
-        ranked.truncate((opts.limit.saturating_mul(3)).max(60));
-    }
+    // Bound path resolution by the final score for unscoped searches.
+    // `accept` already ran before the candidate budgets. Other path filters
+    // retain their full candidate pass.
+    let bounded_ranking = q.path_tokens.is_empty() && opts.within.is_none() && opts.include_hidden;
+    // The only positive adjustment below is the recency bonus, so a
+    // candidate can never end above `name score + MAX_BONUS`.
     const MAX_BONUS: f32 = 6.0;
-    // Min-heap of the best `limit` final scores so far (accept-only path).
+    // Min-heap of the best `limit` final scores so far (bounded path).
     let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TotalF32>> = std::collections::BinaryHeap::new();
     // Reuse the directory paths resolved while collecting candidates.
     let mut paths = candidate_paths;
@@ -321,7 +314,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
     for (id, c) in ranked {
-        if accept_only && best.len() >= opts.limit && best.peek().is_some_and(|k| c.score + MAX_BONUS < k.0.0) {
+        if bounded_ranking && best.len() >= opts.limit && best.peek().is_some_and(|k| c.score + MAX_BONUS < k.0.0) {
             // `ranked` is sorted by name score: no later candidate can enter
             // the top `limit` (ties are kept: the comparison is strict).
             break;
@@ -352,7 +345,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                 score += 3.0;
             }
         }
-        if accept_only {
+        if bounded_ranking {
             best.push(std::cmp::Reverse(TotalF32(score)));
             if best.len() > opts.limit {
                 best.pop();

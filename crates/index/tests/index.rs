@@ -610,7 +610,7 @@ fn reader_roots_lists_root_paths_only() {
 }
 
 #[test]
-fn accept_only_searches_return_the_true_top_k() {
+fn unscoped_searches_return_the_true_top_k() {
     // Review regression: truncating the name ranking before depth/recency
     // adjustments dropped the best final result. 70 equal names deep in the
     // tree (recent) vs one at the root (old, highest id): the root one must
@@ -633,15 +633,16 @@ fn accept_only_searches_return_the_true_top_k() {
     tx.upsert(root, b"needle.txt", Meta { kind: Kind::File, size: 1, mtime_ns: 1_000, ino: 99_999 }).unwrap();
     tx.commit().unwrap();
     let r = Reader::open(&db).unwrap();
-    let accept = Some(ferroseek_index::PathFilter(std::sync::Arc::new(|_: &Path| true)));
     let q = Query::parse("needle");
-    let full = r.search(&q, &SearchOptions { limit: 1000, accept: accept.clone(), ..Default::default() }).unwrap();
-    assert_eq!(full.len(), 71);
-    for k in [1, 2, 5, 20] {
-        let top = r.search(&q, &SearchOptions { limit: k, accept: accept.clone(), ..Default::default() }).unwrap();
-        assert_eq!(top, full[..k].to_vec(), "top-{k} must equal the head of the full ranking");
+    for accept in [None, Some(ferroseek_index::PathFilter(std::sync::Arc::new(|_: &Path| true)))] {
+        let full = r.search(&q, &SearchOptions { limit: 1000, accept: accept.clone(), ..Default::default() }).unwrap();
+        assert_eq!(full.len(), 71);
+        for k in [1, 2, 5, 20] {
+            let top = r.search(&q, &SearchOptions { limit: k, accept: accept.clone(), ..Default::default() }).unwrap();
+            assert_eq!(top, full[..k].to_vec(), "top-{k} must equal the head of the full ranking");
+        }
+        assert_eq!(full[0].path, Path::new("/r/needle.txt"));
     }
-    assert_eq!(full[0].path, Path::new("/r/needle.txt"));
 }
 
 #[test]
