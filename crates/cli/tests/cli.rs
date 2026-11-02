@@ -56,6 +56,10 @@ fn index_search_status_config() {
 
     let o = run(t.path(), &["search", "--in", root.join("Music/Album").to_str().unwrap(), "track"]);
     assert_eq!(stdout(&o).lines().count(), 1);
+    let shortcut = t.path().join("album-link");
+    std::os::unix::fs::symlink(root.join("Music/Album"), &shortcut).unwrap();
+    let o = run(t.path(), &["search", "--in", shortcut.to_str().unwrap(), "track"]);
+    assert_eq!(stdout(&o).lines().count(), 1, "a link into the index searches its target");
 
     let o = run(t.path(), &["search", "nothing-matches-this"]);
     assert_eq!(o.status.code(), Some(1), "grep-like exit status");
@@ -206,4 +210,23 @@ fn special_cache_tags_do_not_block_indexing() {
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         assert!(stdout(&run(t.path(), &["search", "report"])).contains("report.txt"));
     }
+}
+
+#[test]
+fn search_in_matches_roots_below_a_linked_ancestor() {
+    let t = tempfile::tempdir().unwrap();
+    let disk = t.path().join("disk");
+    fs::create_dir_all(disk.join("files/Music/Album")).unwrap();
+    fs::write(disk.join("files/Music/Album/track.flac"), b"x").unwrap();
+    fs::write(disk.join("files/Music/other-track.flac"), b"x").unwrap();
+    // The root itself is a real directory; only an ancestor is a link.
+    std::os::unix::fs::symlink(&disk, t.path().join("mnt")).unwrap();
+    let root = t.path().join("mnt/files");
+    fs::write(t.path().join("config.toml"), format!("roots = [\"{}\"]\n", root.display())).unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+    assert_eq!(stdout(&run(t.path(), &["search", "track"])).lines().count(), 2);
+
+    let album = root.join("Music/Album");
+    let o = run(t.path(), &["search", "--in", album.to_str().unwrap(), "track"]);
+    assert_eq!(stdout(&o).lines().collect::<Vec<_>>(), [album.join("track.flac").to_str().unwrap()]);
 }
