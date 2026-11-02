@@ -16,6 +16,7 @@ path = "src/main.rs"
 # wlr-layer-shell surface. Check `cargo tree -e normal | grep -- -sys`
 # before adding dependencies: nothing here may build C code.
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 ferroseek-desktop.workspace = true
 ferroseek-config.workspace = true
 iced = { version = "0.14", default-features = false, features = ["advanced", "tiny-skia", "wayland", "svg", "image", "thread-pool"] }

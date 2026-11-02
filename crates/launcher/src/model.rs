@@ -259,6 +259,7 @@ pub enum Action {
     Launch,
     Open,
     OpenWith,
+    Details,
     Reveal,
     CopyPath,
     CopyName,
@@ -277,6 +278,7 @@ impl Action {
             Action::Launch => "Launch",
             Action::Open => "Open",
             Action::OpenWith => "Open with…",
+            Action::Details => "File details",
             Action::Reveal => "Show in folder",
             Action::CopyPath => "Copy path",
             Action::CopyName => "Copy name",
@@ -302,6 +304,7 @@ impl Action {
         }
         let aliases: &[&str] = match self {
             Self::OpenWith => &["application", "choose app", "handler"],
+            Self::Details => &["info", "properties", "size", "modified"],
             Self::Reveal => &["reveal", "directory", "parent"],
             Self::CopyName => &["filename", "title"],
             Self::CopyPath => &["location"],
@@ -323,6 +326,7 @@ impl Action {
             Action::CopyPath => "Ctrl+Shift+C",
             Action::CopyName
             | Action::OpenWith
+            | Action::Details
             | Action::ResetRanking
             | Action::AddFavorite
             | Action::RemoveFavorite
@@ -347,6 +351,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
     }
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: false, .. })) {
         actions.push(Action::OpenWith);
+        actions.push(Action::Details);
     }
     actions
 }
@@ -1053,7 +1058,8 @@ mod tests {
                 Action::CopyName,
                 Action::ResetRanking,
                 Action::AddFavorite,
-                Action::OpenWith
+                Action::OpenWith,
+                Action::Details
             ]
         );
         let mut odd = file("a", false);

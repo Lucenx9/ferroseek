@@ -15,6 +15,13 @@ use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDetails {
+    pub mime: String,
+    pub size: u64,
+    pub modified: i64,
+}
+
 /// The daemon (mirrors `ferroseek_engine::ipc`; checked by a test).
 pub const DAEMON_BUS_NAME: &str = "io.github.ferroseek.FerroSeek";
 pub const SEARCH_PATH: &str = "/io/github/ferroseek/Search";
@@ -119,6 +126,7 @@ enum Request {
     Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
+    FileDetails { id: String, reply: oneshot::Sender<Result<FileDetails, String>> },
     RunWith { id: String, app: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
     FolderPolicy { reply: oneshot::Sender<Result<Option<FolderPolicy>, String>> },
@@ -237,6 +245,23 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
         }
         Request::RunWith { id, app, reply } => {
             let _ = reply.send(run(conn, "OpenWith", &id, &app, timeouts.open).await);
+        }
+        Request::FileDetails { id, reply } => {
+            let result = async {
+                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+                let message = runtime
+                    .timeout(
+                        timeouts.status,
+                        conn.call_method(Some(DAEMON_BUS_NAME), SEARCH_PATH, Some(SEARCH_IFACE), "FileDetails", &(id,)),
+                    )
+                    .await
+                    .map_err(|_| "File details timed out. Refresh to try again.".to_string())?
+                    .map_err(|e| e.to_string())?;
+                let (mime, size, modified) = message.body().deserialize().map_err(|e| e.to_string())?;
+                Ok(FileDetails { mime, size, modified })
+            }
+            .await;
+            let _ = reply.send(result);
         }
         Request::Applications { id, reply } => {
             let r = async {
@@ -381,6 +406,12 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn file_details(self, id: String) -> Result<FileDetails, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.unbounded_send(Request::FileDetails { id, reply }).map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
     pub async fn applications(self, id: String) -> Result<Vec<ApplicationChoice>, String> {
         let (reply, rx) = oneshot::channel();
         self.tx.unbounded_send(Request::Applications { id, reply }).map_err(|_| "bus thread stopped".to_string())?;
@@ -459,6 +490,15 @@ mod tests {
 
     #[zbus::interface(name = "io.github.ferroseek.Search1")]
     impl SearchService {
+        async fn file_details(&self, id: &str) -> zbus::fdo::Result<(String, u64, i64)> {
+            self.0.send((id.into(), "details".into())).unwrap();
+            match id {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
+                _ => Ok(("application/pdf".into(), 123, -1)),
+            }
+        }
+
         async fn search(&self, query: &str) -> zbus::fdo::Result<Vec<FileResult>> {
             match query {
                 "stall" => return std::future::pending().await,
@@ -705,6 +745,48 @@ mod tests {
                 assert!(opened_rx.try_recv().is_err());
             };
             iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn file_details_timeout_releases_the_bus_queue_without_retrying() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (tx, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(tx))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim())
+                .method_timeout(Duration::from_secs(2))
+                .build()
+                .await
+                .unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                assert_eq!(
+                    backend.clone().file_details("stall".into()).await.unwrap_err(),
+                    "File details timed out. Refresh to try again."
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "stall");
+                assert!(backend.clone().file_details("reject".into()).await.is_err());
+                assert_eq!(requests.try_recv().unwrap().0, "reject");
+                assert_eq!(
+                    backend.clone().file_details("file:///synthetic/report.pdf".into()).await.unwrap(),
+                    FileDetails { mime: "application/pdf".into(), size: 123, modified: -1 }
+                );
+                assert_eq!(requests.try_recv().unwrap().0, "file:///synthetic/report.pdf");
+                assert!(requests.try_recv().is_err(), "reads must not retry automatically");
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { status: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
         });
     }
 

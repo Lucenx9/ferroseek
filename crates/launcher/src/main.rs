@@ -8,6 +8,7 @@
 mod apps;
 mod backend;
 mod calc;
+mod details;
 mod favorites;
 mod folders;
 mod icons;

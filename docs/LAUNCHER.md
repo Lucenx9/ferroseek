@@ -252,6 +252,30 @@ the chooser; normal **Open** remains available. Desktop association preference
 overrides and applications with only D-Bus activation are not included. Install
 matching launcher and daemon versions for this interface.
 
+## File details
+
+![File details](assets/launcher-file-details.png)
+
+Rendered in a private virtual KWin session with a synthetic file.
+
+For an indexed regular file, open **Actions** (Ctrl+K), search for **File details**
+or `properties`, and press Enter. The view shows the full name and location,
+detected MIME type, current size and last modification time in UTC. Sizes include
+an exact byte count. An unknown type is shown explicitly.
+
+The daemon reads filesystem attributes on request, including while indexing is
+paused; it does not read file contents. Ctrl+R refreshes the details. Loading and
+errors have distinct states, and failed reads can be retried. Late replies cannot
+replace a newer view or change the captured file. Esc returns to the original
+query, scope and selected file if it remains in the results. Up/Down, Page Up/Down
+and Ctrl+Home/End scroll long details.
+
+Use **Copy path** or Ctrl+Shift+C to copy the captured location. For a path that
+cannot be represented as UTF-8 text, the view shows and copies its lossless file
+URL instead. Viewing, refreshing and copying details do not record launch history.
+Folders and symbolic links are not supported by this view. Matching launcher and
+daemon versions are required.
+
 ## Favorites
 
 Use **Add to favorites** or **Remove from favorites** in an app or file's action

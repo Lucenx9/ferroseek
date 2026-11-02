@@ -25,8 +25,10 @@ published release or verified compatibility with every Linux desktop.
   concurrent clients, and removal of Noctalia/KRunner adapters.
 - [x] Choose a compatible installed application for an indexed file without
   changing defaults; preserve the selected file through asynchronous updates.
-- [ ] Add file details and bounded previews for selected supported formats with
-  explicit loading, unsupported and error states.
+- [x] Show current file details on request, preserving the selected file and
+  search state through loading, refresh, errors and cancellation.
+- [ ] Add bounded previews for selected supported formats with explicit loading,
+  unsupported and error states.
 - [ ] Navigate into folders and back without losing the previous query,
   search scope or selection.
 - [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,
@@ -38,7 +40,7 @@ published release or verified compatibility with every Linux desktop.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
 Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then file details and previews; folder navigation; quicklinks and keyword
+then file previews; folder navigation; quicklinks and keyword
 commands. Each interaction change needs keyboard, pointer, long-label and
 asynchronous/error checks, plus inspection of rendered UI.
 

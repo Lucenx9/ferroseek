@@ -20,6 +20,7 @@ use iced_layershell::to_layer_message;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
+use crate::details;
 use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
@@ -187,6 +188,8 @@ pub struct Launcher {
     search_status: Option<SearchStatusPanel>,
     application_picker: Option<open_with::Panel>,
     application_generation: u64,
+    file_details: Option<details::Panel>,
+    details_generation: u64,
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
@@ -203,6 +206,8 @@ pub enum Message {
     Query(String),
     Scope(Scope),
     ActionQuery(String),
+    DetailsLoaded { generation: u64, result: Result<crate::backend::FileDetails, String> },
+    Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
     OpenWith { generation: u64, event: open_with::Event },
     ShowSearchStatus,
@@ -290,6 +295,8 @@ fn boot() -> (Launcher, Task<Message>) {
         search_status: None,
         application_picker: None,
         application_generation: 0,
+        file_details: None,
+        details_generation: 0,
         folder_settings: None,
         folder_generation: 0,
         settings_path,
@@ -416,6 +423,7 @@ impl Launcher {
             && self.search_status.is_none()
             && self.folder_settings.is_none()
             && self.application_picker.is_none()
+            && self.file_details.is_none()
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         if compact == self.compact {
             return Task::none();
@@ -434,7 +442,7 @@ impl Launcher {
         let Some(item) = self.selected().cloned() else { return Task::none() };
         let opens =
             matches!(action, Action::Launch | Action::Desktop(_) | Action::Open | Action::Reveal | Action::OpenWith);
-        if opens && self.opening.is_some() {
+        if (opens || action == Action::Details) && self.opening.is_some() {
             return Task::none(); // one open at a time; the launcher exits after it
         }
         if opens && self.unconfirmed_open {
@@ -463,6 +471,12 @@ impl Launcher {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
                 Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened)
+            }
+            (Action::Details, Target::File(file)) if !file.is_dir && file.path.is_some() => {
+                self.panel = None;
+                self.file_details = Some(details::Panel::new(file.clone()));
+                let load = self.request_file_details();
+                Task::batch([load, self.resize()])
             }
             (Action::OpenWith, Target::File(file)) if !file.is_dir && file.path.is_some() => {
                 self.panel = None;
@@ -592,6 +606,40 @@ impl Launcher {
         self.selected().and_then(|i| self.actions_for(&i.target).first().copied())
     }
 
+    fn request_file_details(&mut self) -> Task<Message> {
+        let Some(panel) = &self.file_details else { return Task::none() };
+        let id = panel.file.id.clone();
+        self.details_generation += 1;
+        let generation = self.details_generation;
+        Task::perform(self.backend.clone().file_details(id), move |result| Message::DetailsLoaded {
+            generation,
+            result,
+        })
+    }
+
+    fn details_effect(&mut self, effect: details::Effect) -> Task<Message> {
+        use widget::operation::{AbsoluteOffset, RelativeOffset};
+        match effect {
+            details::Effect::None => Task::none(),
+            details::Effect::Close => {
+                if let Some(panel) = self.file_details.take() {
+                    self.cursor.select_target(&Target::File(panel.file), &self.items);
+                }
+                self.details_generation += 1;
+                Task::batch([self.resize(), widget::operation::focus(search_id())])
+            }
+            details::Effect::Refresh => self.request_file_details(),
+            details::Effect::Copy(location) => iced::clipboard::write(location),
+            details::Effect::Scroll(y) => {
+                widget::operation::scroll_by(details::scroll_id(), AbsoluteOffset { x: 0.0, y })
+            }
+            details::Effect::Edge(end) => widget::operation::snap_to(
+                details::scroll_id(),
+                if end { RelativeOffset::END } else { RelativeOffset::START },
+            ),
+        }
+    }
+
     fn request_applications(&mut self) -> Task<Message> {
         let Some(panel) = &self.application_picker else { return Task::none() };
         let id = panel.file.id.clone();
@@ -683,7 +731,7 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.application_picker.is_some()
+    if (s.application_picker.is_some() || s.file_details.is_some())
         && matches!(
             message,
             Message::Query(_)
@@ -730,6 +778,27 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
+        Message::DetailsLoaded { generation, result } => {
+            if generation == s.details_generation
+                && let Some(panel) = &mut s.file_details
+            {
+                panel.loaded(result);
+            }
+            Task::none()
+        }
+        Message::Details { generation, event } => {
+            if generation != s.details_generation {
+                return Task::none();
+            }
+            let Some(panel) = &mut s.file_details else { return Task::none() };
+            let effect = panel.event(event);
+            s.details_effect(effect)
+        }
+        Message::RefreshSearchStatus if s.file_details.is_some() => {
+            let effect = s.file_details.as_mut().unwrap().event(details::Event::Refresh);
+            s.details_effect(effect)
+        }
+        Message::Wheel(_) if s.file_details.is_some() => Task::none(),
         Message::ApplicationsLoaded { generation, result } => {
             if generation == s.application_generation
                 && let Some(panel) = &mut s.application_picker
@@ -976,6 +1045,10 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
     s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.file_details {
+        let effect = panel.command(cmd);
+        return s.details_effect(effect);
+    }
     if let Some(panel) = &mut s.application_picker {
         if s.opening.is_some() && cmd != Command::Back {
             return Task::none();
@@ -1074,6 +1147,10 @@ fn command(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.file_details {
+        let generation = s.details_generation;
+        return panel.view().map(move |event| Message::Details { generation, event });
+    }
     if let Some(panel) = &s.application_picker {
         let generation = s.application_generation;
         return crate::shortcuts::capture_numbered(
@@ -1594,6 +1671,8 @@ mod tests {
             search_status: None,
             application_picker: None,
             application_generation: 0,
+            file_details: None,
+            details_generation: 0,
             folder_settings: None,
             folder_generation: 0,
             settings_path: "/synthetic/config.toml".into(),
@@ -1874,7 +1953,7 @@ mod tests {
         assert_eq!(panel.action_for_command(Command::Activate), None);
         panel.filter(String::new());
         assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Open));
-        assert_eq!(panel.actions.len(), 7);
+        assert_eq!(panel.actions.len(), 8);
     }
 
     #[test]
@@ -2123,6 +2202,174 @@ mod tests {
         assert_eq!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()), 0);
         let _ = update(&mut s, Message::Opened(Ok(())));
         assert!(s.usage.boost(Kind::File, &captured.id, "report", usage::now()) > 0);
+    }
+
+    #[test]
+    fn file_details_action_is_discoverable_and_preserves_search_on_return() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("properties".into()));
+        let actions = s.panel.as_ref().unwrap().filtered_actions();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].label(), "File details");
+        let _ = command(&mut s, Command::Activate);
+        let _ = update(&mut s, Message::Query("queued input".into()));
+        let _ = update(&mut s, Message::Scope(Scope::All));
+        assert_eq!(s.query, "report");
+        assert_eq!(s.scope, Scope::Files);
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.selected().unwrap().target, target);
+        assert_eq!(s.query, "report");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn details_ignore_stale_replies_and_restore_the_captured_file() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let search_generation = s.generation;
+        let files = file_hits();
+        let _ = update(&mut s, Message::Files { generation: search_generation, result: Ok(Some(files.clone())) });
+        let captured = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let old = s.details_generation;
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.details_generation, old, "one read at a time");
+        let _ = update(&mut s, Message::Selected(Target::File(files[1].clone())));
+        let _ = update(&mut s, Message::ShowFolders);
+        let _ = update(&mut s, Message::ShowSearchStatus);
+        let _ = command(&mut s, Command::Activate);
+        assert!(s.opening.is_none());
+        assert!(s.folder_settings.is_none() && s.search_status.is_none());
+        let _ = update(&mut s, Message::DetailsLoaded { generation: old, result: Err("unavailable".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        let refreshing = s.details_generation;
+        assert!(refreshing > old);
+        let _ = update(&mut s, Message::DetailsLoaded { generation: old, result: Err("late error".into()) });
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.details_generation, refreshing, "late replies must leave the active read loading");
+        let _ = command(&mut s, Command::Back);
+        let _ = s.perform(Action::Details);
+        let current = s.details_generation;
+        let _ = update(&mut s, Message::Details { generation: old, event: details::Event::Back });
+        let _ = update(&mut s, Message::DetailsLoaded { generation: refreshing, result: Err("closed".into()) });
+        assert!(s.file_details.is_some());
+        let _ = update(&mut s, Message::RefreshSearchStatus);
+        assert_eq!(s.details_generation, current);
+        let _ = update(
+            &mut s,
+            Message::DetailsLoaded {
+                generation: current,
+                result: Ok(crate::backend::FileDetails { mime: String::new(), size: 0, modified: 0 }),
+            },
+        );
+        let _ = update(
+            &mut s,
+            Message::Files {
+                generation: search_generation,
+                result: Ok(Some(vec![files[1].clone(), files[0].clone()])),
+            },
+        );
+        assert!(matches!(s.file_details.as_mut().unwrap().event(details::Event::CopyLocation),
+            details::Effect::Copy(path) if path == "/synthetic/report.txt"));
+        let _ = command(&mut s, Command::Back);
+        assert!(s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, captured);
+        assert_eq!(s.scope, Scope::Files);
+        assert_eq!(s.query, "report");
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn details_widget_and_subscription_route_keys_to_the_modal_view() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let captured = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let initial = s.details_generation;
+        let loaded = |generation| Message::DetailsLoaded {
+            generation,
+            result: Ok(crate::backend::FileDetails { mime: "application/pdf".into(), size: 4096, modified: -1 }),
+        };
+        let _ = update(&mut s, loaded(initial));
+        for (key, code, modifiers) in [
+            (Key::Named(keyboard::key::Named::ArrowDown), Code::ArrowDown, Modifiers::empty()),
+            (Key::Character("r".into()), Code::KeyR, Modifiers::CTRL),
+            (Key::Character("C".into()), Code::KeyC, Modifiers::CTRL | Modifiers::SHIFT),
+            (Key::Named(keyboard::key::Named::Escape), Code::Escape, Modifiers::empty()),
+        ] {
+            let event = Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(720.0, 500.0);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                widget.update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+                if let Some(message) = on_event(event, shell.event_status(), iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+                messages
+            };
+            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            for message in messages.drain(..) {
+                let _ = update(&mut s, message);
+            }
+            if code == Code::KeyR {
+                assert!(s.details_generation > initial);
+                let generation = s.details_generation;
+                let _ = update(&mut s, loaded(generation));
+            }
+            assert_eq!(s.query, "report");
+            assert_eq!(s.scope, Scope::Files);
+            assert!(s.opening.is_none());
+            assert!(s.usage.recent(usage::now(), 8).is_empty());
+        }
+        assert!(s.file_details.is_none());
+        assert_eq!(s.selected().unwrap().target, captured);
+    }
+
+    #[test]
+    fn details_copy_non_utf8_locations_as_lossless_file_urls() {
+        use std::os::unix::ffi::OsStringExt;
+        let mut file = file_hits().remove(0);
+        file.id = "file:///synthetic/non%FF.pdf".into();
+        file.path = Some(std::ffi::OsString::from_vec(b"/synthetic/non\xff.pdf".to_vec()).into());
+        let mut panel = details::Panel::new(file.clone());
+        assert!(matches!(panel.command(Command::CopyPath), details::Effect::Copy(url) if url == file.id));
     }
 
     fn picker_state() -> Launcher {
