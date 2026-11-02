@@ -17,10 +17,14 @@ jobs:
   keyboard-and-latency:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [us-1x, fr-1x, us-1.5x]
     steps:
       - uses: actions/checkout@v4
       - name: Install isolated graphical test dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev dbus libglib2.0-bin kwin-wayland kde-spectacle xvfb xauth qtwayland5 fonts-dejavu-core libwayland-dev libwayland-bin plasma-wayland-protocols python3-pyqt5 python3-gi gir1.2-gtk-4.0
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev dbus libglib2.0-bin kwin-wayland kde-spectacle xvfb xauth qtwayland5 fonts-dejavu-core breeze-icon-theme libwayland-dev libwayland-bin plasma-wayland-protocols python3-pyqt5 python3-gi gir1.2-gtk-4.0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -32,9 +36,17 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
           export QT_LOGGING_RULES='*.debug=false'
           export FERROSEEK_SMOKE_INTERACTION=1
+          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
           xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
+      - name: Exercise screenshot-only smoke mode
+        run: |
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export QT_LOGGING_RULES='*.debug=false'
+          export FERROSEEK_SMOKE_INTERACTION=0
+          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
+          xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction/screenshots
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: launcher-interaction
+          name: launcher-interaction-${{ matrix.profile }}
           path: target/launcher-interaction

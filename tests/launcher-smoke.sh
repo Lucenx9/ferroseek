@@ -12,6 +12,14 @@
 # spectacle is missing.
 set -euo pipefail
 
+export FERROSEEK_SMOKE_PROFILE=${FERROSEEK_SMOKE_PROFILE:-us-1x}
+case "$FERROSEEK_SMOKE_PROFILE" in
+    us-1x) SMOKE_LAYOUT=us; SMOKE_SCALE=1 ;;
+    fr-1x) SMOKE_LAYOUT=fr; SMOKE_SCALE=1 ;;
+    us-1.5x) SMOKE_LAYOUT=us; SMOKE_SCALE=1.5 ;;
+    *) echo "FAIL: unknown launcher profile: $FERROSEEK_SMOKE_PROFILE" >&2; exit 1 ;;
+esac
+
 BIN_DIR=$(realpath "${1:-target/debug}")
 OUT=$(realpath -m "${2:-target/launcher-smoke}")
 shift $(( $# > 2 ? 2 : $# ))
@@ -69,8 +77,20 @@ trap cleanup EXIT
 fail() { echo "FAIL: $*"; for l in "$T"/*.log; do echo "--- $l"; tail -20 "$l"; done; exit 1; }
 
 export HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
-    XDG_CACHE_HOME="$T/home/.cache" XDG_STATE_HOME="$T/home/.local/state"
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
+    XDG_CACHE_HOME="$T/home/.cache" XDG_STATE_HOME="$T/home/.local/state" \
+    XDG_RUNTIME_DIR="$T/runtime" XDG_CONFIG_DIRS="$T/empty-config" XDG_DATA_DIRS="$T/empty-data"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME/applications" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" \
+    "$XDG_RUNTIME_DIR" "$XDG_CONFIG_DIRS" "$XDG_DATA_DIRS"
+chmod 700 "$XDG_RUNTIME_DIR"
+unset XDG_ACTIVATION_TOKEN DESKTOP_STARTUP_ID
+# Share only read-only graphics/MIME assets, never the system application catalog.
+mkdir -p "$XDG_DATA_DIRS/icons"
+for theme in breeze breeze-dark hicolor; do
+    [[ -d "/usr/share/icons/$theme" ]] || fail "required icon theme missing: $theme"
+    ln -s "/usr/share/icons/$theme" "$XDG_DATA_DIRS/icons/$theme"
+done
+[[ -d /usr/share/mime ]] || fail "shared MIME data not installed"
+ln -s /usr/share/mime "$XDG_DATA_DIRS/mime"
 printf '[Icons]\nTheme=breeze-dark\n' > "$XDG_CONFIG_HOME/kdeglobals"
 printf '[Desktop Entry]\nType=Application\nName=Report Viewer\nComment=Synthetic test entry\nIcon=document-preview\nExec=true\n' \
     > "$XDG_DATA_HOME/applications/test.report-viewer.desktop"
@@ -133,12 +153,16 @@ else
     sleep 0.5 # initial index of the tiny tree
 fi
 
-KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT=us \
-    kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 > "$T/kwin.log" 2>&1 &
+# KDE's compositor/capture resources and authorization metadata are system data;
+# the launcher and daemon retain their separate synthetic application catalog.
+XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share \
+KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
+    kwin_wayland --virtual --socket "$SOCK" --width 1280 --height 800 --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
-sleep 1.5
+for _ in $(seq 100); do has_owner org.kde.KWin && break; sleep 0.05; done
+has_owner org.kde.KWin || fail "nested KWin did not register its control interface"
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
 if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
@@ -159,7 +183,9 @@ for q in "${QUERIES[@]}"; do
     for _ in $(seq 100); do has_owner io.github.ferroseek.Launcher && break; sleep 0.05; done
     sleep 1.5
     kill -0 "$LPID" 2>/dev/null || fail "launcher exited for query '$q'"
-    timeout 15 spectacle -b -n -f -o "$OUT/query-$i.png" > /dev/null 2>&1 || fail "screenshot failed"
+    XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share \
+        timeout 15 spectacle -b -n -f -o "$OUT/query-$i.png" > "$OUT/query-$i.png.log" 2>&1 || fail "screenshot failed"
+    [[ -s "$OUT/query-$i.png" ]] || fail "capture tool returned without an image; inspect query-$i.png.log"
     echo "== '$q': $OUT/query-$i.png"
     timeout 5 "$BIN_DIR/ferroseek-launcher" || fail "toggle invocation failed"
     for _ in $(seq 40); do kill -0 "$LPID" 2>/dev/null || break; sleep 0.05; done
