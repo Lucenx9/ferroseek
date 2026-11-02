@@ -42,7 +42,7 @@ Write concise English and concrete actions; separate available features from pla
 - For index/engine/daemon changes, read `docs/ARCHITECTURE.md` and
   `docs/CODE_REVIEW.md`. Only `crates/index` knows SQL; only the engine's
   `reconcile_dir` and `resolve` reconcile filesystem state with the index.
-- For launcher changes, read `docs/LAUNCHER.md`.
+- For launcher/shared-config changes, read `docs/LAUNCHER.md`.
 - For MCP changes, read `docs/MCP.md`; for installer/packaging changes,
   read `docs/INSTALLATION.md` and use the existing Python smoke tests.
 - For measurements, read `docs/BENCHMARKS.md`; preserve `prototype/backend-bench`.

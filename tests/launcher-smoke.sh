@@ -79,7 +79,8 @@ mkdir -p "$XDG_STATE_HOME/ferroseek"
 printf 'app\ttest.report-viewer.desktop\n' > "$XDG_STATE_HOME/ferroseek/launcher-favorites"
 printf 'app\t3\t%s\ttest.report-viewer.desktop\nfile\t2\t%s\tfile://%s\n' "$(date +%s)" "$(date +%s)" \
     "$(printf %s "$R/Documents/notes-2024.md")" > "$XDG_STATE_HOME/ferroseek/launcher-usage"
-FERROSEEK_CONFIG="$T/ferroseek.toml" FERROSEEK_DATA_DIR="$T/data" "$BIN_DIR/ferroseekd" 2> "$T/daemon.log" &
+export FERROSEEK_CONFIG="$T/ferroseek.toml"
+FERROSEEK_DATA_DIR="$T/data" "$BIN_DIR/ferroseekd" 2> "$T/daemon.log" &
 DPID=$!
 has_owner() {
     gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \

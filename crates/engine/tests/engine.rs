@@ -225,3 +225,48 @@ fn cache_tag_activated_by_events_is_rechecked_on_quick_restart() {
     index_once(&cfg, &paths, false, false).unwrap();
     assert_eq!(hits(&paths, "report"), 1, "event-driven pruning must not cache an empty listing across restarts");
 }
+
+#[test]
+fn folder_scope_changes_apply_without_restart_and_preserve_pause_and_rules() {
+    let (temp, root, paths, mut cfg) = setup();
+    cfg.exclude_names.push("private*".into());
+    write(&root.join("old-scope-file.txt"));
+    let other = temp.path().join("new scope:2026");
+    write(&other.join("new-scope-file.txt"));
+    write(&other.join("private-document.txt"));
+    write(&other.join(".hidden-file.txt"));
+    let engine = Engine::start(&cfg, &paths).unwrap();
+    assert!(engine.wait_idle(Duration::from_secs(10)));
+    engine.pause();
+    eventually("pause before folder update", || engine.status().state == "paused");
+    engine.apply_roots(vec![other.to_str().unwrap().into()]).unwrap();
+    assert_eq!(engine.status().state, "paused", "folder changes must not resume indexing");
+    assert_eq!(hits(&paths, "old-scope-file"), 0);
+    assert_eq!(hits(&paths, "new-scope-file"), 0);
+    assert!(root.join("old-scope-file.txt").exists(), "removing scope never deletes user files");
+    let active = engine.configuration();
+    assert_eq!(active.roots, [other.to_str().unwrap()]);
+    assert_eq!(active.exclude_names, cfg.exclude_names);
+    assert_eq!(active.max_cpu_percent, cfg.max_cpu_percent);
+    assert!(engine.apply_roots(vec!["relative".into()]).is_err());
+    assert_eq!(engine.configuration(), active);
+    engine.resume();
+    eventually("new scope indexed", || hits(&paths, "new-scope-file") == 1);
+    assert_eq!(hits(&paths, "private-document"), 0);
+    assert_eq!(hits(&paths, "hidden-file"), 0);
+    write(&other.join("new-live-file.txt"));
+    eventually("new scope watched", || hits(&paths, "new-live-file") == 1);
+    write(&root.join("outside-scope-file.txt"));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(hits(&paths, "outside-scope-file"), 0);
+    engine.apply_roots(Vec::new()).unwrap();
+    eventually("empty scope is idle", || engine.status().state == "idle");
+    assert!(Reader::open(&paths.index_file()).unwrap().roots().unwrap().is_empty());
+    assert_eq!(hits(&paths, "new-scope-file"), 0);
+    engine.shutdown();
+    let disabled = active.with_roots(Vec::new()).unwrap();
+    let restarted = Engine::start(&disabled, &paths).unwrap();
+    assert!(restarted.wait_idle(Duration::from_secs(10)));
+    assert_eq!(hits(&paths, "new-scope-file"), 0);
+    restarted.shutdown();
+}

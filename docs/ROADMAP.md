@@ -23,9 +23,8 @@ published release or verified compatibility with every Linux desktop.
 - [x] Dedicated FerroSeek daemon search/open interface, independent replies for
   concurrent clients, and removal of Noctalia/KRunner adapters.
 - [ ] Add configuration for appearance, light/dark themes, size and position.
-- [ ] Make initial indexing setup and missing-service/error feedback clear in
-  the launcher, including selection of indexing roots. File search status,
-  indexed locations and refresh/retry are available; folder editing is pending.
+- [x] Initial folder selection, folder editing with save/apply, file-search status,
+  indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon
   together before choosing further performance work.
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.

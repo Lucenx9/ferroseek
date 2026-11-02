@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use ferroseek_config::Config;
 use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -94,6 +95,12 @@ pub struct SearchStatus {
     pub roots: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct FolderPolicy {
+    pub config_path: String,
+    pub config: Config,
+}
+
 /// Events the bus thread delivers to the UI.
 #[derive(Debug, Clone)]
 pub enum UiEvent {
@@ -105,6 +112,8 @@ enum Request {
     Search { query: String, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Status { reply: oneshot::Sender<Result<SearchStatus, String>> },
+    FolderPolicy { reply: oneshot::Sender<Result<Option<FolderPolicy>, String>> },
+    ApplyFolders { path: String, roots: Vec<String>, reply: oneshot::Sender<Result<bool, String>> },
 }
 
 /// Handle to the bus thread. Cloning shares the thread.
@@ -230,7 +239,70 @@ async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
             let r = file_search_status(conn, timeouts.status).await;
             let _ = reply.send(r);
         }
+        Request::FolderPolicy { reply } => {
+            let _ = reply.send(folder_policy(conn).await);
+        }
+        Request::ApplyFolders { path, roots, reply } => {
+            let body = (path, roots);
+            let r = async {
+                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+                let message = runtime
+                    .timeout(
+                        Duration::from_secs(30),
+                        conn.call_method(
+                            Some(DAEMON_BUS_NAME),
+                            CONTROL_PATH,
+                            Some(CONTROL_IFACE),
+                            "ReloadFolders",
+                            &body,
+                        ),
+                    )
+                    .await
+                    .map_err(|_| {
+                        "The service did not confirm within 30 seconds. Check index status or save and apply again."
+                            .to_string()
+                    })?
+                    .map_err(|e| e.to_string())?;
+                message.body().deserialize::<bool>().map_err(|e| e.to_string())
+            }
+            .await;
+            let _ = reply.send(r);
+        }
     }
+}
+
+async fn folder_policy(conn: &zbus::Connection) -> Result<Option<FolderPolicy>, String> {
+    let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+    // A unique owner cannot be activated: viewing settings must not start an
+    // unconfigured service and its default home-directory scan.
+    let owner = runtime
+        .timeout(
+            STATUS_TIMEOUT,
+            conn.call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus"),
+                "GetNameOwner",
+                &(DAEMON_BUS_NAME,),
+            ),
+        )
+        .await
+        .map_err(|_| STATUS_TIMED_OUT.to_string())?;
+    let owner = match owner {
+        Ok(message) => message.body().deserialize::<String>().map_err(|e| e.to_string())?,
+        Err(zbus::Error::FDO(e)) if matches!(e.as_ref(), zbus::fdo::Error::NameHasNoOwner(_)) => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let message = runtime
+        .timeout(
+            STATUS_TIMEOUT,
+            conn.call_method(Some(owner.as_str()), CONTROL_PATH, Some(CONTROL_IFACE), "FolderPolicy", &()),
+        )
+        .await
+        .map_err(|_| STATUS_TIMED_OUT.to_string())?
+        .map_err(|e| e.to_string())?;
+    let (config_path, text): (String, String) = message.body().deserialize().map_err(|e| e.to_string())?;
+    Ok(Some(FolderPolicy { config_path, config: Config::parse(&text).map_err(|e| e.to_string())? }))
 }
 
 type FileResult = (String, String, String, String, bool);
@@ -270,6 +342,19 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn folder_policy(self) -> Result<Option<FolderPolicy>, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx.unbounded_send(Request::FolderPolicy { reply }).map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
+    pub async fn apply_folders(self, path: String, roots: Vec<String>) -> Result<bool, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .unbounded_send(Request::ApplyFolders { path, roots, reply })
+            .map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped before confirming folder application".to_string())?
+    }
     #[cfg(test)]
     pub fn disconnected() -> Self {
         let (tx, _rx) = mpsc::unbounded();
@@ -555,6 +640,16 @@ mod tests {
                 assert!(opened_rx.try_recv().is_err());
             };
             iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn viewing_folder_settings_does_not_activate_an_absent_service() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            assert!(folder_policy(&conn).await.unwrap().is_none());
+            assert!(folder_policy(&conn).await.unwrap().is_none());
         });
     }
 

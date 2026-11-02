@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/index", "crates/engine", "crates/daemon", "crates/cli", "crates/bench", "crates/mcp", "crates/launcher"]
+members = ["crates/config", "crates/index", "crates/engine", "crates/daemon", "crates/cli", "crates/bench", "crates/mcp", "crates/launcher"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/Lucenx9/ferroseek"
 
 [workspace.dependencies]
+ferroseek-config = { path = "crates/config" }
 ferroseek-index = { path = "crates/index" }
 ferroseek-engine = { path = "crates/engine" }
 rusqlite = { version = "0.41", features = ["bundled"] }

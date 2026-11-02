@@ -9,6 +9,7 @@ mod apps;
 mod backend;
 mod calc;
 mod favorites;
+mod folders;
 mod icons;
 mod launch;
 mod matcher;
@@ -91,7 +92,17 @@ fn main() -> ExitCode {
     } else {
         favorites::Favorites::load(favorites::Favorites::default_path())
     };
-    match ui::run(ui::Boot { backend, apps, usage: history, favorites, initial_query }, events) {
+    match ui::run(
+        ui::Boot {
+            backend,
+            apps,
+            usage: history,
+            favorites,
+            initial_query,
+            settings_path: ferroseek_config::Paths::from_env().config_file,
+        },
+        events,
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("ferroseek-launcher: {e}");
