@@ -222,7 +222,9 @@ def main():
                          "GDK_BACKEND": "wayland", "GTK_A11Y": "none"},
                 )
                 processes.append(process)
-                wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "target selected")
+                wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log))
+                         and any(r.get("event") == "[DEBUG-desktop-focus]keyboard_enter" for r in records(log)),
+                         "target selected and compositor keyboard focus received")
                 query_edits = len([r for r in records(log) if r.get("event") == "query_start"])
                 if mode == "action-numbered":
                     chord(29, 37)
@@ -304,7 +306,9 @@ def main():
                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" and r.get("files") == 1
-                                     for r in records(log)), "indexed document selected")
+                                     for r in records(log))
+                         and any(r.get("event") == "[DEBUG-desktop-focus]keyboard_enter" for r in records(log)),
+                         "indexed document selected and compositor keyboard focus received")
                 if mode == "file-with":
                     chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
                     type_text("with")

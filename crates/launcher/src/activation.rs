@@ -222,6 +222,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Worker {
         let Some(seat) = state.seats.get_mut(name) else { return };
         match event {
             wl_keyboard::Event::Enter { surface, serial, .. } => {
+                crate::timing::event("[DEBUG-desktop-focus]keyboard_enter");
                 seat.keyboard_focus = Some(surface.clone());
                 state.context = Some(Context { seat: *name, surface, serial, pointer: false });
             }
@@ -231,6 +232,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Worker {
                 }
             }
             wl_keyboard::Event::Leave { .. } => {
+                crate::timing::event("[DEBUG-desktop-focus]keyboard_leave");
                 seat.keyboard_focus = None;
                 if state.context.as_ref().is_some_and(|context| context.seat == *name && !context.pointer) {
                     state.context = None;
