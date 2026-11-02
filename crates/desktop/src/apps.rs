@@ -527,7 +527,8 @@ pub fn expand_exec(exec: &str, icon: Option<&str>, name: &str, file: &Path) -> R
                     }
                 }
                 // Embedded file/URL and deprecated codes expand to nothing.
-                Some(_) | None => {}
+                Some('f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {}
+                _ => return Err(ExecError::InvalidFieldCode),
             }
         }
         argv.push(out);
@@ -669,6 +670,20 @@ mod tests {
         assert_eq!(e(r#"sh -c "echo \\\\""#).unwrap(), ["sh", "-c", "echo \\"]);
         assert_eq!(e(r#"prog "open"#), Err(ExecError::UnterminatedQuote));
         assert_eq!(e("%U"), Err(ExecError::Empty));
+    }
+
+    #[test]
+    fn application_exec_rejects_unknown_and_incomplete_field_codes() {
+        for exec in ["prog %Z", "prog --format=%Z", "prog %", "prog --format=%"] {
+            let app = p(&format!("[Desktop Entry]\nType=Application\nName=Probe\nExec={exec}\n")).unwrap();
+            assert_eq!(app.exec, exec);
+            assert_eq!(tokenize_exec(exec).unwrap().join(" "), exec);
+            assert_eq!(app.argv(), Err(ExecError::InvalidFieldCode), "Exec={exec}");
+            assert_eq!(
+                crate::launch::command_line(&app, false, None).unwrap_err().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
     }
 
     #[test]
