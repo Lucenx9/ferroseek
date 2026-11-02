@@ -110,7 +110,7 @@ to another command.
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.
 - **Calculator:** an arithmetic expression (`(2+3)*4`, `sqrt(2)`, `2^10`)
   shows its value; Enter copies it. Prefix with `=` for calculator-only
-  results, including plain numbers (`= 42`) and scientific notation
+  results, including plain numbers (`= 42`), constants (`= pi`) and scientific notation
   (`= 1e-12 * 2`). Ctrl+Enter or **Use result** replaces the expression with
   its answer so you can append another operation. Continued calculations
   retain full precision; copied answers use the displayed precision.

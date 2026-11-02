@@ -22,7 +22,8 @@ pub fn is_explicit(input: &str) -> bool {
 }
 
 /// Evaluates expressions, or plain numbers when prefixed with `=`. Without
-/// that prefix, plain numbers stay available for application and file search.
+/// that prefix, plain numbers and constants (`e`, `pi`, also signed) stay
+/// available for application and file search.
 pub fn evaluate(input: &str) -> Option<f64> {
     let s = input.trim();
     if s.is_empty() || s.len() > MAX_INPUT {
@@ -34,7 +35,10 @@ pub fn evaluate(input: &str) -> Option<f64> {
     };
     let tokens = lex(s)?;
     let interesting = tokens.iter().any(|t| matches!(t, Tok::Op(_) | Tok::Ident(_)))
-        && !matches!(tokens.as_slice(), [Tok::Op('-' | '+'), Tok::Num(_)]);
+        && !matches!(
+            tokens.as_slice(),
+            [Tok::Num(_) | Tok::Ident(_)] | [Tok::Op('-' | '+'), Tok::Num(_) | Tok::Ident(_)]
+        );
     if !explicit && !interesting {
         return None;
     }
@@ -327,6 +331,12 @@ mod tests {
             "1.2.3+1",
             "foo(2)",
             "sqrt 4",
+            "e",
+            "pi",
+            "PI",
+            "π",
+            "-e",
+            "+pi",
         ] {
             assert_eq!(evaluate(s), None, "{s:?}");
         }
