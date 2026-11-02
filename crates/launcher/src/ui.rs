@@ -2232,6 +2232,79 @@ mod tests {
     }
 
     #[test]
+    fn focused_picker_captures_numbered_keys_before_the_filter_input() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::keyboard::key::{Code, Physical};
+        use iced::{Rectangle, Size};
+
+        for (symbol, code, modifiers, slot) in [
+            ("1", Code::Digit1, Modifiers::CTRL, Some(0)),
+            ("é", Code::Digit2, Modifiers::CTRL, Some(1)),
+            ("7", Code::Digit7, Modifiers::empty(), None),
+        ] {
+            let mut s = picker_state();
+            let generation = s.application_generation;
+            let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(12)) });
+            let _ = command(&mut s, Command::Last);
+            let messages = {
+                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let mut element = view(&s);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let bounds = Size::new(720.0, 500.0);
+                let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+                let layout = Layout::new(&node);
+                widget.operate(
+                    &mut tree,
+                    layout,
+                    &renderer,
+                    &mut iced::advanced::widget::operation::focusable::focus::<()>(open_with::input_id()),
+                );
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                for event in [
+                    Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: Key::Character(symbol.into()),
+                        modified_key: Key::Character(symbol.into()),
+                        physical_key: Physical::Code(code),
+                        location: keyboard::Location::Standard,
+                        modifiers,
+                        text: Some(symbol.into()),
+                        repeat: false,
+                    }),
+                ] {
+                    widget.update(
+                        &mut tree,
+                        &event,
+                        layout,
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &Rectangle::with_size(bounds),
+                    );
+                }
+                assert_eq!(shell.event_status(), iced::event::Status::Captured);
+                messages
+            };
+            assert_eq!(messages.len(), 1);
+            match slot {
+                Some(slot) => assert!(matches!(&messages[0], Message::Cmd(Command::ActivateVisible(i)) if *i == slot)),
+                None => assert!(
+                    matches!(&messages[0], Message::OpenWith { event: open_with::Event::Query(query), .. } if query == symbol)
+                ),
+            }
+            for message in messages {
+                let _ = update(&mut s, message);
+            }
+            assert_eq!(s.application_picker.as_ref().unwrap().query, if slot.is_some() { "" } else { symbol });
+            assert_eq!(s.opening.is_some(), slot.is_some());
+            assert_eq!(s.query, "report");
+        }
+    }
+
+    #[test]
     fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
         let file = file_hits().remove(0);
         let mut panel = open_with::Panel::new(file);
