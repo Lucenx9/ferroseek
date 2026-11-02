@@ -166,6 +166,7 @@ pub enum UiEvent {
 }
 
 enum Request {
+    ListDirectory { folder: String, reply: oneshot::Sender<Result<(Vec<FileHit>, bool), String>> },
     Search { query: String, folder: Option<String>, reply: oneshot::Sender<Result<Vec<FileHit>, String>> },
     Run { id: String, action: String, reply: oneshot::Sender<Result<(), RunError>> },
     Applications { id: String, reply: oneshot::Sender<Result<Vec<ApplicationChoice>, String>> },
@@ -272,7 +273,9 @@ async fn serve(conn: zbus::Connection, mut rx: mpsc::UnboundedReceiver<Request>,
             if matches!(next, Request::TextPreview { .. }) {
                 pending.retain(|request| !matches!(request, Request::TextPreview { .. }));
             }
-            if matches!(next, Request::Search { .. }) && matches!(pending.back(), Some(Request::Search { .. })) {
+            if matches!(next, Request::Search { .. } | Request::ListDirectory { .. })
+                && matches!(pending.back(), Some(Request::Search { .. } | Request::ListDirectory { .. }))
+            {
                 pending.pop_back();
             }
             pending.push_back(next);
@@ -326,6 +329,30 @@ async fn load_file_details(conn: &zbus::Connection, id: String, timeout: Duratio
 
 async fn handle(conn: &zbus::Connection, req: Request, timeouts: Timeouts) {
     match req {
+        Request::ListDirectory { folder, reply } => {
+            let result = async {
+                let runtime = zruntime::SharedRuntime::current().map_err(|e| e.to_string())?;
+                let message = runtime
+                    .timeout(
+                        timeouts.search,
+                        conn.call_method(
+                            Some(DAEMON_BUS_NAME),
+                            SEARCH_PATH,
+                            Some(SEARCH_IFACE),
+                            "ListDirectory",
+                            &(folder,),
+                        ),
+                    )
+                    .await
+                    .map_err(|_| "Folder listing timed out. Refresh to try again.".to_string())?
+                    .map_err(|e| e.to_string())?;
+                let (entries, truncated): (Vec<FileResult>, bool) =
+                    message.body().deserialize().map_err(|e| e.to_string())?;
+                Ok((entries.into_iter().map(to_hit).collect(), truncated))
+            }
+            .await;
+            let _ = reply.send(result);
+        }
         Request::Search { query, folder, reply } => {
             let r = search(conn, &query, folder.as_deref(), timeouts.search).await;
             let _ = reply.send(r);
@@ -516,6 +543,14 @@ fn to_hit((id, name, icon, subtext, is_dir): FileResult) -> FileHit {
 }
 
 impl Backend {
+    pub async fn list_directory(self, folder: String) -> Result<(Vec<FileHit>, bool), String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .unbounded_send(Request::ListDirectory { folder, reply })
+            .map_err(|_| "bus thread stopped".to_string())?;
+        rx.await.map_err(|_| "bus thread stopped".to_string())?
+    }
+
     pub async fn text_preview(self, id: String, validity: PreviewRequest) -> Result<PreviewData, String> {
         let (reply, rx) = oneshot::channel();
         self.tx
@@ -635,6 +670,24 @@ mod tests {
                 "reject" => Err(zbus::fdo::Error::AccessDenied("file is unavailable".into())),
                 "metadata-error" => Err(zbus::fdo::Error::Failed("metadata unavailable".into())),
                 _ => Ok(("application/pdf".into(), 123, -1)),
+            }
+        }
+
+        async fn list_directory(&self, folder: &str) -> zbus::fdo::Result<(Vec<FileResult>, bool)> {
+            self.0.send((folder.into(), "list".into())).unwrap();
+            match folder {
+                "stall" => std::future::pending().await,
+                "reject" => Err(zbus::fdo::Error::AccessDenied("folder unavailable".into())),
+                _ => Ok((
+                    vec![(
+                        "file:///synthetic/report.txt".into(),
+                        "report.txt".into(),
+                        String::new(),
+                        "/synthetic".into(),
+                        false,
+                    )],
+                    true,
+                )),
             }
         }
 
@@ -966,6 +1019,40 @@ mod tests {
                 assert!(requests.try_recv().is_err(), "neither preview RPC may start after cancellation");
             };
             iced::futures::future::join(serve(conn, rx, Timeouts::default()), verify).await;
+        });
+    }
+
+    #[test]
+    fn directory_deadlines_release_the_queue_and_preserve_truncation() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let (observed, requests) = std::sync::mpsc::channel();
+            let _service = zbus::connection::Builder::address(address.trim())
+                .name(DAEMON_BUS_NAME)
+                .serve_at(SEARCH_PATH, SearchService(observed))
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, rx) = mpsc::unbounded();
+            let backend = Backend { tx };
+            let verify = async {
+                assert_eq!(
+                    backend.clone().list_directory("stall".into()).await.unwrap_err(),
+                    "Folder listing timed out. Refresh to try again."
+                );
+                assert!(backend.clone().list_directory("reject".into()).await.is_err());
+                let (files, more) = backend.clone().list_directory("ready".into()).await.unwrap();
+                assert!(more);
+                assert_eq!(files[0].path.as_deref(), Some(std::path::Path::new("/synthetic/report.txt")));
+                assert_eq!(requests.try_iter().map(|(id, _)| id).collect::<Vec<_>>(), ["stall", "reject", "ready"]);
+                assert!(backend.search("report".into()).await.unwrap().is_some());
+            };
+            iced::futures::future::join(
+                serve(conn, rx, Timeouts { search: Duration::from_millis(40), ..Timeouts::default() }),
+                verify,
+            )
+            .await;
         });
     }
 

@@ -683,3 +683,45 @@ fn scoped_policy_search_orders_by_final_score() {
         }
     }
 }
+
+#[test]
+fn directory_listing_is_direct_ordered_bounded_and_preserves_raw_names() {
+    let (_temp, db) = setup();
+    let (mut writer, _) = Writer::open(&db).unwrap();
+    let mut tx = writer.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let (nested, _) = tx.upsert(root, b"z-folder", dir(2)).unwrap();
+    tx.upsert(root, b"empty", dir(3)).unwrap();
+    tx.upsert(root, b"alpha.txt", file(4)).unwrap();
+    tx.upsert(root, b"Beta.txt", file(5)).unwrap();
+    tx.upsert(root, b"ALPHA.txt", file(6)).unwrap();
+    tx.upsert(root, b"raw-\xff.txt", file(7)).unwrap();
+    tx.upsert(nested, b"deep.txt", file(8)).unwrap();
+    tx.upsert(root, b"link", Meta { kind: Kind::Symlink, ..file(9) }).unwrap();
+    tx.upsert(root, b"fifo", Meta { kind: Kind::Other, ..file(10) }).unwrap();
+    tx.commit().unwrap();
+    let reader = Reader::open(&db).unwrap();
+    let listing = reader.directory_entries(Path::new("/r"), 200).unwrap().unwrap();
+    assert!(!listing.truncated);
+    assert_eq!(listing.meta.ino, 1);
+    assert_eq!(
+        listing.entries.iter().map(|hit| hit.path.file_name().unwrap().as_bytes().to_vec()).collect::<Vec<_>>(),
+        [
+            b"empty".to_vec(),
+            b"z-folder".to_vec(),
+            b"ALPHA.txt".to_vec(),
+            b"alpha.txt".to_vec(),
+            b"Beta.txt".to_vec(),
+            b"raw-\xff.txt".to_vec()
+        ]
+    );
+    let limited = reader.directory_entries(Path::new("/r"), 2).unwrap().unwrap();
+    assert_eq!(names(&limited.entries), ["empty", "z-folder"]);
+    assert!(limited.truncated);
+    let zero = reader.directory_entries(Path::new("/r"), 0).unwrap().unwrap();
+    assert!(zero.entries.is_empty() && zero.truncated);
+    let empty = reader.directory_entries(Path::new("/r/empty"), 200).unwrap().unwrap();
+    assert!(empty.entries.is_empty() && !empty.truncated);
+    assert!(reader.directory_entries(Path::new("/missing"), 200).unwrap().is_none());
+    assert!(reader.directory_entries(Path::new("/r/alpha.txt"), 200).unwrap().is_none());
+}

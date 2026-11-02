@@ -13,6 +13,7 @@ use crate::open;
 use crate::pool::Pool;
 
 const SEARCH_LIMIT: usize = 15;
+const DIRECTORY_LIMIT: usize = 200;
 const ACTION_OPEN_PARENT: &str = "open-parent";
 
 /// URL, name, icon, parent display path and directory flag.
@@ -153,6 +154,28 @@ impl Search {
                 ),
                 crate::preview::Error::Io(error) => zbus::fdo::Error::Failed(format!("Cannot read preview: {error}")),
             })
+        })
+        .await
+    }
+
+    /// Bounded indexed direct children; no filesystem directory enumeration.
+    async fn list_directory(&self, folder_id: String) -> zbus::fdo::Result<(Vec<FileResult>, bool)> {
+        use std::os::unix::fs::MetadataExt;
+        let path =
+            path_from_url(&folder_id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("invalid folder URL".into()))?;
+        let (pool, mime, home) = (self.pool.clone(), self.mime.clone(), self.home.clone());
+        zruntime::unblock(move || {
+            let listing = pool
+                .with(|reader| reader.directory_entries(&path, DIRECTORY_LIMIT))
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?
+                .filter(|listing| {
+                    std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir() && meta.ino() == listing.meta.ino)
+                })
+                .ok_or_else(|| {
+                    zbus::fdo::Error::AccessDenied("Folder is no longer an available indexed directory".into())
+                })?;
+            let mime = mime.get_or_init(MimeDb::load);
+            Ok((listing.entries.iter().map(|hit| to_result(hit, mime, &home)).collect(), listing.truncated))
         })
         .await
     }
