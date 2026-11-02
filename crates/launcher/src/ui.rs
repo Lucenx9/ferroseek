@@ -3104,6 +3104,70 @@ mod tests {
         assert!(s.usage.recent(usage::now(), 8).is_empty());
     }
 
+    #[test]
+    fn preview_buttons_route_pointer_events_without_touching_hidden_search() {
+        use iced::advanced::{Layout, Shell, layout, widget::Tree};
+        use iced::{Point, Rectangle, Size};
+
+        let click = |s: &Launcher, point: Point| {
+            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut element = view(s);
+            let widget = element.as_widget_mut();
+            let mut tree = Tree::new(&*widget);
+            let bounds = Size::new(720.0, 500.0);
+            let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, bounds));
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            for event in
+                [mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)]
+            {
+                widget.update(
+                    &mut tree,
+                    &Event::Mouse(event),
+                    Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(bounds),
+                );
+            }
+            messages
+        };
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let target = s.selected().unwrap().target.clone();
+        let _ = s.perform(Action::Details);
+        let messages = click(&s, Point::new(500.0, 35.0));
+        assert!(matches!(&messages[..], [Message::Details { event: details::Event::Preview, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        let initial = s.preview_generation;
+        assert!(click(&s, Point::new(650.0, 35.0)).is_empty(), "refresh is disabled while loading");
+        let _ = update(&mut s, Message::PreviewLoaded { generation: initial, result: Err("unavailable".into()) });
+        let messages = click(&s, Point::new(650.0, 35.0));
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Refresh, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.preview_generation > initial);
+        let messages = click(&s, Point::new(650.0, 475.0));
+        assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::CopyLocation, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        let _ = command(&mut s, Command::Back);
+        let _ = command(&mut s, Command::Back);
+        assert_eq!(s.selected().unwrap().target, target);
+        assert_eq!(s.query, "report");
+        assert!(s.opening.is_none());
+        assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
     fn picker_state() -> Launcher {
         let mut s = search_state();
         let _ = update(&mut s, Message::Scope(Scope::Files));
