@@ -54,7 +54,9 @@ impl Widget<Message, Theme, iced::Renderer> for MaterialRenderer<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        let theme = if matches!(renderer, iced::Renderer::Secondary(_)) { &self.1 } else { theme };
+        let software = matches!(renderer, iced::Renderer::Secondary(_));
+        crate::timing::renderer(if software { crate::timing::Backend::TinySkia } else { crate::timing::Backend::Wgpu });
+        let theme = if software { &self.1 } else { theme };
         self.0.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport);
     }
 

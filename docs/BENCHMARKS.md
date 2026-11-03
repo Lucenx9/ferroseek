@@ -621,7 +621,7 @@ warm-cache regression check, not a new million-file or desktop benchmark.
 
 ## 12. Launcher interaction latency
 
-The numeric snapshots below predate the WGPU material path. New launcher runs
+The historical November 2 snapshots below predate the WGPU material path. New launcher runs
 include graphics adapter initialization; the historical software results do not
 characterize its startup cost. Per-run diagnostics remain in the graphical CI
 artifacts, with physical display presentation still excluded.
@@ -640,17 +640,18 @@ the action filter and returns to the main field. No UI messages are injected.
 ```sh
 cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon
 export XDG_RUNTIME_DIR=$(mktemp -d)
-LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 \
+LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_MODE=all \
   xvfb-run -a tests/launcher-smoke.sh target/release target/launcher-interaction
 ```
 
 The workflow `Launcher interaction` installs the Linux test dependencies and
 retains PNGs, per-process diagnostic logs and `latency.json`. The JSON records
 the OS, CPU, KWin version, keyboard profile, observed logical output geometry/scale
-and every sample. Current schema 2 also records the matching query generation,
-`query_ready_us` and `ready_to_frame_us`. There are 20 process launches by
-default (`FERROSEEK_SMOKE_TRIALS=2…100`); the first is reported separately and
-the remaining 19 use nearest-rank p50/p95 and maximum. Neither set claims cold
+and every sample. Schema 3 records the matching query generation,
+`query_ready_us`, `ready_to_frame_us`, `keyboard_focus_us`, observed renderer and
+live RSS/HWM snapshots. There are 20 process launches per mode by
+default (`FERROSEEK_SMOKE_TRIALS=2…100`); the first of each mode/renderer group
+is reported separately and the remaining 19 use nearest-rank p50/p95 and maximum. Neither set claims cold
 caches: no caches are dropped and the daemon remains warm between launches.
 
 - **First redraw:** entry into launcher `main` to its first redraw event;
@@ -659,6 +660,13 @@ caches: no caches are dropped and the daemon remains warm between launches.
   event after current results are applied. Includes application matching,
   backend queueing, D-Bus/search, result processing and the redraw callback;
   excludes injected-key dispatch before receipt and compositor presentation.
+- **Keyboard focus:** entry into launcher `main` to the activation thread's first
+  compositor keyboard-focus notification. It is not widget readiness or a physical
+  shortcut-to-display measurement. Real typed input checks follow that notification.
+- **RSS/HWM snapshot:** the live launcher's `/proc/<pid>/status` `VmRSS` and
+  `VmHWM`, read after the harness observes current results and before further
+  input. Values include shared pages and exclude GPU memory. HWM covers the
+  process only through that read; polling can delay the snapshot after the event.
 - Superseded or hidden queries, failures and stale results do not count as successful
   query samples. Pending redraw callbacks older than result application are
   excluded. Logging and callbacks introduce measurement overhead.
@@ -676,6 +684,45 @@ and **results applied → redraw event** (`ready_to_frame_us`). Both come from t
 same successful generation. The second interval is the difference of query-relative
 microsecond durations; it includes scheduling until the redraw event, not rendering.
 Do not add independently sorted stage percentiles to infer a total percentile.
+
+`FERROSEEK_SMOKE_MODE` selects `auto` (default), `opaque`, `software` or `all`.
+The first two use the normal renderer selection; `software` forces tiny-skia.
+Each process clears inherited `ICED_BACKEND` before applying its mode. `all`
+rotates the order on each repetition, for 60 measured opens at the default count,
+sharing one machine, compositor and warm daemon. The three desktop-profile CI jobs
+use `all`; profile jobs can still run on different hardware.
+
+Every sample records the renderer actually encountered in the root widget's
+draw path. `summaries` groups by requested mode and observed renderer, for example
+`auto/wgpu` or `software/tiny_skia`; each group has `first_trial` and `repeats`.
+Repeat metrics have `n`, nearest-rank `p50`, `p95` and `max`, with units in their
+field names (`_us` or `_kib`). An empty repeat group has null metrics. The
+controlled graphical check requires its expected WGPU/tiny-skia groups; it
+does not set a latency threshold or silently mix fallback renderers.
+
+Reports include the launcher's SHA-256 and requested graphics settings. Renderer
+events distinguish WGPU from tiny-skia, not Vulkan from GL or a software adapter
+from a hardware GPU. Per-process logs remain the source for timestamp validation.
+Material pixel checks use separate processes and prove blur only for those
+controls. After the measured opens, `latency.json` retains their memory snapshots
+with `validation: incomplete`. It changes to `validation: passed` only after all
+functional/material checks pass; the verifier rejects incomplete reports. Missing
+interaction prerequisites or non-OpenGL compositing are inconclusive
+failures, rather than successful skips. Nothing here certifies physical displays.
+
+Check a completed report against the original process logs and its executable:
+
+```sh
+python3 scripts/verify-launcher-report.py target/launcher-interaction \
+  --binary target/release/ferroseek-launcher
+```
+
+The verifier checks sample counts, focus/backend/generation evidence, same-query
+intervals and every aggregate. The graphical workflow runs it before the separate
+screenshot-only check. Reports and raw logs must be kept together to rerun it.
+Use a new or empty interaction output directory for every run. The harness refuses
+existing contents before starting its bus or services, preserving previous evidence
+and excluding stale logs or readiness markers from a new measurement.
 
 ### First recorded run — 2026-11-02
 
@@ -720,8 +767,8 @@ The first process is separate from 19 repeats. Values are milliseconds:
 
 [Environment, all samples and derivation](benchmarks/launcher-desktop-2026-11-02.json)
 explicitly label their derivation from this run's schema 1 reports and matching
-raw `query_ready`/`query_frame` events. Current schema 2 exports
-those intervals directly. The recorded jobs predate full application-data isolation
+raw `query_ready`/`query_frame` events. Current schema 3 exports
+those intervals per sample and groups summaries by mode/renderer. The recorded jobs predate full application-data isolation
 in the current harness; they included runner-installed entries. This and differing
 hardware prevent treating the table as a layout comparison or an optimization gain.
 For n=19, nearest-rank p95 equals maximum. Per-stage percentiles are independent.

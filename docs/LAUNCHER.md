@@ -548,13 +548,26 @@ The smoke test runs the launcher on `kwin_wayland --virtual` against a test
 private session bus whose activation directory is empty (so neither the
 real daemon nor desktop portals can be started). It saves one screenshot per
 query and checks that a second invocation closes the first. It skips when
-`kwin_wayland` or `spectacle` is missing.
+`kwin_wayland` or `spectacle` is missing in screenshot-only mode. Interaction
+mode treats missing graphical prerequisites or non-OpenGL compositing as
+inconclusive and exits with status 77.
 
 For real keyboard input and focus checks in the disposable compositor:
 
 ```sh
 FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/launcher-interaction
 ```
+
+Set `FERROSEEK_SMOKE_MODE=auto`, `opaque` or `software` to measure the default
+appearance, `--opaque` or forced tiny-skia. `all` rotates all three within the
+same compositor and daemon. `FERROSEEK_SMOKE_TRIALS` is the number of opens per
+mode, so the default 20 gives 60 measured opens with `all`. Unknown modes fail
+before any private bus or service starts. Each launch clears inherited
+`ICED_BACKEND` before applying its mode; other recorded graphics settings remain.
+Interaction output directories must be new or empty so old logs and readiness
+markers cannot satisfy a new run's checks.
+Application and document activation checks use the selected mode, or `auto`
+with `all`. The separate material controls always exercise their three modes.
 
 This mode also requires Python 3 with PyQt5 and GTK 4 introspection bindings,
 a C compiler, `wayland-scanner`,
@@ -577,7 +590,7 @@ at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
 verify that the requested keyboard layout actually applies. Expected and observed
 probe text are retained in `keyboard-preflight.json` and the schema 2 report.
 
-Twenty measured opens wait for the first redraw and actual Wayland keyboard Enter
+Measured opens wait for the first redraw and actual Wayland keyboard Enter
 before typing, without clicking or an arbitrary delay. They verify editing after
 asynchronous results, action-filter focus and return to the main input,
 Escape/toggle, a click on another window, and input returning to a background test application. PNGs, diagnostic logs and
@@ -637,6 +650,20 @@ events and do not become successful frame samples. `keyboard_focus_enter` and
 `material_blur_requested` reports a protocol request, not proof of rendered blur;
 `material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
 identify accepted preview replies and closing the sidebar.
+`renderer_wgpu` and `renderer_tiny_skia` report the renderer observed by the
+root widget's draw path, once initially and again if it changes. They identify
+the renderer implementation, not the graphics adapter or completed rendering.
+They appear only when timings are enabled.
+
+The isolated harness exports schema 3 in `latency.json`. Each sample includes
+the requested mode, observed renderer, first keyboard-focus notification and
+RSS/high-water RSS snapshots from that live launcher after results arrive,
+before further input. Summaries separate mode/renderer groups and their first
+processes. Memory is in KiB, includes shared pages and excludes GPU memory;
+the high-water value covers only the process up to the snapshot. Pixel checks
+use separate processes and do not certify every latency sample's blur.
+Reports retain those samples if a later functional or pixel check fails, with
+`validation: incomplete`; only a completed suite sets `validation: passed`.
 An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.

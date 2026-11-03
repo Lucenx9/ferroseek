@@ -20,6 +20,12 @@ case "$FERROSEEK_SMOKE_PROFILE" in
     *) echo "FAIL: unknown launcher profile: $FERROSEEK_SMOKE_PROFILE" >&2; exit 1 ;;
 esac
 
+export FERROSEEK_SMOKE_MODE=${FERROSEEK_SMOKE_MODE:-auto}
+case "$FERROSEEK_SMOKE_MODE" in
+    auto|opaque|software|all) ;;
+    *) echo "FAIL: unknown launcher mode: $FERROSEEK_SMOKE_MODE" >&2; exit 1 ;;
+esac
+
 BIN_DIR=$(realpath "${1:-target/debug}")
 OUT=$(realpath -m "${2:-target/launcher-smoke}")
 shift $(( $# > 2 ? 2 : $# ))
@@ -27,12 +33,28 @@ QUERIES=("$@")
 [[ ${#QUERIES[@]} -gt 0 ]] || QUERIES=(report "" "(2+3)*4")
 
 for tool in kwin_wayland spectacle dbus-run-session gdbus; do
-    command -v "$tool" >/dev/null || { echo "SKIP: $tool not installed"; exit 0; }
+    if ! command -v "$tool" >/dev/null; then
+        if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
+            echo "INCONCLUSIVE: $tool not installed" >&2
+            exit 77
+        fi
+        echo "SKIP: $tool not installed"
+        exit 0
+    fi
 done
 if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
     for tool in python3 wayland-scanner cc pkg-config; do
-        command -v "$tool" >/dev/null || { echo "FAIL: $tool not installed"; exit 1; }
+        command -v "$tool" >/dev/null || { echo "INCONCLUSIVE: $tool not installed" >&2; exit 77; }
     done
+    python3 -c 'from PyQt5.QtWidgets import QApplication; import gi; gi.require_version("Gtk", "4.0")' \
+        || { echo "INCONCLUSIVE: graphical Python bindings unavailable" >&2; exit 77; }
+    python3 - "$OUT" <<'PY'
+from pathlib import Path
+import sys
+output = Path(sys.argv[1])
+if output.exists() and (not output.is_dir() or any(output.iterdir())):
+    raise SystemExit("FAIL: interaction output directory must be new or empty")
+PY
 fi
 
 if [[ "${FERROSEEK_SMOKE_ISOLATED:-}" != 1 ]]; then
