@@ -9,7 +9,7 @@ use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector};
 
 use crate::ui::Message;
 
-pub fn opaque_fallback<'a>(content: Element<'a, Message>, opaque: Theme) -> Element<'a, Message> {
+pub fn opaque_fallback(content: Element<'_, Message>, opaque: Theme) -> Element<'_, Message> {
     Element::new(MaterialRenderer(content, opaque))
 }
 
