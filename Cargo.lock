@@ -1077,6 +1077,7 @@ dependencies = [
  "iced",
  "iced_layershell",
  "iced_runtime",
+ "iced_tiny_skia",
  "libc",
  "log",
  "tempfile",

@@ -472,23 +472,25 @@ def main():
         stripe_variance = pstdev(pixels("material-backdrop.png", 400, 280, 160, 20))
         assert stripe_variance > 60, "backdrop must contain visible high-frequency detail"
         material_samples = {}
-        for mode in ["auto", "opaque"]:
+        for mode in ["auto", "opaque", "software"]:
             log = out / f"material-{mode}.jsonl"
             with log.open("w") as stream:
                 launcher = subprocess.Popen([str(binary), "--query", "material-fixture-no-match",
                                              *(["--opaque"] if mode == "opaque" else [])],
                                             stdout=stream, stderr=stream,
-                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
+                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
+                                                 **({"ICED_BACKEND": "tiny-skia"} if mode == "software" else {})})
             processes.append(launcher)
             wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "material results frame")
             if mode == "auto":
-                wait_for(lambda: any(r.get("event") == "material_blur" for r in records(log)), "compositor blur available")
+                wait_for(lambda: any(r.get("event") == "material_blur_requested" for r in records(log)), "compositor blur available")
             capture(f"material-{mode}.png")
             values = pixels(f"material-{mode}.png", 400, 280, 160, 20)
             material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values)}
-            if mode == "opaque":
+            if mode in ["opaque", "software"]:
                 assert set(values) == {0x17}, "opaque mode must not expose the backdrop"
-                assert not any(r.get("event") == "material_blur" for r in records(log))
+                if mode == "opaque":
+                    assert not any(r.get("event") == "material_blur_requested" for r in records(log))
             else:
                 assert mean(values) > 0x17 + 5, "glass must show the blurred backdrop"
                 assert pstdev(values) < 3, "fine backdrop detail must be blurred, not just alpha blended"

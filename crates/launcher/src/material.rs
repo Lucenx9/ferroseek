@@ -4,6 +4,8 @@
 //! The activation queue discovers the surface without raw-window handles. UI
 //! resize requests update the region before iced commits its next frame.
 
+pub mod renderer;
+
 use std::sync::{Arc, Mutex};
 
 use iced::futures::channel::mpsc;

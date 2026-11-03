@@ -46,7 +46,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 ## Appearance
 
 The dark surface becomes translucent when the compositor advertises background
-blur. Rounded blur regions follow the normal, compact and preview layouts.
+blur and the active renderer supports transparency. Rounded blur regions follow the normal, compact and preview layouts.
 The action panel remains solid so result text does not show through its commands;
 the footer has a subtle inset surface. Selection retains the iron accent.
 
@@ -57,7 +57,14 @@ when blur is supported. No desktop effects or settings are changed.
 The launcher uses `ext-background-effect-v1`, or the older KDE blur extension
 when the standard manager is absent. The compositor controls the blur algorithm;
 an advertised interface is not a guarantee that an effect is visually applied.
-The rendered blur is checked in virtual KWin; physical desktops remain unverified.
+WGPU presents the transparent surface and requires a working graphics driver
+(e.g. Mesa Vulkan on Linux). If adapter initialization fails, iced falls back to
+tiny-skia with a solid material. `ICED_BACKEND=tiny-skia ferroseek-launcher` selects
+that software path explicitly. `--opaque` keeps the normal renderer and disables
+blur; it does not select a driver.
+
+The rendered blur is checked in virtual KWin with Mesa software graphics;
+physical desktops and hardware GPU drivers remain unverified.
 
 ## Keys
 
@@ -491,7 +498,7 @@ if another instance is updating history, retry after it finishes.
 
 ```text
 ferroseek-launcher
- ├─ UI thread: iced (tiny-skia) on a wlr-layer-shell overlay
+ ├─ UI thread: iced (WGPU; tiny-skia fallback) on a wlr-layer-shell overlay
  │    model.rs (rows, selection, actions, keys) · usage.rs · calc.rs
  └─ bus thread: zbus::block_on for the process lifetime
       ├─ serves io.github.ferroseek.Launcher1.Toggle
@@ -582,7 +589,7 @@ text waits for a widget focus query to return true. The suite does not establish
 typeahead handling between an opening shortcut and the asynchronous focus change.
 
 The material check places fine stripes behind the launcher and compares actual
-output pixels with blur enabled and with `--opaque`. It verifies that the stripes
+output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback. It verifies that the stripes
 are smoothed by the compositor, rather than only dimmed by alpha blending.
 `material.json`, native-resolution PNGs and diagnostics accompany each profile.
 Protocol tests use an independent socket peer for standard/legacy selection,

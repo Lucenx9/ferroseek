@@ -58,7 +58,7 @@ pub(crate) mod palette {
     pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.88);
     pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
     pub const TEXT: Color = Color::from_rgb8(0xec, 0xea, 0xe6);
-    pub const DIM: Color = Color::from_rgb8(0xac, 0xae, 0xb8);
+    pub const DIM: Color = Color::from_rgb8(0xb0, 0xb2, 0xbc);
     pub const FAINT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.06);
     /// Oxidised iron.
     pub const ACCENT: Color = Color::from_rgb8(0xe0, 0x70, 0x3a);
@@ -1102,7 +1102,7 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     if let Message::MaterialChanged(enabled) = message {
         s.glass = enabled;
-        timing::event(if enabled { "material_blur" } else { "material_opaque" });
+        timing::event(if enabled { "material_blur_requested" } else { "material_opaque" });
         return Task::none();
     }
     if let Message::ActionsFocusChecked(focused) = message {
@@ -1714,6 +1714,10 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    crate::material::renderer::opaque_fallback(view_content(s), material_theme(false))
+}
+
+fn view_content(s: &Launcher) -> Element<'_, Message> {
     if let Some(panel) = &s.file_details {
         let generation = s.details_generation;
         return panel.view().map(move |event| Message::Details { generation, event });
@@ -3053,7 +3057,8 @@ mod tests {
                 repeat: false,
             });
             let mut messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3126,7 +3131,8 @@ mod tests {
                 repeat: false,
             });
             let mut messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3354,7 +3360,8 @@ mod tests {
                 repeat: false,
             });
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3574,7 +3581,8 @@ mod tests {
     fn pointer_messages(s: &Launcher, point: iced::Point, events: Vec<mouse::Event>) -> Vec<Message> {
         use iced::advanced::{Layout, Shell, layout, widget::Tree};
         use iced::{Rectangle, Size};
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
         let mut element = view(s);
         let widget = element.as_widget_mut();
         let mut tree = Tree::new(&*widget);
@@ -4054,7 +4062,8 @@ mod tests {
             let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(12)) });
             let _ = command(&mut s, Command::Last);
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -4213,7 +4222,8 @@ mod tests {
             let _ = update(&mut s, Message::Query("report".into()));
             let mut clipboard = Clipboard::default();
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
