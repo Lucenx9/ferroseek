@@ -1,0 +1,23 @@
+{
+  "profile": "us-1x",
+  "scale": 1.0,
+  "backdrop_stddev": 96.0,
+  "samples": {
+    "auto": {
+      "mean": 36,
+      "stddev": 0.0,
+      "renderer": "wgpu"
+    },
+    "opaque": {
+      "mean": 23,
+      "stddev": 0.0,
+      "renderer": "wgpu"
+    },
+    "software": {
+      "mean": 23,
+      "stddev": 0.0,
+      "renderer": "tiny_skia"
+    }
+  },
+  "limits": "Software-rendered isolated KWin; protocol fallback and capability withdrawal use an independent wire peer."
+}

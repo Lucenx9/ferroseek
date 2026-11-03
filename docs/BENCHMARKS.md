@@ -788,3 +788,39 @@ to a profile. Preset queries wait for compositor keyboard focus; action text wai
 for confirmed widget focus. Typeahead before those transitions complete is not
 established by this suite. Raw support information, timings and original PNGs are
 retained as artifacts. No presentation or physical-desktop latency is measured.
+
+## 14. Current renderer diagnostics — 2026-11-03
+
+[Recorded data, environment and reproduction](benchmarks/launcher-renderers-2026-11-03/README.md)
+cover the current launcher at `d5559f3`, built in release mode with Rust 1.94.0
+and locked dependencies. The local Ubuntu 24.04 container used virtual KWin
+5.27.11 with llvmpipe on an Intel N95 host. The launcher requested Vulkan with
+lavapipe, without a GPU device. Each process recorded its actual WGPU/tiny-skia
+renderer. All three profiles completed 20 opens per mode: 180 measured opens,
+with activation, focus return, pointer and material checks passing.
+
+US 1× values below are milliseconds except RSS, which is MiB. Repeats exclude
+the first process per mode; n=19, so nearest-rank p95 equals maximum.
+
+| Mode / observed renderer | First process redraw | Repeat redraw p50 | Repeat focus p50 | Repeat query redraw p50 / p95 | Repeat RSS p50 |
+|---|---:|---:|---:|---:|---:|
+| Auto / WGPU | 332.723 | 336.946 | 377.133 | 35.017 / 56.996 | 126.32 |
+| Opaque / WGPU | 321.960 | 333.098 | 372.012 | 16.387 / 32.185 | 126.20 |
+| Software / tiny-skia | 306.897 | 266.566 | 276.120 | 33.735 / 47.499 | 17.80 |
+
+Redraw callbacks and focus notifications do not measure completed rendering or
+physical display latency. RSS includes shared Mesa/LLVM pages, excludes GPU
+memory and omits the daemon. The modes rotated on one warm daemon and compositor;
+caches were not dropped and the host was not dedicated. The other profiles are
+separate datasets. No speed improvement over the November 2 runs is established.
+
+The unchanged preview pixel check exposed a blur-region update before the
+configured viewport resized. Updating the region on observed surface resize
+passed five focused material runs and the complete matrix. The dataset includes
+[before](benchmarks/launcher-renderers-2026-11-03/preview-before.png) and
+[after](benchmarks/launcher-renderers-2026-11-03/preview-after.png) captures.
+
+Preliminary runs also stalled before their first redraw. A later reduced
+300-open startup check and the accepted matrix passed, but no startup root cause
+or timeout fix is claimed. The dataset documents this remaining stability gap;
+physical desktops and hardware GPU drivers still require validation.
