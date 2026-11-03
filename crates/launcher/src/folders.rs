@@ -4,15 +4,16 @@
 use std::path::PathBuf;
 
 use ferroseek_config::{
-    Config,
+    Config, expand,
     folders::{Document, validate_folder},
+    normalize,
 };
 use iced::alignment::Vertical;
 use iced::widget::{self, Id, button, column, container, mouse_area, row, scrollable, space, text, text_input};
 use iced::{Element, Length, Task};
 
 use crate::backend::{Backend, FolderPolicy};
-use crate::model::{Command, Cursor};
+use crate::model::{Command, Cursor, home_relative};
 use crate::ui::{self, palette};
 
 #[derive(Debug, Clone)]
@@ -71,11 +72,14 @@ pub struct Panel {
     phase: Phase,
     message: Option<(String, bool)>,
     policy: Option<Config>,
-    policy_note: String,
+    policy_warning: Option<String>,
     pending: Option<Pending>,
     save_attempted: bool,
     revision: u64,
 }
+
+/// Folder rows show at most this many characters; longer paths repeat in full below.
+const ROW_PATH: usize = 40;
 
 pub fn input_id() -> Id {
     Id::new("folder-path")
@@ -96,7 +100,7 @@ impl Panel {
             phase: Phase::Loading,
             message: None,
             policy: None,
-            policy_note: "Checking active exclusions…".into(),
+            policy_warning: None,
             pending: None,
             save_attempted: false,
             revision: 0,
@@ -137,21 +141,14 @@ impl Panel {
             Event::Policy { revision, result } if revision == self.revision => match result {
                 Ok(Some(policy)) => {
                     self.policy = Some(policy.config);
-                    self.policy_note = if std::fs::canonicalize(&self.path).ok()
-                        == std::fs::canonicalize(&policy.config_path).ok()
-                    {
-                        "Active exclusion settings:".into()
-                    } else {
-                        "The running service uses a different configuration. Folders can be saved here, but cannot be applied to that service.".into()
-                    };
+                    self.policy_warning = (std::fs::canonicalize(&self.path).ok()
+                        != std::fs::canonicalize(&policy.config_path).ok())
+                    .then(|| "The running service uses a different configuration. Folders can be saved here, but cannot be applied to that service.".into());
                 }
-                Ok(None) => {
+                // Without a reachable service the summary falls back to the saved file.
+                Ok(None) | Err(_) => {
                     self.policy = None;
-                    self.policy_note = "Service is not running. Saved exclusions will be used when it starts.".into();
-                }
-                Err(error) => {
-                    self.policy = None;
-                    self.policy_note = format!("Active exclusions could not be checked: {error}");
+                    self.policy_warning = None;
                 }
             },
             Event::Loaded { revision, result } if revision == self.revision && self.phase == Phase::Loading => {
@@ -193,9 +190,23 @@ impl Panel {
                 self.phase = Phase::Ready;
                 match result {
                     Ok(()) => {
-                        if self.roots.contains(&path) {
+                        let new = normalize(&expand(&path));
+                        let mut covered = None;
+                        let mut duplicate = false;
+                        for root in &self.roots {
+                            let old = normalize(&expand(root));
+                            if old == new {
+                                duplicate = true;
+                            } else if new.starts_with(&old) {
+                                covered = Some(format!("Added. {root} already covers this folder."));
+                            } else if covered.is_none() && old.starts_with(&new) {
+                                covered = Some(format!("Added. {root} is inside it and can be removed."));
+                            }
+                        }
+                        if duplicate {
                             self.message = Some(("This folder is already selected.".into(), false));
                         } else {
+                            self.message = covered.map(|text| (text, false));
                             self.roots.push(path);
                             self.cursor.select(self.roots.len() - 1, self.roots.len());
                         }
@@ -370,14 +381,9 @@ impl Panel {
         if self.phase == Phase::Loading {
             body = body.push(text("Loading folder settings…").size(16));
         } else {
-            body = body.push(
-                text(if self.exit_on_cancel {
-                    "Review your folders, then save to start file search."
-                } else {
-                    "Choose where FerroSeek searches for files."
-                })
-                .size(14),
-            );
+            if self.exit_on_cancel {
+                body = body.push(text("Review your folders, then save to start file search.").size(14));
+            }
             if let Some((message, error)) = &self.message {
                 body = body.push(text(message).size(13).color(if *error { palette::ERROR } else { palette::ACCENT }));
             }
@@ -416,7 +422,7 @@ impl Panel {
                     remove = remove.on_press(Event::Remove(path.clone()));
                 }
                 let content = container(
-                    row![text(ui::ellipsize_middle(path, 40)).size(14), space::horizontal(), remove]
+                    row![text(ui::ellipsize_middle(path, ROW_PATH)).size(14), space::horizontal(), remove]
                         .align_y(Vertical::Center),
                 )
                 .padding([4, 8])
@@ -427,7 +433,7 @@ impl Panel {
                 });
                 body = body.push(mouse_area(content).on_press(Event::Select(path.clone())));
             }
-            if let Some(path) = self.roots.get(self.cursor.selected) {
+            if let Some(path) = self.roots.get(self.cursor.selected).filter(|path| path.chars().count() > ROW_PATH) {
                 body = body.push(text(path).size(12).color(palette::DIM).wrapping(text::Wrapping::WordOrGlyph));
             }
             if self.roots.len() > 4 {
@@ -438,50 +444,20 @@ impl Panel {
                         .color(palette::DIM),
                 );
             }
-            body = body.push(
-                text("↑↓ select · Ctrl+D remove selected · nested folders are covered by their parent")
-                    .size(12)
-                    .color(palette::DIM),
-            );
-            body = body.push(text("Exclusions").size(15));
-            body =
-                body.push(text(&self.policy_note).size(12).color(palette::DIM).wrapping(text::Wrapping::WordOrGlyph));
+            if !self.roots.is_empty() {
+                body = body.push(text("↑↓ select · Ctrl+D remove").size(12).color(palette::DIM));
+            }
+            if let Some(warning) = &self.policy_warning {
+                body = body.push(text(warning).size(12).color(palette::ERROR).wrapping(text::Wrapping::WordOrGlyph));
+            }
             let config = self.policy.as_ref().or_else(|| self.document.as_ref().map(|doc| &doc.config));
             if let Some(config) = config {
-                if self.policy.is_none() {
-                    body = body.push(text("Saved exclusion settings:").size(12).color(palette::DIM));
-                }
+                let file = home_relative(&self.path.to_string_lossy());
                 body = body.push(
-                    text(format!(
-                        "Hidden files: {} · Cache-tagged folders: {} · Stay on each filesystem: {} · Maximum depth: {}",
-                        if config.index_hidden { "included" } else { "excluded" },
-                        if config.respect_cachedir_tag { "excluded" } else { "included" },
-                        if config.stay_on_filesystem { "yes" } else { "no" },
-                        config.max_depth
-                    ))
-                    .size(12)
-                    .color(palette::DIM),
-                );
-                body = body.push(
-                    text(format!(
-                        "Names: {}",
-                        if config.exclude_names.is_empty() { "none".into() } else { config.exclude_names.join(", ") }
-                    ))
-                    .size(12)
-                    .color(palette::DIM),
-                );
-                body = body.push(
-                    text(format!(
-                        "Excluded folders: {}",
-                        if config.exclude_paths.is_empty() { "none".into() } else { config.exclude_paths.join(", ") }
-                    ))
-                    .size(12)
-                    .color(palette::DIM),
-                );
-                body = body.push(
-                    text("FerroSeek's own index folder is always excluded. This screen changes only search folders.")
+                    text(format!("{} Edit {file} to change this.", exclusion_summary(config)))
                         .size(12)
-                        .color(palette::DIM),
+                        .color(palette::DIM)
+                        .wrapping(text::Wrapping::WordOrGlyph),
                 );
             }
         }
@@ -519,6 +495,32 @@ impl Panel {
             .style(ui::surface_style)
             .into()
     }
+}
+
+/// What indexing skips, in one sentence; the configuration file holds the lists.
+fn exclusion_summary(config: &Config) -> String {
+    let count = |n: usize, what: &str| format!("{n} excluded {what}{}", if n == 1 { "" } else { "s" });
+    let mut skipped = Vec::new();
+    if !config.index_hidden {
+        skipped.push("hidden files".to_string());
+    }
+    if config.respect_cachedir_tag {
+        skipped.push("cache folders".into());
+    }
+    if !config.exclude_names.is_empty() {
+        skipped.push(count(config.exclude_names.len(), "name"));
+    }
+    if !config.exclude_paths.is_empty() {
+        skipped.push(count(config.exclude_paths.len(), "folder"));
+    }
+    let verb = if skipped.len() == 1 && skipped[0].starts_with("1 ") { "is" } else { "are" };
+    let mut sentence = match skipped.split_last() {
+        None => return "Nothing is excluded.".into(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    };
+    sentence[..1].make_ascii_uppercase();
+    format!("{sentence} {verb} skipped.")
 }
 
 #[cfg(test)]
@@ -560,6 +562,45 @@ mod tests {
         let _ = panel.update(Event::Back, backend.clone());
         let (_, effect) = panel.shortcut(Shortcut::Remove, backend);
         assert!(matches!(effect, Effect::Close { refresh: false }));
+    }
+
+    #[test]
+    fn nested_additions_explain_coverage_and_exclusions_fit_one_sentence() {
+        let (_temp, mut panel) = loaded();
+        let backend = Backend::disconnected();
+        let add = |panel: &mut Panel, path: &str| {
+            let _ = panel.update(Event::Input(path.into()), backend.clone());
+            let _ = panel.update(Event::Add, backend.clone());
+            let _ = panel.update(Event::Validated { path: path.into(), result: Ok(()) }, backend.clone());
+            panel.message.clone().map(|(text, _)| text)
+        };
+        assert_eq!(add(&mut panel, "/synthetic/work/notes"), None);
+        assert_eq!(
+            add(&mut panel, "/synthetic/work/notes/a"),
+            Some("Added. /synthetic/work/notes already covers this folder.".into())
+        );
+        assert_eq!(
+            add(&mut panel, "/synthetic/work"),
+            Some("Added. /synthetic/work/notes is inside it and can be removed.".into())
+        );
+        assert_eq!(add(&mut panel, "/synthetic/work/"), Some("This folder is already selected.".into()));
+        assert_eq!(add(&mut panel, "/synthetic/workshop"), None, "a shared name prefix is not nesting");
+        assert_eq!(panel.roots.len(), 4);
+
+        let config = &panel.document.as_ref().unwrap().config;
+        assert_eq!(exclusion_summary(config), "Hidden files, cache folders and 1 excluded name are skipped.");
+        let config = Config {
+            index_hidden: true,
+            respect_cachedir_tag: false,
+            exclude_names: vec![],
+            exclude_paths: vec!["/synthetic/a".into(), "/synthetic/b".into()],
+            ..Config::default()
+        };
+        assert_eq!(exclusion_summary(&config), "2 excluded folders are skipped.");
+        let config = Config { exclude_paths: vec!["/synthetic/a".into()], ..config };
+        assert_eq!(exclusion_summary(&config), "1 excluded folder is skipped.");
+        let config = Config { exclude_paths: vec![], ..config };
+        assert_eq!(exclusion_summary(&config), "Nothing is excluded.");
     }
 
     #[test]
