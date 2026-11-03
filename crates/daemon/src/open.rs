@@ -40,13 +40,15 @@ pub fn open_path(path: &Path, token: Option<&str>) -> io::Result<()> {
 }
 
 fn systemd_run_available() -> bool {
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::OnceLock;
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         // A user manager must be reachable, not just the binary present.
         std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| Path::new(&d).join("systemd/private").exists())
-            && std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-                .any(|d| d.join("systemd-run").is_file())
+            && std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| {
+                d.join("systemd-run").metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            })
     })
 }
 
@@ -69,6 +71,69 @@ pub async fn show_in_folder(conn: &zbus::Connection, path: &Path, token: Option<
         Err(e) => {
             log::debug!("FileManager1.ShowItems failed ({e}); opening parent directory");
             open_path(path.parent().unwrap_or(Path::new("/")), token)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn opening_falls_back_when_systemd_run_is_not_executable() {
+        const CASE: &str = "FERROSEEK_TEST_OPENER_SCOPE";
+        if let Some(case) = std::env::var_os(CASE) {
+            let output = std::env::var_os("FERROSEEK_TEST_OPEN_OUTPUT").unwrap();
+            let output = Path::new(&output);
+            open_path(Path::new("/synthetic/two words.txt"), None).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !output.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let args = fs::read_to_string(output).unwrap();
+            if case == "executable" {
+                assert_eq!(
+                    args,
+                    "--user\n--scope\n--collect\n--quiet\n--slice=app.slice\n--\nxdg-open\n/synthetic/two words.txt\n"
+                );
+            } else {
+                assert_eq!(args, "/synthetic/two words.txt\n");
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let runtime = temp.path().join("runtime");
+        fs::create_dir_all(runtime.join("systemd")).unwrap();
+        fs::write(runtime.join("systemd/private"), "").unwrap();
+        let capture = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FERROSEEK_TEST_OPEN_OUTPUT.tmp\"\n/bin/mv \"$FERROSEEK_TEST_OPEN_OUTPUT.tmp\" \"$FERROSEEK_TEST_OPEN_OUTPUT\"\n";
+        let opener = temp.path().join("xdg-open");
+        fs::write(&opener, capture).unwrap();
+        fs::set_permissions(opener, fs::Permissions::from_mode(0o700)).unwrap();
+        let scope = temp.path().join("systemd-run");
+        for case in ["missing", "not-executable", "executable"] {
+            if case != "missing" {
+                fs::write(&scope, capture).unwrap();
+                let mode = if case == "executable" { 0o700 } else { 0o600 };
+                fs::set_permissions(&scope, fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "open::tests::opening_falls_back_when_systemd_run_is_not_executable", "--nocapture"])
+                .env(CASE, case)
+                .env("FERROSEEK_TEST_OPEN_OUTPUT", temp.path().join(case))
+                .env("XDG_RUNTIME_DIR", &runtime)
+                .env("PATH", temp.path())
+                .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "case={case}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 }
