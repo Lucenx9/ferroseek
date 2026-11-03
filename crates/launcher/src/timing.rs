@@ -63,6 +63,10 @@ pub fn renderer(backend: Backend) {
     with_trace(|trace| trace.renderer(backend, Instant::now()));
 }
 
+pub fn surface_resized(size: (u32, u32)) {
+    with_trace(|trace| trace.surface_resized(size, Instant::now()));
+}
+
 struct Query {
     generation: u64,
     start: Instant,
@@ -92,6 +96,14 @@ impl<W: Write> Trace<W> {
             };
             self.record(event, at, 0, 0, 0, at);
         }
+    }
+
+    fn surface_resized(&mut self, (width, height): (u32, u32), at: Instant) {
+        let elapsed_us = at.saturating_duration_since(self.start).as_micros();
+        let _ = writeln!(
+            self.output,
+            "{{\"event\":\"surface_resized\",\"elapsed_us\":{elapsed_us},\"generation\":0,\"rows\":0,\"files\":0,\"query_us\":0,\"width\":{width},\"height\":{height}}}"
+        );
     }
 
     fn record(&mut self, event: &str, at: Instant, generation: u64, rows: usize, files: usize, query_start: Instant) {
@@ -182,7 +194,10 @@ mod tests {
         trace.frame(at(20), 6, false); // a modal covers the results
         trace.renderer(Backend::TinySkia, at(21));
         trace.renderer(Backend::TinySkia, at(22));
+        trace.surface_resized((980, 500), at(23));
         let output = String::from_utf8(trace.output).unwrap();
+        assert!(output.contains("\"surface_resized\",\"elapsed_us\":23000"));
+        assert!(output.contains("\"width\":980,\"height\":500"));
         assert_eq!(output.matches("\"renderer_wgpu\"").count(), 1);
         assert_eq!(output.matches("\"renderer_tiny_skia\"").count(), 1);
         assert_eq!(output.matches("\"first_frame\"").count(), 1);

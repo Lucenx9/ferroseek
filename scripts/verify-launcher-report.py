@@ -8,6 +8,16 @@ import json
 from pathlib import Path
 
 
+def load_records(path):
+    records = []
+    for line in path.read_text().splitlines():
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    return records
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
@@ -29,12 +39,7 @@ def main():
 
     groups = defaultdict(list)
     for sample in samples:
-        records = []
-        for line in (args.directory / f"interaction-{sample['trial']}.jsonl").read_text().splitlines():
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+        records = load_records(args.directory / f"interaction-{sample['trial']}.jsonl")
 
         def event(name, generation=None):
             return next(record for record in records if record.get("event") == name
@@ -74,7 +79,16 @@ def main():
     material = json.loads((args.directory / "material.json").read_text())
     assert material["profile"] == report["environment"]["profile"]
     for mode in ("auto", "opaque", "software"):
-        assert material["samples"][mode]["renderer"] == ("tiny_skia" if mode == "software" else "wgpu")
+        expected = "tiny_skia" if mode == "software" else "wgpu"
+        assert material["samples"][mode]["renderer"] == expected
+        records = load_records(args.directory / f"material-{mode}.jsonl")
+        backends = {record["event"] for record in records
+                    if record.get("event") in {"renderer_wgpu", "renderer_tiny_skia"}}
+        assert backends == {f"renderer_{expected}"}
+        if mode == "auto":
+            widths = [record["width"] for record in records if record.get("event") == "surface_resized"]
+            expanded = widths.index(980)
+            assert 720 in widths[expanded + 1:], "preview surface did not restore its logical width"
     print(f"OK: {len(samples)} samples, {len(groups)} renderer groups, raw timings and aggregates verified")
 
 

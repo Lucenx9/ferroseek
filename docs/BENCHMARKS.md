@@ -709,6 +709,9 @@ with `validation: incomplete`. It changes to `validation: passed` only after all
 functional/material checks pass; the verifier rejects incomplete reports. Missing
 interaction prerequisites or non-OpenGL compositing are inconclusive
 failures, rather than successful skips. Nothing here certifies physical displays.
+Preview controls wait for an observed `surface_resized` width after opening or
+closing the sidebar. Content readiness alone can precede the resized surface;
+the pixel assertions still decide whether the resulting image is correct.
 
 Check a completed report against the original process logs and its executable:
 

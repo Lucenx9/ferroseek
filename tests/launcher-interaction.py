@@ -350,7 +350,14 @@ def main():
                   "modes": {mode: asdict(MODES[mode]) for mode in mode_names},
                   "samples": [asdict(sample) for sample in samples], "summaries": summaries,
                   "functional_mode": functional_mode,
-                  "limits": "Diagnostic redraw callback and compositor focus notification, not completed drawing or presentation. Warm daemon; synthetic corpus; keyboard layout verified by input. Requested modes share one compositor; no cold-cache claim. first_frame_us and keyboard_focus_us start at main entry; query intervals start at the final edit. RSS/HWM are /proc snapshots after results, before more input, including shared pages and excluding GPU memory. Renderer events identify WGPU or tiny-skia, not the graphics adapter. Material pixels use separate processes."}
+                  "limits": (
+                      "Diagnostic redraw callback and compositor focus notification, not completed drawing or presentation. "
+                      "Warm daemon; synthetic corpus; keyboard layout verified by input. "
+                      "Requested modes share one compositor; no cold-cache claim. "
+                      "first_frame_us and keyboard_focus_us start at main entry; query_ready_us and query_frame_us "
+                      "start at the final edit; ready_to_frame_us starts when results are applied. "
+                      "RSS/HWM are /proc snapshots after results, before more input, including shared pages and excluding GPU memory. "
+                      "Renderer events identify WGPU or tiny-skia, not the graphics adapter. Material pixels use separate processes.")}
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
 
         # Launch a real single-instance target, then reactivate it from another app.
@@ -587,14 +594,22 @@ def main():
                 type_text("preview")
                 wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 7,
                          "preview filter received input")
+                resizes = len([r for r in records(log) if r.get("event") == "surface_resized"])
                 tap(28)
                 wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
+                wait_for(lambda: any(r["width"] == 980 for r in
+                                     [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
+                         "expanded preview surface observed", process=launcher)
                 capture("material-preview.png")
                 expanded = pixels("material-preview.png", 1040, 580, 60, 20)
                 assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
                     "blur must extend into the expanded preview surface"
+                resizes = len([r for r in records(log) if r.get("event") == "surface_resized"])
                 tap(1)
                 wait_for(lambda: any(r.get("event") == "preview_closed" for r in records(log)), "preview closed")
+                wait_for(lambda: any(r["width"] == 720 for r in
+                                     [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
+                         "restored result surface observed", process=launcher)
                 capture("material-preview-closed.png")
                 assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
                     pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"

@@ -613,6 +613,8 @@ output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback
 It verifies that the stripes
 are smoothed by the compositor, rather than only dimmed by alpha blending, and
 that opening/closing the preview updates the blur region and surface width.
+Preview captures wait for the launcher to report the expanded or restored logical
+surface width, separately from content loading, before asserting on pixels.
 `material.json`, native-resolution PNGs and diagnostics accompany each profile.
 Protocol tests use an independent socket peer for standard/legacy selection,
 capability withdrawal/restoration, manager removal, rounded resize regions and
@@ -636,8 +638,8 @@ its 5.27 virtual backend initially overlaps outputs at the same coordinates.
 ### Local timing diagnostics
 
 `FERROSEEK_LAUNCHER_TIMINGS=1 ferroseek-launcher` writes JSON records to stderr.
-It is disabled by default, adds no persistent log, and records only event names,
-generations, result/file counts and monotonic microsecond durations. Queries, paths,
+It is disabled by default, adds no persistent log, and records event names,
+generations, result/file counts, logical surface dimensions and monotonic microsecond durations. Queries, paths,
 application names and file contents are omitted. Redirect stderr explicitly
 to retain a diagnostic session.
 
@@ -654,6 +656,9 @@ identify accepted preview replies and closing the sidebar.
 root widget's draw path, once initially and again if it changes. They identify
 the renderer implementation, not the graphics adapter or completed rendering.
 They appear only when timings are enabled.
+`surface_resized` records logical `width` and `height` after the launcher handles
+iced's open/resize event and updates the material region to that observed extent.
+It does not acknowledge compositor presentation.
 
 The isolated harness exports schema 3 in `latency.json`. Each sample includes
 the requested mode, observed renderer, first keyboard-focus notification and
