@@ -1082,6 +1082,7 @@ dependencies = [
  "tempfile",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-plasma",
  "winit-core",
  "zbus",
  "zruntime",

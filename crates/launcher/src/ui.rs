@@ -25,6 +25,7 @@ use crate::details;
 use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
+use crate::material::Material;
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
 use crate::preview;
@@ -53,7 +54,8 @@ fn full_height() -> u32 {
 
 pub(crate) mod palette {
     use iced::Color;
-    pub const SURFACE: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.97);
+    pub const SURFACE: Color = Color::from_rgb8(0x17, 0x18, 0x1c);
+    pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.86);
     pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
     pub const TEXT: Color = Color::from_rgb8(0xec, 0xea, 0xe6);
     pub const DIM: Color = Color::from_rgb8(0x9b, 0x9d, 0xa6);
@@ -67,10 +69,12 @@ pub(crate) mod palette {
 }
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
-static BOOT: Mutex<Option<Boot>> = Mutex::new(None);
+static BOOT: Mutex<Option<(Boot, Material)>> = Mutex::new(None);
+static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None);
 
 /// What the launcher starts with.
 pub struct Boot {
+    pub opaque: bool,
     pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
@@ -179,6 +183,8 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    material: Material,
+    glass: bool,
     activation: Activation,
     backend: Backend,
     apps: Vec<App>,
@@ -232,6 +238,7 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    MaterialChanged(bool),
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     ActionsFocusChecked(bool),
@@ -282,16 +289,19 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
+    let (material, material_events) = Material::new(!boot_data.opaque, (WIDTH, compact_height()));
+    let shared_material = material.clone();
+    *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(boot_data);
+    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material));
     iced_layershell::application(boot, namespace, update, view)
         .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: palette::TEXT })
-        .theme(|_: &Launcher| Theme::Dark)
+        .theme(|state: &Launcher| material_theme(state.glass))
         .subscription(subscription)
         .settings(Settings {
             with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
                 let connection = wayland_client::Connection::connect_to_env()?;
-                activation.attach(connection.clone());
+                activation.attach(connection.clone(), shared_material.clone());
                 Ok(connection)
             })),
             layer_settings: LayerShellSettings {
@@ -318,10 +328,12 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path } =
+    let (Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. }, material) =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        material,
+        glass: false,
         activation,
         backend,
         apps,
@@ -378,7 +390,7 @@ fn boot() -> (Launcher, Task<Message>) {
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
     let events = if timing::enabled() { event::listen_raw(on_event) } else { event::listen_with(on_event) };
-    Subscription::batch([events, Subscription::run(ui_events)])
+    Subscription::batch([events, Subscription::run(ui_events), Subscription::run(material_events)])
 }
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
@@ -423,6 +435,13 @@ fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
         }
     }
     model::command_for(key, mods).map(Message::Cmd)
+}
+
+fn material_events() -> BoxStream<'static, Message> {
+    match MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        Some(rx) => rx.map(Message::MaterialChanged).boxed(),
+        None => stream::pending().boxed(),
+    }
 }
 
 fn ui_events() -> BoxStream<'static, Message> {
@@ -515,6 +534,7 @@ impl Launcher {
         self.compact = compact;
         self.window_width = width;
         let h = if compact { compact_height() } else { full_height() };
+        self.material.resize((width, h));
         Task::done(Message::SizeChange((width, h)))
     }
 
@@ -1080,6 +1100,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::MaterialChanged(enabled) = message {
+        s.glass = enabled;
+        timing::event(if enabled { "material_blur" } else { "material_opaque" });
+        return Task::none();
+    }
     if let Message::ActionsFocusChecked(focused) = message {
         if focused && s.panel.is_some() {
             timing::event("actions_focused");
@@ -1827,10 +1852,16 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     })
 }
 
-pub(crate) fn surface_style(_: &Theme) -> container::Style {
+fn material_theme(glass: bool) -> Theme {
+    let mut colors = Theme::Dark.palette();
+    colors.background = if glass { palette::GLASS } else { palette::SURFACE };
+    Theme::custom("FerroSeek".into(), colors)
+}
+
+pub(crate) fn surface_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(palette::SURFACE)),
-        border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
+        background: Some(Background::Color(theme.palette().background)),
+        border: Border { color: palette::BORDER, width: 1.0, radius: (crate::material::RADIUS as f32).into() },
         text_color: Some(palette::TEXT),
         ..Default::default()
     }
@@ -2162,6 +2193,11 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
+    .style(|_| container::Style {
+        background: Some(Background::Color(palette::FAINT)),
+        border: Border { radius: 9.0.into(), ..Default::default() },
+        ..Default::default()
+    })
     .into()
 }
 
@@ -2292,6 +2328,8 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            material: Material::default(),
+            glass: false,
             activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: vec![app],
