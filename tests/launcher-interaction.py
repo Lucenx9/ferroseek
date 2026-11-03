@@ -31,7 +31,7 @@ def probe(path):
     field = Input()
     field.setWindowTitle("FerroSeek isolated focus probe")
     field.textChanged.connect(lambda text: Path(path).write_text(json.dumps({"text": text}) + "\n"))
-    field.show()
+    field.showMaximized()  # Any point outside the launcher panel lands on a probe.
     field.setFocus()
     app.exec()
 
@@ -215,7 +215,15 @@ def main():
                 else:
                     tap(1)  # clear the query
                     wait_for(lambda: frame(8), "Escape cleared the query")
-                    tap(1)  # close
+                    if trial == 1:
+                        # Below the panel, on the maximized probe: it takes keyboard
+                        # focus, which closes the launcher.
+                        capture("interaction-click-outside.png")
+                        subprocess.run([str(helper), "--double-click", "640", "760"], check=True, timeout=5)
+                        wait_for(lambda: any(r.get("event") == "keyboard_focus_leave" for r in records(log)),
+                                 "click outside took keyboard focus")
+                    else:
+                        tap(1)  # close
 
                 assert process.wait(timeout=5) == 0
                 wait_for(lambda: not owner(), "launcher name released")
@@ -423,7 +431,7 @@ def main():
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_ready",
                                                   "repeat_ready_to_frame", "repeat_query_frame")}))
-        print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle, background focus restoration")
+        print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle/click outside, background focus restoration")
     finally:
         if sys.exc_info()[0] is not None:
             try:

@@ -60,7 +60,7 @@ ferroseek-launcher
 ```
 
 Bind `ferroseek-launcher` to a shortcut in your desktop or compositor settings.
-Running the command again closes the open launcher. The installer does not
+Running the command again, or clicking another window, closes the open launcher. The installer does not
 register a global shortcut or change desktop settings.
 
 Use `./scripts/install.sh` for guided setup, or `--dry-run` to inspect its plan.

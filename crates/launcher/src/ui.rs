@@ -260,6 +260,7 @@ pub enum Message {
     ContextMenu(Target),
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
+    FocusLost,
     Ui(UiEvent),
 }
 
@@ -380,6 +381,7 @@ fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> O
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
             Some(Message::TimingFrame(at))
         }
+        Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
         // Read regardless of capture: the search field keeps focus and
         // swallows Escape, but navigation keys must still reach the list.
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => key_message(&key, modifiers),
@@ -1473,6 +1475,12 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.resize()
         }
         Message::Ui(UiEvent::Toggle) => {
+            s.launch_task = None;
+            iced::exit()
+        }
+        // An open in flight finishes and exits on its own (or shows its error);
+        // folder settings may hold unsaved edits or be saving.
+        Message::FocusLost if s.opening.is_none() && s.folder_settings.is_none() => {
             s.launch_task = None;
             iced::exit()
         }
@@ -4038,6 +4046,31 @@ mod tests {
         let _ = update(&mut s, Message::ShowFolders);
         let _ = update(&mut s, Message::Folder { generation: old, event: folders::Event::Back });
         assert!(s.folder_settings.is_some(), "a late event cannot close a reopened settings view");
+    }
+
+    #[test]
+    fn focus_loss_closes_unless_an_open_or_folder_settings_must_finish() {
+        fn exits(task: Task<Message>) -> bool {
+            let actions = iced::futures::executor::block_on(async {
+                match iced_runtime::task::into_stream(task) {
+                    Some(stream) => stream.collect::<Vec<_>>().await,
+                    None => Vec::new(),
+                }
+            });
+            actions.iter().any(|action| matches!(action, iced_runtime::Action::Exit))
+        }
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        assert!(exits(update(&mut s, Message::FocusLost)));
+
+        let mut s = search_state();
+        s.opening = Some(("report.desktop".into(), "report".into()));
+        assert!(!exits(update(&mut s, Message::FocusLost)), "a pending open reports its own result");
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::ShowFolders);
+        assert!(!exits(update(&mut s, Message::FocusLost)), "unsaved folder edits stay open");
+        assert!(s.folder_settings.is_some());
     }
 
     #[test]
