@@ -40,14 +40,20 @@ pub fn open_path(path: &Path, token: Option<&str>) -> io::Result<()> {
 }
 
 fn systemd_run_available() -> bool {
-    use std::os::unix::fs::PermissionsExt;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
     use std::sync::OnceLock;
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         // A user manager must be reachable, not just the binary present.
         std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| Path::new(&d).join("systemd/private").exists())
             && std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| {
-                d.join("systemd-run").metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                let program = d.join("systemd-run");
+                program.is_file()
+                    && CString::new(program.as_os_str().as_bytes()).is_ok_and(|program| {
+                        // SAFETY: program is a NUL-terminated path valid for this call.
+                        unsafe { libc::faccessat(libc::AT_FDCWD, program.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
+                    })
             })
     })
 }
@@ -79,7 +85,7 @@ pub async fn show_in_folder(conn: &zbus::Connection, path: &Path, token: Option<
 mod tests {
     use super::*;
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::time::{Duration, Instant};
 
     #[test]
@@ -113,10 +119,18 @@ mod tests {
         fs::write(&opener, capture).unwrap();
         fs::set_permissions(opener, fs::Permissions::from_mode(0o700)).unwrap();
         let scope = temp.path().join("systemd-run");
-        for case in ["missing", "not-executable", "executable"] {
+        for case in ["missing", "not-executable", "not-executable-for-owner", "executable"] {
+            // Root can execute a regular file when any execute bit is set.
+            if case == "not-executable-for-owner" && fs::metadata(temp.path()).unwrap().uid() == 0 {
+                continue;
+            }
             if case != "missing" {
                 fs::write(&scope, capture).unwrap();
-                let mode = if case == "executable" { 0o700 } else { 0o600 };
+                let mode = match case {
+                    "executable" => 0o700,
+                    "not-executable-for-owner" => 0o601,
+                    _ => 0o600,
+                };
                 fs::set_permissions(&scope, fs::Permissions::from_mode(mode)).unwrap();
             }
             let output = Command::new(std::env::current_exe().unwrap())
