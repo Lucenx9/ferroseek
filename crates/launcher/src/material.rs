@@ -246,6 +246,14 @@ mod tests {
 
     wayland_client::delegate_noop!(Worker: ignore wl_surface::WlSurface);
 
+    struct DisconnectOnDrop(UnixStream);
+
+    impl Drop for DisconnectOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.shutdown(Shutdown::Both);
+        }
+    }
+
     struct Peer {
         socket: Arc<Mutex<UnixStream>>,
         thread: Option<std::thread::JoinHandle<()>>,
@@ -272,6 +280,7 @@ mod tests {
             let registry_id = registry.clone();
             let (send, requests) = channel::channel();
             let thread = std::thread::spawn(move || {
+                let _disconnect = DisconnectOnDrop(reader.try_clone().unwrap());
                 let mut objects = HashMap::from([(1, "wl_display".to_string())]);
                 loop {
                     let mut header = [0; 8];
@@ -287,8 +296,7 @@ mod tests {
                     if reader.read_exact(&mut body).is_err() {
                         break;
                     }
-                    let words: Vec<_> =
-                        body.chunks_exact(4).map(|word| u32::from_ne_bytes(word.try_into().unwrap())).collect();
+                    let words: Vec<_> = body.as_chunks::<4>().0.iter().map(|word| u32::from_ne_bytes(*word)).collect();
                     let interface = objects.get(&object).unwrap().clone();
                     match (interface.as_str(), opcode) {
                         ("wl_display", 1) => {
@@ -310,10 +318,8 @@ mod tests {
                                 payload.push(0);
                                 payload.resize(payload.len().next_multiple_of(4), 0);
                                 payload.extend_from_slice(&1_u32.to_ne_bytes());
-                                let words: Vec<_> = payload
-                                    .chunks_exact(4)
-                                    .map(|word| u32::from_ne_bytes(word.try_into().unwrap()))
-                                    .collect();
+                                let words: Vec<_> =
+                                    payload.as_chunks::<4>().0.iter().map(|word| u32::from_ne_bytes(*word)).collect();
                                 message(&writer, id, 0, &words);
                             }
                         }

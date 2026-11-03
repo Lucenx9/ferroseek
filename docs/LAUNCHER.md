@@ -35,12 +35,29 @@ launcher serves the copied value, so it stays until Esc or the toggle closes it.
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
 | `--private` | do not record anything opened in this session |
+| `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
 
 The installer preserves configuration and indexes and does not start indexing
 unless `--enable` is supplied. Review indexing roots before enabling it.
 `./scripts/uninstall.sh --launcher` removes only the launcher and retains
 the engine and integrations. See [installation](INSTALLATION.md).
+
+## Appearance
+
+The dark surface becomes translucent when the compositor advertises background
+blur. Rounded blur regions follow the normal, compact and preview layouts.
+The action panel remains solid so result text does not show through its commands;
+the footer has a subtle inset surface. Selection retains the iron accent.
+
+If blur is unavailable or its capability is withdrawn, the surface is opaque.
+Use `ferroseek-launcher --opaque` in your shortcut for a solid appearance even
+when blur is supported. No desktop effects or settings are changed.
+
+The launcher uses `ext-background-effect-v1`, or the older KDE blur extension
+when the standard manager is absent. The compositor controls the blur algorithm;
+an advertised interface is not a guarantee that an effect is visually applied.
+The rendered blur is checked in virtual KWin; physical desktops remain unverified.
 
 ## Keys
 
@@ -563,6 +580,15 @@ Physical Ctrl+Digit1 also selects an application and a filtered declared action
 while their input fields have focus, preserving both query strings. Action-filter
 text waits for a widget focus query to return true. The suite does not establish
 typeahead handling between an opening shortcut and the asynchronous focus change.
+
+The material check places fine stripes behind the launcher and compares actual
+output pixels with blur enabled and with `--opaque`. It verifies that the stripes
+are smoothed by the compositor, rather than only dimmed by alpha blending.
+`material.json`, native-resolution PNGs and diagnostics accompany each profile.
+Protocol tests use an independent socket peer for standard/legacy selection,
+capability withdrawal/restoration, manager removal, rounded resize regions and
+missing/disabled blur. These tests do not use the real session or desktop.
+
 Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Desktop validation
