@@ -275,9 +275,12 @@ fn main() -> ExitCode {
                     out.write_all(h.path.as_os_str().as_bytes())
                         .and_then(|_| out.write_all(if null { b"\0" } else { b"\n" }))
                 };
-                if r.is_err() {
-                    return ExitCode::SUCCESS; // broken pipe (e.g. `| head`)
+                if let Err(e) = r {
+                    return if e.kind() == std::io::ErrorKind::BrokenPipe { ExitCode::SUCCESS } else { die(e) };
                 }
+            }
+            if let Err(e) = out.flush() {
+                return if e.kind() == std::io::ErrorKind::BrokenPipe { ExitCode::SUCCESS } else { die(e) };
             }
             if hits.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS }
         }
