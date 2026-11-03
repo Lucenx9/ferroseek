@@ -231,7 +231,7 @@ pub fn home_items(
     items
 }
 
-fn home_relative(p: &str) -> String {
+pub(crate) fn home_relative(p: &str) -> String {
     match std::env::var("HOME") {
         Ok(h) if !h.is_empty() && (p == h || p.starts_with(&format!("{h}/"))) => format!("~{}", &p[h.len()..]),
         _ => p.to_string(),

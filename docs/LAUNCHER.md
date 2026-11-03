@@ -216,7 +216,7 @@ together to use the status and folder interfaces.
 
 ## Search folders and initial setup
 
-![Search folders with active exclusion settings](assets/launcher-folders.png)
+![Search folders with two folders and the exclusion summary](assets/launcher-folders.png)
 
 Screenshot from a nested test session with sample folders.
 
@@ -231,11 +231,12 @@ Later, open **Folders** in the search header or press Ctrl+,. Empty file results
 also offer **Choose folders**. Type an absolute path or `~/Documents` and press
 Enter to add it; use Up/Down to select a folder and Ctrl+D or **Remove** to remove
 it. New folders must exist, be readable directories and not be symbolic links;
-existing offline locations can be retained. Nested locations are covered by the
-parent. The selected full path wraps below the list. Page Up/Down, Ctrl+Home/End
-and the wheel scroll the details. Exclusions are shown read-only, with active
-service settings distinguished from saved settings when the service is absent.
-Viewing this screen does not activate the service.
+existing offline locations can be retained. Adding a folder inside or around a
+listed one says which folder already covers it. A shortened folder shows its full
+path below the list. Page Up/Down, Ctrl+Home/End and the wheel scroll the details.
+One line summarizes what indexing skips (from the running service, otherwise the
+saved file) and names the configuration file to edit; a warning appears when the
+service uses a different file. Viewing this screen does not activate the service.
 
 Saving changes only `roots` in the TOML file and preserves other settings and
 surrounding comments. Writes use a locked, atomic replacement with private file
