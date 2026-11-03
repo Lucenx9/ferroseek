@@ -494,7 +494,31 @@ def main():
             else:
                 assert mean(values) > 0x17 + 5, "glass must show the blurred backdrop"
                 assert pstdev(values) < 3, "fine backdrop detail must be blurred, not just alpha blended"
-                assert values[0] != 0x17
+                assert pixels(f"material-{mode}.png", 280, 200, 2, 2) == \
+                    pixels("material-backdrop.png", 280, 200, 2, 2), "rounded corners must not blur outside the panel"
+
+                before = len([r for r in records(log) if r.get("event") == "query_start"])
+                chord(29, 30)  # Ctrl+A replaces the query.
+                text_report()
+                wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] >= before + 6
+                                     for r in records(log)), "file results for material preview")
+                tap(108)  # First file, after the synthetic application.
+                chord(29, 37)
+                wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "preview action filter")
+                type_text("preview")
+                wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 7,
+                         "preview filter received input")
+                tap(28)
+                wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
+                capture("material-preview.png")
+                expanded = pixels("material-preview.png", 1040, 580, 60, 20)
+                assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
+                    "blur must extend into the expanded preview surface"
+                tap(1)
+                wait_for(lambda: any(r.get("event") == "preview_closed" for r in records(log)), "preview closed")
+                capture("material-preview-closed.png")
+                assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
+                    pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"
             subprocess.run([str(binary)], check=True, timeout=5)
             launcher.wait(timeout=5)
             assert launcher.returncode == 0

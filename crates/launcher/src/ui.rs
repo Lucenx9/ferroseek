@@ -936,6 +936,7 @@ impl Launcher {
             preview::Effect::Close => {
                 self.preview_enabled = false;
                 self.cancel_preview(true);
+                timing::event("preview_closed");
                 Task::batch([self.resize(), widget::operation::focus(search_id())])
             }
             preview::Effect::Refresh => Task::batch([
@@ -1180,6 +1181,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             {
                 panel.loaded(result);
                 s.preview_request = None;
+                timing::event("preview_loaded");
             }
             Task::none()
         }

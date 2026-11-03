@@ -46,7 +46,8 @@ the engine and integrations. See [installation](INSTALLATION.md).
 ## Appearance
 
 The dark surface becomes translucent when the compositor advertises background
-blur and the active renderer supports transparency. Rounded blur regions follow the normal, compact and preview layouts.
+blur and the active renderer supports transparency. Rounded blur regions follow
+the normal, compact and preview layouts.
 The action panel remains solid so result text does not show through its commands;
 the footer has a subtle inset surface. Selection retains the iron accent.
 
@@ -64,7 +65,13 @@ that software path explicitly. `--opaque` keeps the normal renderer and disables
 blur; it does not select a driver.
 
 The rendered blur is checked in virtual KWin with Mesa software graphics;
-physical desktops and hardware GPU drivers remain unverified.
+physical desktops and hardware GPU drivers remain unverified. WGPU adapter and
+pipeline initialization can change startup time and memory use; previous timing
+tables describe the earlier software path.
+
+[Blurred surface](assets/launcher-glass.png) · [Opaque surface](assets/launcher-opaque.png)
+
+These captures use a fine-striped backdrop in an isolated KWin session.
 
 ## Keys
 
@@ -589,8 +596,10 @@ text waits for a widget focus query to return true. The suite does not establish
 typeahead handling between an opening shortcut and the asynchronous focus change.
 
 The material check places fine stripes behind the launcher and compares actual
-output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback. It verifies that the stripes
-are smoothed by the compositor, rather than only dimmed by alpha blending.
+output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback.
+It verifies that the stripes
+are smoothed by the compositor, rather than only dimmed by alpha blending, and
+that opening/closing the preview updates the blur region and surface width.
 `material.json`, native-resolution PNGs and diagnostics accompany each profile.
 Protocol tests use an independent socket peer for standard/legacy selection,
 capability withdrawal/restoration, manager removal, rounded resize regions and
@@ -625,6 +634,9 @@ ends at a subsequent redraw event. Superseded, hidden and failed queries have se
 events and do not become successful frame samples. `keyboard_focus_enter` and
 `keyboard_focus_leave` report actual compositor keyboard focus without key contents;
 `actions_focused` reports a successful widget focus query in diagnostic mode.
+`material_blur_requested` reports a protocol request, not proof of rendered blur;
+`material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
+identify accepted preview replies and closing the sidebar.
 An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.
