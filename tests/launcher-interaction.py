@@ -510,12 +510,17 @@ def main():
                          "preview filter received input")
                 tap(28)
                 wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
+                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) >= 2,
+                         "preview surface configured")
                 capture("material-preview.png")
                 expanded = pixels("material-preview.png", 1040, 580, 60, 20)
                 assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
                     "blur must extend into the expanded preview surface"
+                resizes = len([r for r in records(log) if r.get("event") == "material_resized"])
                 tap(1)
                 wait_for(lambda: any(r.get("event") == "preview_closed" for r in records(log)), "preview closed")
+                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) > resizes,
+                         "smaller surface configured")
                 capture("material-preview-closed.png")
                 assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
                     pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"

@@ -636,7 +636,8 @@ events and do not become successful frame samples. `keyboard_focus_enter` and
 `actions_focused` reports a successful widget focus query in diagnostic mode.
 `material_blur_requested` reports a protocol request, not proof of rendered blur;
 `material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
-identify accepted preview replies and closing the sidebar.
+identify accepted preview replies and closing the sidebar. `material_resized`
+reports an observed surface resize before the blur region is refreshed.
 An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.

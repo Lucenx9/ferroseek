@@ -239,6 +239,7 @@ pub struct Launcher {
 #[derive(Debug, Clone)]
 pub enum Message {
     MaterialChanged(bool),
+    SurfaceResized((u32, u32)),
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     ActionsFocusChecked(bool),
@@ -395,6 +396,9 @@ fn subscription(_: &Launcher) -> Subscription<Message> {
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
+        Event::Window(iced::window::Event::Resized(size)) => {
+            Some(Message::SurfaceResized((size.width.round() as u32, size.height.round() as u32)))
+        }
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
             Some(Message::TimingFrame(at))
         }
@@ -534,7 +538,6 @@ impl Launcher {
         self.compact = compact;
         self.window_width = width;
         let h = if compact { compact_height() } else { full_height() };
-        self.material.resize((width, h));
         Task::done(Message::SizeChange((width, h)))
     }
 
@@ -1101,6 +1104,13 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::SurfaceResized(size) = message {
+        // The legacy compositor may clip a region to the current surface size.
+        // Apply it after the configured buffer is presented, not at size request.
+        s.material.resize(size);
+        timing::event("material_resized");
+        return Task::none();
+    }
     if let Message::MaterialChanged(enabled) = message {
         s.glass = enabled;
         timing::event(if enabled { "material_blur_requested" } else { "material_opaque" });

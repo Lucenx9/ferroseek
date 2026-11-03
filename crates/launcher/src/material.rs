@@ -2,7 +2,7 @@
 //! Optional compositor blur, limited to the launcher's rounded surface.
 //!
 //! The activation queue discovers the surface without raw-window handles. UI
-//! resize requests update the region before iced commits its next frame.
+//! configured sizes update the region before iced commits its next frame.
 
 pub mod renderer;
 
