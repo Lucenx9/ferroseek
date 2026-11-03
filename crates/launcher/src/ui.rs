@@ -4150,6 +4150,25 @@ mod tests {
     }
 
     #[test]
+    fn picker_numbered_choice_remains_selected_after_a_failed_open() {
+        for query in ["", "editor 0"] {
+            let mut panel = open_with::Panel::new(file_hits().remove(0));
+            panel.loaded(Ok(picker_choices(12)), &mut Icons::disabled());
+            let _ = panel.event(open_with::Event::Query(query.into()));
+            let _ = panel.command(Command::Last);
+            let open_with::Effect::Open(chosen) = panel.command(Command::ActivateVisible(0)) else {
+                panic!("the first visible application must be available");
+            };
+            panel.opening();
+            panel.failed("Application could not be started".into());
+            assert!(
+                matches!(panel.command(Command::Activate), open_with::Effect::Open(id) if id == chosen),
+                "Enter must retry {chosen} after its numbered launch failed, query: {query:?}"
+            );
+        }
+    }
+
+    #[test]
     fn folder_settings_are_modal_and_discard_late_replies_after_reopening() {
         let mut s = search_state();
         let _ = update(&mut s, Message::Query("report".into()));
