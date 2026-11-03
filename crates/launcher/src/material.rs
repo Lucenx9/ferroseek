@@ -2,7 +2,7 @@
 //! Optional compositor blur, limited to the launcher's rounded surface.
 //!
 //! The activation queue discovers the surface without raw-window handles. UI
-//! configured sizes update the region before iced commits its next frame.
+//! resize requests update the region before iced commits its next frame.
 
 pub mod renderer;
 
@@ -82,7 +82,14 @@ impl Material {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.size != size {
             state.size = size;
-            state.region();
+            if matches!(state.effect, Some(Effect::Legacy(_))) {
+                // Legacy KWin marks surface blur dirty when an object is
+                // assigned, not when that object's region alone changes.
+                state.effect = None;
+                state.refresh();
+            } else {
+                state.region();
+            }
         }
     }
 
@@ -459,6 +466,16 @@ mod tests {
             let requests = peer.drain();
             assert_eq!(requests.iter().any(|(name, op, _)| name == "org_kde_kwin_blur" && *op == 1), expected);
             if expected {
+                material.resize((980, 500));
+                events.roundtrip(&mut worker).unwrap();
+                let resized = peer.drain();
+                assert!(resized.iter().any(|(name, op, _)| name == "org_kde_kwin_blur" && *op == 2));
+                assert!(resized.iter().any(|(name, op, _)| name == "org_kde_kwin_blur_manager" && *op == 0));
+                assert!(
+                    resized
+                        .iter()
+                        .any(|(name, op, args)| name == "wl_region" && *op == 1 && args == &[0, 14, 980, 472])
+                );
                 material.disconnect();
                 events.roundtrip(&mut worker).unwrap();
                 assert_eq!(updates.try_recv(), Ok(false));

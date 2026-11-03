@@ -498,7 +498,7 @@ def main():
                     pixels("material-backdrop.png", 280, 200, 2, 2), "rounded corners must not blur outside the panel"
 
                 before = len([r for r in records(log) if r.get("event") == "query_start"])
-                chord(29, 30)  # Ctrl+A replaces the query.
+                chord(29, character_keys["a"])  # Ctrl+A in the active layout.
                 text_report()
                 wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] >= before + 6
                                      for r in records(log)), "file results for material preview")
@@ -508,20 +508,14 @@ def main():
                 type_text("preview")
                 wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 7,
                          "preview filter received input")
-                resizes = len([r for r in records(log) if r.get("event") == "material_resized"])
                 tap(28)
                 wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
-                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) > resizes,
-                         "preview surface configured")
                 capture("material-preview.png")
                 expanded = pixels("material-preview.png", 1040, 580, 60, 20)
                 assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
                     "blur must extend into the expanded preview surface"
-                resizes = len([r for r in records(log) if r.get("event") == "material_resized"])
                 tap(1)
                 wait_for(lambda: any(r.get("event") == "preview_closed" for r in records(log)), "preview closed")
-                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) > resizes,
-                         "smaller surface configured")
                 capture("material-preview-closed.png")
                 assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
                     pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"
