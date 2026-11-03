@@ -96,13 +96,16 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    timing::event("backend_ready");
     let apps = scan.join().unwrap_or_default();
+    timing::event("applications_ready");
     let history = if private { usage::Usage::disabled() } else { usage::Usage::load(usage::Usage::default_path()) };
     let favorites = if private {
         favorites::Favorites::disabled()
     } else {
         favorites::Favorites::load(favorites::Favorites::default_path())
     };
+    timing::event("ui_starting");
     match ui::run(
         ui::Boot {
             activation,

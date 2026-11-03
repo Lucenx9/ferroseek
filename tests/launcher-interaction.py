@@ -264,6 +264,8 @@ def main():
                     query_ready_us=ready["query_us"], ready_to_frame_us=result["query_us"] - ready["query_us"],
                     query_frame_us=result["query_us"], rss_snapshot_kib=memory["VmRSS"],
                     hwm_snapshot_kib=memory["VmHWM"]))
+                with (out / "samples.jsonl").open("a") as snapshots:
+                    snapshots.write(json.dumps(asdict(samples[-1])) + "\n")
                 # Test focus after the asynchronous reply before any command can refocus a field.
                 tap(14)
                 edited = wait_for(lambda: frame(7), "main input kept focus after asynchronous results")

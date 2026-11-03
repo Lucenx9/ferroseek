@@ -27,6 +27,8 @@ def main():
     assert report["schema"] == 3, "expected schema 3"
     assert report.get("validation") == "passed", "report is incomplete; functional/material checks did not pass"
     samples = report["samples"]
+    snapshots = [json.loads(line) for line in (args.directory / "samples.jsonl").read_text().splitlines()]
+    assert snapshots == samples, "report samples differ from the per-process snapshots"
     modes = set(report["modes"])
     assert modes == ({"auto", "opaque", "software"} if report["requested_mode"] == "all"
                      else {report["requested_mode"]})

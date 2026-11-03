@@ -712,6 +712,10 @@ failures, rather than successful skips. Nothing here certifies physical displays
 Preview controls wait for an observed `surface_resized` width after opening or
 closing the sidebar. Content readiness alone can precede the resized surface;
 the pixel assertions still decide whether the resulting image is correct.
+Each measured process also appends its completed sample to `samples.jsonl` before
+further input. A failure during a later trial retains those earlier live-memory
+readings, even when the full report cannot be constructed. The stream is not a
+validation pass; the verifier reconciles it with a completed report and raw logs.
 
 Check a completed report against the original process logs and its executable:
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Optional compositor blur, limited to the launcher's rounded surface.
 //!
-//! The activation queue discovers the surface without raw-window handles. UI
-//! resize requests update the region before iced commits its next frame.
+//! The activation queue discovers the surface without raw-window handles.
+//! Regions follow the logical extent observed by the UI after configuration.
 
 pub mod renderer;
 

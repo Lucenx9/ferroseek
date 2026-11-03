@@ -659,6 +659,8 @@ They appear only when timings are enabled.
 `surface_resized` records logical `width` and `height` after the launcher handles
 iced's open/resize event and updates the material region to that observed extent.
 It does not acknowledge compositor presentation.
+`backend_ready`, `applications_ready` and `ui_starting` distinguish session-bus
+startup, application discovery and entry into the graphical runtime.
 
 The isolated harness exports schema 3 in `latency.json`. Each sample includes
 the requested mode, observed renderer, first keyboard-focus notification and
@@ -669,6 +671,9 @@ the high-water value covers only the process up to the snapshot. Pixel checks
 use separate processes and do not certify every latency sample's blur.
 Reports retain those samples if a later functional or pixel check fails, with
 `validation: incomplete`; only a completed suite sets `validation: passed`.
+`samples.jsonl` saves each sample immediately, including memory snapshots that
+would otherwise be lost if a later measured open fails. This stream alone does
+not establish successful validation.
 An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.
