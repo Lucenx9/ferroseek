@@ -27,8 +27,9 @@ Shortcuts → *Add New* → *Command or Script*. The launcher never registers
 global shortcuts or changes desktop settings. Running it while it is open
 closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
-focus, for example after a click outside it, except while an open is in progress
-or the folder settings screen is shown.
+focus, for example after a click outside it, except while an open is in progress,
+while the folder settings screen is shown, or after a copy in this session: the
+launcher serves the copied value, so it stays until Esc or the toggle closes it.
 
 | Option | Effect |
 |---|---|
