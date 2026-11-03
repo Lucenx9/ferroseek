@@ -11,7 +11,7 @@
 //! capped, and the model only lets it reorder matches of the same class.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const HALF_LIFE_SECS: f64 = 14.0 * 24.0 * 3600.0;
@@ -237,7 +237,9 @@ fn read_entries(path: &Path) -> Records {
 
 fn try_read_entries(path: &Path) -> std::io::Result<Records> {
     let mut entries = Records::new();
-    let text = match std::fs::read_to_string(path) {
+    let text = match read_state_file(path)
+        .and_then(|bytes| String::from_utf8(bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+    {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(entries),
         Err(e) => return Err(e),
@@ -271,6 +273,19 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
         }
     }
     Ok(entries)
+}
+
+/// State is read on the UI thread, including during locked updates. Open
+/// without waiting for FIFO writers and validate the descriptor before reading.
+pub(crate) fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "launcher state must be a regular file"));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// Owner-only file creation: the history names files the user opened.
@@ -331,6 +346,78 @@ mod tests {
     use super::*;
 
     const DAY: u64 = 24 * 3600;
+
+    #[test]
+    fn state_reads_accept_regular_symlinks_and_reject_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state");
+        std::fs::write(&path, "app\t1\t100\tapp.desktop\n").unwrap();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert_eq!(Usage::load(Some(link.clone())).recent(100, 1), [(Kind::App, "app.desktop".into())]);
+        std::fs::write(&path, "app\tapp.desktop\n").unwrap();
+        assert!(crate::favorites::Favorites::load(Some(link)).contains(Kind::App, "app.desktop"));
+        for device in ["/dev/null", "/dev/zero"] {
+            assert_eq!(read_state_file(Path::new(device)).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn fifo_state_files_do_not_block_loading_or_updates() {
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        const CASE: &str = "FERROSEEK_TEST_FIFO_STATE";
+        if let Some(path) = std::env::var_os(CASE) {
+            let path = PathBuf::from(path);
+            match std::env::var("FERROSEEK_TEST_FIFO_OPERATION").unwrap().as_str() {
+                "history-load" => assert!(Usage::load(Some(path)).entries.is_empty()),
+                "favorites-load" => assert!(crate::favorites::Favorites::load(Some(path)).items().is_empty()),
+                "history-record" => {
+                    let mut usage = Usage { path: Some(path), entries: Records::new() };
+                    usage.record(Kind::App, "app.desktop", "app", 100);
+                    assert!(usage.entries.is_empty());
+                }
+                "favorites-set" => {
+                    let mut favorites = crate::favorites::Favorites::load(Some(path));
+                    assert!(favorites.set(Kind::App, "app.desktop", true).is_err());
+                }
+                _ => unreachable!(),
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state");
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is NUL-terminated and points into this test's temp directory.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        for operation in ["history-load", "favorites-load", "history-record", "favorites-set"] {
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "usage::tests::fifo_state_files_do_not_block_loading_or_updates"])
+                .env(CASE, &path)
+                .env("FERROSEEK_TEST_FIFO_OPERATION", operation)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "{operation} failed");
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{operation} blocked on a FIFO state file");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            use std::os::unix::fs::FileTypeExt;
+            assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_fifo());
+        }
+    }
 
     #[test]
     fn state_paths_ignore_relative_xdg_and_home_values() {
