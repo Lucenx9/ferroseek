@@ -95,6 +95,36 @@ fn helpful_errors() {
 }
 
 #[test]
+fn search_reports_output_failures_in_every_format() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("files");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("report.txt"), b"x").unwrap();
+    fs::write(t.path().join("config.toml"), format!("roots = [{:?}]\n", root.to_str().unwrap())).unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+
+    for flags in [vec![], vec!["--long"], vec!["-0"], vec!["--json"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ferroseek"))
+            .arg("search")
+            .args(&flags)
+            .arg("report")
+            .env("FERROSEEK_DATA_DIR", t.path().join("data"))
+            .env("FERROSEEK_CONFIG", t.path().join("config.toml"))
+            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
+            .stdout(fs::OpenOptions::new().write(true).open("/dev/full").unwrap())
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "flags={flags:?}, stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("ferroseek:"), "flags={flags:?}");
+    }
+}
+
+#[test]
 fn json_search_preserves_paths_metadata_order_and_filters() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path().join("files");
