@@ -31,6 +31,7 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 freedesktop-icons = "0.4"
 log.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 iced_runtime = "0.14"

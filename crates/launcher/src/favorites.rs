@@ -87,7 +87,7 @@ fn update_items(items: &mut Vec<(Kind, String)>, kind: Kind, key: &str, enabled:
 }
 
 fn read_items(path: &Path) -> io::Result<Vec<(Kind, String)>> {
-    let bytes = match std::fs::read(path) {
+    let bytes = match usage::read_state_file(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
