@@ -146,7 +146,12 @@ impl MimeDb {
 
     /// MIME type by literal name, then suffix weight and length.
     pub fn mime_for(&self, name: &str) -> Option<&str> {
-        if let Some((_, m)) = self.by_name_cs.get(name).or_else(|| self.by_name.get(&name.to_lowercase())) {
+        // Prefer case-sensitive literal matches only when their weights tie.
+        if let Some((_, m)) = [self.by_name.get(&name.to_lowercase()), self.by_name_cs.get(name)]
+            .into_iter()
+            .flatten()
+            .max_by_key(|(weight, _)| *weight)
+        {
             return Some(m);
         }
         // Longest suffix and case-sensitive matches win equal-weight ties.
@@ -253,6 +258,24 @@ mod tests {
                 .unwrap();
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
         }
+    }
+
+    #[test]
+    fn literal_weight_precedes_case_sensitivity() {
+        let mut d = MimeDb::empty();
+        d.add_globs2("20:text/x-legacy:Makefile:cs\n80:text/x-current:makefile\n");
+        assert_eq!(d.mime_for("Makefile"), Some("text/x-current"));
+        assert_eq!(d.icon_for("Makefile"), "text-x-current");
+        assert!(d.handler_types("Makefile").contains(&"text/x-current".into()));
+        assert!(!d.handler_types("Makefile").contains(&"text/x-legacy".into()));
+        assert_eq!(d.mime_for("MAKEFILE"), Some("text/x-current"));
+
+        d.add_globs2("80:text/x-exact:Makefile:cs\n");
+        assert_eq!(d.mime_for("Makefile"), Some("text/x-exact"));
+        assert_eq!(d.mime_for("MAKEFILE"), Some("text/x-current"));
+
+        d.add_globs2("10:text/x-literal:build.file\n100:text/x-suffix:*.file\n");
+        assert_eq!(d.mime_for("build.file"), Some("text/x-literal"), "literal names precede suffix patterns");
     }
 
     #[test]
