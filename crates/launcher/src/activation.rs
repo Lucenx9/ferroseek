@@ -118,7 +118,7 @@ pub(super) struct Worker {
 
 impl Worker {
     pub(super) fn with_material(material: crate::material::Material) -> Self {
-        Self { material, ..Self::default() }
+        Self { material, activation: None, seats: HashMap::new(), context: None, pending: Vec::new(), stop: false }
     }
 }
 

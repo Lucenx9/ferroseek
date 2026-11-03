@@ -36,6 +36,30 @@ def probe(path):
     app.exec()
 
 
+def material_backdrop(path):
+    from PyQt5.QtCore import QEvent
+    from PyQt5.QtGui import QColor, QPainter
+    from PyQt5.QtWidgets import QApplication, QWidget
+
+    class Backdrop(QWidget):
+        def event(self, event):
+            if event.type() == QEvent.WindowActivate:
+                Path(path).write_text("focused")
+            return super().event(event)
+
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            for x in range(0, self.width(), 2):
+                value = 32 if (x // 2) % 2 else 224
+                painter.fillRect(x, 0, 2, self.height(), QColor(value, value, value))
+
+    app = QApplication([])
+    window = Backdrop()
+    window.setWindowTitle("FerroSeek isolated material backdrop")
+    window.showFullScreen()
+    app.exec()
+
+
 def records(path):
     output = []
     if path.exists():
@@ -429,6 +453,52 @@ def main():
                   "repeat_query_frame": summary([s["query_frame_us"] for s in samples[1:]]),
                   "limits": "Diagnostic redraw callback, not compositor presentation. Software-rendered virtual KWin; warm daemon; synthetic corpus; configured keyboard layout verified by ordinary input. Input dispatch and physical display latency are excluded."}
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
+        # Fine stripes distinguish compositor blur from simple transparency.
+        # The launcher samples are inside a blank results area, away from text.
+        from PyQt5.QtGui import QImage
+        backdrop_ready = out / "material-backdrop-ready"
+        backdrop = subprocess.Popen([sys.executable, __file__, "--material-backdrop", str(backdrop_ready)])
+        processes.append(backdrop)
+        wait_for(backdrop_ready.exists, "material backdrop owns focus")
+        capture("material-backdrop.png")
+
+        def pixels(name, left, top, width, height):
+            image = QImage(str(out / name))
+            return [image.pixelColor(x, y).red()
+                    for y in range(round(top * observed_scale), round((top + height) * observed_scale))
+                    for x in range(round(left * observed_scale), round((left + width) * observed_scale))]
+
+        from statistics import mean, pstdev
+        stripe_variance = pstdev(pixels("material-backdrop.png", 400, 280, 160, 20))
+        assert stripe_variance > 60, "backdrop must contain visible high-frequency detail"
+        material_samples = {}
+        for mode in ["auto", "opaque"]:
+            log = out / f"material-{mode}.jsonl"
+            with log.open("w") as stream:
+                launcher = subprocess.Popen([str(binary), "--query", "material-fixture-no-match",
+                                             *(["--opaque"] if mode == "opaque" else [])],
+                                            stdout=stream, stderr=stream,
+                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
+            processes.append(launcher)
+            wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "material results frame")
+            if mode == "auto":
+                wait_for(lambda: any(r.get("event") == "material_blur" for r in records(log)), "compositor blur available")
+            capture(f"material-{mode}.png")
+            values = pixels(f"material-{mode}.png", 400, 280, 160, 20)
+            material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values)}
+            if mode == "opaque":
+                assert set(values) == {0x17}, "opaque mode must not expose the backdrop"
+                assert not any(r.get("event") == "material_blur" for r in records(log))
+            else:
+                assert mean(values) > 0x17 + 5, "glass must show the blurred backdrop"
+                assert pstdev(values) < 3, "fine backdrop detail must be blurred, not just alpha blended"
+                assert values[0] != 0x17
+            subprocess.run([str(binary)], check=True, timeout=5)
+            launcher.wait(timeout=5)
+            assert launcher.returncode == 0
+        (out / "material.json").write_text(json.dumps({"profile": profile, "scale": observed_scale,
+            "backdrop_stddev": stripe_variance, "samples": material_samples,
+            "limits": "Software-rendered isolated KWin; protocol fallback and capability withdrawal use an independent wire peer."}, indent=2) + "\n")
         print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_ready",
                                                   "repeat_ready_to_frame", "repeat_query_frame")}))
         print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle/click outside, background focus restoration")
@@ -458,5 +528,7 @@ def main():
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--probe"]:
         probe(sys.argv[2])
+    elif sys.argv[1:2] == ["--material-backdrop"]:
+        material_backdrop(sys.argv[2])
     else:
         main()

@@ -55,10 +55,10 @@ fn full_height() -> u32 {
 pub(crate) mod palette {
     use iced::Color;
     pub const SURFACE: Color = Color::from_rgb8(0x17, 0x18, 0x1c);
-    pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.86);
+    pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.88);
     pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
     pub const TEXT: Color = Color::from_rgb8(0xec, 0xea, 0xe6);
-    pub const DIM: Color = Color::from_rgb8(0x9b, 0x9d, 0xa6);
+    pub const DIM: Color = Color::from_rgb8(0xac, 0xae, 0xb8);
     pub const FAINT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.06);
     /// Oxidised iron.
     pub const ACCENT: Color = Color::from_rgb8(0xe0, 0x70, 0x3a);
@@ -1855,7 +1855,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
 fn material_theme(glass: bool) -> Theme {
     let mut colors = Theme::Dark.palette();
     colors.background = if glass { palette::GLASS } else { palette::SURFACE };
-    Theme::custom("FerroSeek".into(), colors)
+    Theme::custom("FerroSeek", colors)
 }
 
 pub(crate) fn surface_style(theme: &Theme) -> container::Style {
@@ -2317,6 +2317,48 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn material_changes_preserve_the_current_search_and_actions() {
+        let mut state = application_actions(&["New window"]);
+        state.query = "report".into();
+        state.panel.as_mut().unwrap().query = "window".into();
+        for enabled in [true, false, true] {
+            let _ = update(&mut state, Message::MaterialChanged(enabled));
+            assert_eq!(state.query, "report");
+            assert_eq!(state.panel.as_ref().unwrap().query, "window");
+            assert_eq!(state.cursor.selected, 0);
+            assert_eq!(material_theme(state.glass).palette().background.a < 1.0, enabled);
+        }
+    }
+
+    #[test]
+    fn material_keeps_small_text_readable_over_light_and_dark_backdrops() {
+        fn over(top: Color, bottom: Color) -> Color {
+            Color::from_rgb(
+                top.r * top.a + bottom.r * (1.0 - top.a),
+                top.g * top.a + bottom.g * (1.0 - top.a),
+                top.b * top.a + bottom.b * (1.0 - top.a),
+            )
+        }
+        fn luminance(color: Color) -> f32 {
+            let linear = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
+        }
+        for glass in [false, true] {
+            for backdrop in [Color::WHITE, Color::BLACK] {
+                let surface = over(material_theme(glass).palette().background, backdrop);
+                for background in
+                    [surface, over(palette::FAINT, surface), over(palette::SELECTED, surface), palette::RAISED]
+                {
+                    for foreground in [palette::TEXT, palette::DIM] {
+                        let ratio = (luminance(foreground) + 0.05) / (luminance(background) + 0.05);
+                        assert!(ratio >= 4.5, "small text contrast {ratio} on {background:?}");
+                    }
+                }
+            }
+        }
+    }
 
     fn search_state() -> Launcher {
         let app = crate::apps::parse(

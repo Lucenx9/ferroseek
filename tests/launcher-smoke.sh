@@ -91,6 +91,7 @@ for theme in breeze breeze-dark hicolor; do
 done
 [[ -d /usr/share/mime ]] || fail "shared MIME data not installed"
 ln -s /usr/share/mime "$XDG_DATA_DIRS/mime"
+printf '[Plugins]\nblurEnabled=true\n' > "$XDG_CONFIG_HOME/kwinrc"
 printf '[Icons]\nTheme=breeze-dark\n' > "$XDG_CONFIG_HOME/kdeglobals"
 printf '[Desktop Entry]\nType=Application\nName=Report Viewer\nComment=Synthetic test entry\nIcon=document-preview\nExec=true\n' \
     > "$XDG_DATA_HOME/applications/test.report-viewer.desktop"
