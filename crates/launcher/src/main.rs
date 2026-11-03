@@ -15,6 +15,7 @@ mod folders;
 mod icons;
 mod launch;
 mod matcher;
+mod material;
 mod model;
 mod open_with;
 mod preview;
@@ -27,13 +28,14 @@ mod usage;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-Usage: ferroseek-launcher [--private] [--query TEXT]
+Usage: ferroseek-launcher [--private] [--opaque] [--query TEXT]
        ferroseek-launcher --forget-history | --help | --version
 
 Opens the launcher, or closes it when it is already open. Bind the command
 to a global shortcut in the desktop settings.
 
   --query TEXT       start with TEXT already typed
+  --opaque           use a solid surface without background blur
   --private          do not record what is opened in this session
   --forget-history   delete the launch history and exit
 
@@ -50,6 +52,7 @@ fn main() -> ExitCode {
     timing::init();
     let mut initial_query = String::new();
     let mut private = false;
+    let mut opaque = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -58,6 +61,7 @@ fn main() -> ExitCode {
                 None => return usage_error("--query needs a value"),
             },
             "--private" => private = true,
+            "--opaque" => opaque = true,
             "--forget-history" => {
                 let Some(p) = usage::Usage::default_path() else { return usage_error("no HOME or XDG_STATE_HOME") };
                 return match usage::Usage::forget(&p) {
@@ -102,6 +106,7 @@ fn main() -> ExitCode {
     match ui::run(
         ui::Boot {
             activation,
+            opaque,
             backend,
             apps,
             usage: history,

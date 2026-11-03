@@ -25,6 +25,7 @@ use crate::details;
 use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
+use crate::material::Material;
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
 use crate::preview;
@@ -53,10 +54,11 @@ fn full_height() -> u32 {
 
 pub(crate) mod palette {
     use iced::Color;
-    pub const SURFACE: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.97);
+    pub const SURFACE: Color = Color::from_rgb8(0x17, 0x18, 0x1c);
+    pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.88);
     pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
     pub const TEXT: Color = Color::from_rgb8(0xec, 0xea, 0xe6);
-    pub const DIM: Color = Color::from_rgb8(0x9b, 0x9d, 0xa6);
+    pub const DIM: Color = Color::from_rgb8(0xb0, 0xb2, 0xbc);
     pub const FAINT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.06);
     /// Oxidised iron.
     pub const ACCENT: Color = Color::from_rgb8(0xe0, 0x70, 0x3a);
@@ -67,10 +69,12 @@ pub(crate) mod palette {
 }
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
-static BOOT: Mutex<Option<Boot>> = Mutex::new(None);
+static BOOT: Mutex<Option<(Boot, Material)>> = Mutex::new(None);
+static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None);
 
 /// What the launcher starts with.
 pub struct Boot {
+    pub opaque: bool,
     pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
@@ -179,6 +183,8 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    material: Material,
+    glass: bool,
     activation: Activation,
     backend: Backend,
     apps: Vec<App>,
@@ -232,6 +238,7 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    MaterialChanged(bool),
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     ActionsFocusChecked(bool),
@@ -282,16 +289,19 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
+    let (material, material_events) = Material::new(!boot_data.opaque, (WIDTH, compact_height()));
+    let shared_material = material.clone();
+    *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some(boot_data);
+    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material));
     iced_layershell::application(boot, namespace, update, view)
         .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: palette::TEXT })
-        .theme(|_: &Launcher| Theme::Dark)
+        .theme(|state: &Launcher| material_theme(state.glass))
         .subscription(subscription)
         .settings(Settings {
             with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
                 let connection = wayland_client::Connection::connect_to_env()?;
-                activation.attach(connection.clone());
+                activation.attach(connection.clone(), shared_material.clone());
                 Ok(connection)
             })),
             layer_settings: LayerShellSettings {
@@ -318,10 +328,12 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path } =
+    let (Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. }, material) =
         BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        material,
+        glass: false,
         activation,
         backend,
         apps,
@@ -378,7 +390,7 @@ fn boot() -> (Launcher, Task<Message>) {
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
     let events = if timing::enabled() { event::listen_raw(on_event) } else { event::listen_with(on_event) };
-    Subscription::batch([events, Subscription::run(ui_events)])
+    Subscription::batch([events, Subscription::run(ui_events), Subscription::run(material_events)])
 }
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
@@ -423,6 +435,13 @@ fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
         }
     }
     model::command_for(key, mods).map(Message::Cmd)
+}
+
+fn material_events() -> BoxStream<'static, Message> {
+    match MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        Some(rx) => rx.map(Message::MaterialChanged).boxed(),
+        None => stream::pending().boxed(),
+    }
 }
 
 fn ui_events() -> BoxStream<'static, Message> {
@@ -515,6 +534,7 @@ impl Launcher {
         self.compact = compact;
         self.window_width = width;
         let h = if compact { compact_height() } else { full_height() };
+        self.material.resize((width, h));
         Task::done(Message::SizeChange((width, h)))
     }
 
@@ -916,6 +936,7 @@ impl Launcher {
             preview::Effect::Close => {
                 self.preview_enabled = false;
                 self.cancel_preview(true);
+                timing::event("preview_closed");
                 Task::batch([self.resize(), widget::operation::focus(search_id())])
             }
             preview::Effect::Refresh => Task::batch([
@@ -1080,6 +1101,11 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::MaterialChanged(enabled) = message {
+        s.glass = enabled;
+        timing::event(if enabled { "material_blur_requested" } else { "material_opaque" });
+        return Task::none();
+    }
     if let Message::ActionsFocusChecked(focused) = message {
         if focused && s.panel.is_some() {
             timing::event("actions_focused");
@@ -1155,6 +1181,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             {
                 panel.loaded(result);
                 s.preview_request = None;
+                timing::event("preview_loaded");
             }
             Task::none()
         }
@@ -1689,6 +1716,10 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
+    crate::material::renderer::opaque_fallback(view_content(s), material_theme(false))
+}
+
+fn view_content(s: &Launcher) -> Element<'_, Message> {
     if let Some(panel) = &s.file_details {
         let generation = s.details_generation;
         return panel.view().map(move |event| Message::Details { generation, event });
@@ -1827,10 +1858,16 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     })
 }
 
-pub(crate) fn surface_style(_: &Theme) -> container::Style {
+fn material_theme(glass: bool) -> Theme {
+    let mut colors = Theme::Dark.palette();
+    colors.background = if glass { palette::GLASS } else { palette::SURFACE };
+    Theme::custom("FerroSeek", colors)
+}
+
+pub(crate) fn surface_style(theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(palette::SURFACE)),
-        border: Border { color: palette::BORDER, width: 1.0, radius: 14.0.into() },
+        background: Some(Background::Color(theme.palette().background)),
+        border: Border { color: palette::BORDER, width: 1.0, radius: (crate::material::RADIUS as f32).into() },
         text_color: Some(palette::TEXT),
         ..Default::default()
     }
@@ -2162,6 +2199,11 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
+    .style(|_| container::Style {
+        background: Some(Background::Color(palette::FAINT)),
+        border: Border { radius: 9.0.into(), ..Default::default() },
+        ..Default::default()
+    })
     .into()
 }
 
@@ -2282,6 +2324,48 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn material_changes_preserve_the_current_search_and_actions() {
+        let mut state = application_actions(&["New window"]);
+        state.query = "report".into();
+        state.panel.as_mut().unwrap().query = "window".into();
+        for enabled in [true, false, true] {
+            let _ = update(&mut state, Message::MaterialChanged(enabled));
+            assert_eq!(state.query, "report");
+            assert_eq!(state.panel.as_ref().unwrap().query, "window");
+            assert_eq!(state.cursor.selected, 0);
+            assert_eq!(material_theme(state.glass).palette().background.a < 1.0, enabled);
+        }
+    }
+
+    #[test]
+    fn material_keeps_small_text_readable_over_light_and_dark_backdrops() {
+        fn over(top: Color, bottom: Color) -> Color {
+            Color::from_rgb(
+                top.r * top.a + bottom.r * (1.0 - top.a),
+                top.g * top.a + bottom.g * (1.0 - top.a),
+                top.b * top.a + bottom.b * (1.0 - top.a),
+            )
+        }
+        fn luminance(color: Color) -> f32 {
+            let linear = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
+        }
+        for glass in [false, true] {
+            for backdrop in [Color::WHITE, Color::BLACK] {
+                let surface = over(material_theme(glass).palette().background, backdrop);
+                for background in
+                    [surface, over(palette::FAINT, surface), over(palette::SELECTED, surface), palette::RAISED]
+                {
+                    for foreground in [palette::TEXT, palette::DIM] {
+                        let ratio = (luminance(foreground) + 0.05) / (luminance(background) + 0.05);
+                        assert!(ratio >= 4.5, "small text contrast {ratio} on {background:?}");
+                    }
+                }
+            }
+        }
+    }
+
     fn search_state() -> Launcher {
         let app = crate::apps::parse(
             "report.desktop",
@@ -2292,6 +2376,8 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            material: Material::default(),
+            glass: false,
             activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: vec![app],
@@ -2973,7 +3059,8 @@ mod tests {
                 repeat: false,
             });
             let mut messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3046,7 +3133,8 @@ mod tests {
                 repeat: false,
             });
             let mut messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3274,7 +3362,8 @@ mod tests {
                 repeat: false,
             });
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -3494,7 +3583,8 @@ mod tests {
     fn pointer_messages(s: &Launcher, point: iced::Point, events: Vec<mouse::Event>) -> Vec<Message> {
         use iced::advanced::{Layout, Shell, layout, widget::Tree};
         use iced::{Rectangle, Size};
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
         let mut element = view(s);
         let widget = element.as_widget_mut();
         let mut tree = Tree::new(&*widget);
@@ -3974,7 +4064,8 @@ mod tests {
             let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(12)) });
             let _ = command(&mut s, Command::Last);
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);
@@ -4133,7 +4224,8 @@ mod tests {
             let _ = update(&mut s, Message::Query("report".into()));
             let mut clipboard = Clipboard::default();
             let messages = {
-                let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+                let renderer =
+                    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
                 let mut element = view(&s);
                 let widget = element.as_widget_mut();
                 let mut tree = Tree::new(&*widget);

@@ -621,6 +621,11 @@ warm-cache regression check, not a new million-file or desktop benchmark.
 
 ## 12. Launcher interaction latency
 
+The numeric snapshots below predate the WGPU material path. New launcher runs
+include graphics adapter initialization; the historical software results do not
+characterize its startup cost. Per-run diagnostics remain in the graphical CI
+artifacts, with physical display presentation still excluded.
+
 The isolated graphical harness measures the release launcher and real daemon
 together. It generates 10,007 synthetic files, waits for indexing to finish,
 and starts virtual KWin with a software renderer, a temporary HOME/XDG tree and

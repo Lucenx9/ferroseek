@@ -64,6 +64,10 @@ Running the command again closes the open launcher. Clicking another window also
 compositor moves keyboard focus away; the [launcher guide](docs/LAUNCHER.md) lists exceptions. The installer does not
 register a global shortcut or change desktop settings.
 
+The launcher uses a dark glass surface when background blur is available, with
+a solid fallback. Bind `ferroseek-launcher --opaque` if you prefer an opaque
+appearance. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).
+
 Use `./scripts/install.sh` for guided setup, or `--dry-run` to inspect its plan.
 See [installation and upgrades](docs/INSTALLATION.md) for XDG paths, indexing
 configuration, optional service enablement, archives and uninstall.

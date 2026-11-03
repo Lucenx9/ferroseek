@@ -12,14 +12,14 @@ rust-version.workspace = true
 name = "ferroseek-launcher"
 path = "src/main.rs"
 
-# Pure-Rust stack: iced with the tiny-skia software renderer on a
+# Pure-Rust stack: iced with WGPU and a tiny-skia software fallback on a
 # wlr-layer-shell surface. Check `cargo tree -e normal | grep -- -sys`
 # before adding dependencies: nothing here may build C code.
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 ferroseek-desktop.workspace = true
 ferroseek-config.workspace = true
-iced = { version = "0.14", default-features = false, features = ["advanced", "tiny-skia", "wayland", "svg", "image", "thread-pool"] }
+iced = { version = "0.14", default-features = false, features = ["advanced", "tiny-skia", "wgpu", "web-colors", "wayland", "svg", "image", "thread-pool"] }
 iced_layershell = { version = "0.19", default-features = false }
 # iced_exdevtools 0.19.1 does not build against winit-core beta.4
 # (NativeKeyCode became non-exhaustive); keep the beta.2 it was written for.
@@ -28,12 +28,14 @@ zbus.workspace = true
 # Bound diagnostic calls with the runtime already driving the bus thread.
 zruntime = { version = "0.2", default-features = false, features = ["helper"] }
 wayland-client = "0.31"
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 freedesktop-icons = "0.4"
 log.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+iced_tiny_skia = { version = "0.14", default-features = false }
 iced_runtime = "0.14"
 ferroseek-engine.workspace = true
 tempfile.workspace = true

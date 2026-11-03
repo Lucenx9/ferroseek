@@ -35,12 +35,43 @@ launcher serves the copied value, so it stays until Esc or the toggle closes it.
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
 | `--private` | do not record anything opened in this session |
+| `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
 
 The installer preserves configuration and indexes and does not start indexing
 unless `--enable` is supplied. Review indexing roots before enabling it.
 `./scripts/uninstall.sh --launcher` removes only the launcher and retains
 the engine and integrations. See [installation](INSTALLATION.md).
+
+## Appearance
+
+The dark surface becomes translucent when the compositor advertises background
+blur and the active renderer supports transparency. Rounded blur regions follow
+the normal, compact and preview layouts.
+The action panel remains solid so result text does not show through its commands;
+the footer has a subtle inset surface. Selection retains the iron accent.
+
+If blur is unavailable or its capability is withdrawn, the surface is opaque.
+Use `ferroseek-launcher --opaque` in your shortcut for a solid appearance even
+when blur is supported. No desktop effects or settings are changed.
+
+The launcher uses `ext-background-effect-v1`, or the older KDE blur extension
+when the standard manager is absent. The compositor controls the blur algorithm;
+an advertised interface is not a guarantee that an effect is visually applied.
+WGPU presents the transparent surface and requires a working graphics driver
+(e.g. Mesa Vulkan on Linux). If adapter initialization fails, iced falls back to
+tiny-skia with a solid material. `ICED_BACKEND=tiny-skia ferroseek-launcher` selects
+that software path explicitly. `--opaque` keeps the normal renderer and disables
+blur; it does not select a driver.
+
+The rendered blur is checked in virtual KWin with Mesa software graphics;
+physical desktops and hardware GPU drivers remain unverified. WGPU adapter and
+pipeline initialization can change startup time and memory use; previous timing
+tables describe the earlier software path.
+
+[Blurred surface](assets/launcher-glass.png) · [Opaque surface](assets/launcher-opaque.png)
+
+These captures use a fine-striped backdrop in an isolated KWin session.
 
 ## Keys
 
@@ -474,7 +505,7 @@ if another instance is updating history, retry after it finishes.
 
 ```text
 ferroseek-launcher
- ├─ UI thread: iced (tiny-skia) on a wlr-layer-shell overlay
+ ├─ UI thread: iced (WGPU; tiny-skia fallback) on a wlr-layer-shell overlay
  │    model.rs (rows, selection, actions, keys) · usage.rs · calc.rs
  └─ bus thread: zbus::block_on for the process lifetime
       ├─ serves io.github.ferroseek.Launcher1.Toggle
@@ -563,6 +594,17 @@ Physical Ctrl+Digit1 also selects an application and a filtered declared action
 while their input fields have focus, preserving both query strings. Action-filter
 text waits for a widget focus query to return true. The suite does not establish
 typeahead handling between an opening shortcut and the asynchronous focus change.
+
+The material check places fine stripes behind the launcher and compares actual
+output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback.
+It verifies that the stripes
+are smoothed by the compositor, rather than only dimmed by alpha blending, and
+that opening/closing the preview updates the blur region and surface width.
+`material.json`, native-resolution PNGs and diagnostics accompany each profile.
+Protocol tests use an independent socket peer for standard/legacy selection,
+capability withdrawal/restoration, manager removal, rounded resize regions and
+missing/disabled blur. These tests do not use the real session or desktop.
+
 Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Desktop validation
@@ -592,6 +634,9 @@ ends at a subsequent redraw event. Superseded, hidden and failed queries have se
 events and do not become successful frame samples. `keyboard_focus_enter` and
 `keyboard_focus_leave` report actual compositor keyboard focus without key contents;
 `actions_focused` reports a successful widget focus query in diagnostic mode.
+`material_blur_requested` reports a protocol request, not proof of rendered blur;
+`material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
+identify accepted preview replies and closing the sidebar.
 An old queued redraw cannot
 complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.
