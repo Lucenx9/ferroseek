@@ -11,7 +11,7 @@ use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::apps::{App, ExecError};
+use crate::apps::{App, ExecError, executable_exists};
 
 /// Full argv for `app`, including the terminal wrapper and scope.
 pub fn command_line(app: &App, scoped: bool, terminal: Option<&[String]>) -> io::Result<Vec<String>> {
@@ -116,24 +116,16 @@ fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::R
     cmd.spawn()
 }
 
-fn in_path(prog: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::env::var_os("PATH").is_some_and(|p| {
-        std::env::split_paths(&p)
-            .any(|d| d.join(prog).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
-    })
-}
-
 fn systemd_run_available() -> bool {
     std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| Path::new(&d).join("systemd/private").exists())
-        && in_path("systemd-run")
+        && executable_exists("systemd-run")
 }
 
 /// Terminal for `Terminal=true` entries: the freedesktop
 /// `xdg-terminal-exec` if installed, else a known emulator with its
 /// execute flag.
 fn terminal_command() -> Option<Vec<String>> {
-    if in_path("xdg-terminal-exec") {
+    if executable_exists("xdg-terminal-exec") {
         return Some(vec!["xdg-terminal-exec".into()]);
     }
     for (prog, flag) in [
@@ -144,7 +136,7 @@ fn terminal_command() -> Option<Vec<String>> {
         ("foot", "--"),
         ("xterm", "-e"),
     ] {
-        if in_path(prog) {
+        if executable_exists(prog) {
             return Some(vec![prog.into(), flag.into()]);
         }
     }
@@ -172,7 +164,7 @@ mod tests {
 
     #[test]
     fn terminal_detection_skips_non_executable_programs() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         const CASE: &str = "FERROSEEK_TEST_TERMINAL_PATH";
         if std::env::var_os(CASE).is_some() {
@@ -182,17 +174,23 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let stub = temp.path().join("xdg-terminal-exec");
         std::fs::write(&stub, "not executable").unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o600)).unwrap();
         let terminal = temp.path().join("konsole");
         std::fs::write(&terminal, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::set_permissions(&terminal, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "launch::tests::terminal_detection_skips_non_executable_programs"])
-            .env(CASE, "1")
-            .env("PATH", temp.path())
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        for mode in [0o600, 0o601, 0o610] {
+            // Root may execute a regular file with any execute bit set.
+            if mode != 0o600 && std::fs::metadata(temp.path()).unwrap().uid() == 0 {
+                continue;
+            }
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(mode)).unwrap();
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "launch::tests::terminal_detection_skips_non_executable_programs"])
+                .env(CASE, "1")
+                .env("PATH", temp.path())
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "mode={mode:o}: {}", String::from_utf8_lossy(&output.stdout));
+        }
     }
 
     #[test]

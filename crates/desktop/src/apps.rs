@@ -436,9 +436,18 @@ fn split_list(v: &str) -> Vec<String> {
     out
 }
 
-fn executable_exists(prog: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let is_exec = |p: &Path| p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+/// Check effective execute permission, including owner/group selection and ACLs.
+pub(crate) fn executable_exists(prog: &str) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let is_exec = |p: &Path| {
+        p.is_file()
+            && CString::new(p.as_os_str().as_bytes()).is_ok_and(|path| {
+                // SAFETY: path is NUL-terminated and valid for this call.
+                unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
+            })
+    };
     if prog.contains('/') {
         return is_exec(Path::new(prog));
     }
@@ -755,6 +764,65 @@ mod tests {
     fn lists_and_escapes() {
         assert_eq!(split_list(r"a;b\;c;;d"), ["a", "b;c", "d"]);
         assert_eq!(unescape(r"a\sb\tc\\d"), "a b\tc\\d");
+    }
+
+    #[test]
+    fn discovery_requires_execute_permission_for_the_current_user() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::process::Command;
+
+        const ROOT: &str = "FERROSEEK_TEST_EXEC_PERMISSIONS";
+        if let Some(root) = std::env::var_os(ROOT) {
+            let dirs = [PathBuf::from(root)];
+            for (apps, expected) in [
+                (scan(&dirs, &[], &[]), ["available-absolute.desktop", "available-relative.desktop"]),
+                (
+                    file_handlers(&dirs, &[], &[], &["text/plain".into()]),
+                    ["available-absolute.desktop", "available-relative.desktop"],
+                ),
+                (
+                    file_handlers(&dirs, &[], &[], &["application/json".into()]),
+                    ["handler-available-absolute.desktop", "handler-available-relative.desktop"],
+                ),
+            ] {
+                let mut ids: Vec<_> = apps.iter().map(|app| app.id.as_str()).collect();
+                ids.sort();
+                assert_eq!(ids, expected);
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let applications = temp.path().join("applications");
+        std::fs::create_dir(&applications).unwrap();
+        for (name, mode) in [("available", 0o700), ("denied", 0o601)] {
+            let binary = temp.path().join(name);
+            std::fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
+            // Root can execute any regular file with an execute bit set.
+            let mode =
+                if name == "denied" && std::fs::metadata(temp.path()).unwrap().uid() == 0 { 0o600 } else { mode };
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(Command::new(&binary).status().is_ok(), name == "available");
+            for (form, program) in [("relative", name.to_string()), ("absolute", binary.to_str().unwrap().into())] {
+                std::fs::write(
+                    applications.join(format!("{name}-{form}.desktop")),
+                    format!("[Desktop Entry]\nType=Application\nName={name}\nExec={program} %f\nTryExec={program}\nMimeType=text/plain;\n"),
+                )
+                .unwrap();
+                // Exercise handler Exec validation independently of TryExec.
+                std::fs::write(
+                    applications.join(format!("handler-{name}-{form}.desktop")),
+                    format!("[Desktop Entry]\nType=Application\nName={name}\nNoDisplay=true\nExec={program} %f\nMimeType=application/json;\n"),
+                )
+                .unwrap();
+            }
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "apps::tests::discovery_requires_execute_permission_for_the_current_user"])
+            .env(ROOT, temp.path())
+            .env("PATH", temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]
