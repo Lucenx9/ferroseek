@@ -263,7 +263,7 @@ pub enum Message {
     ContextMenu(Target),
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
-    InputClipboard,
+    InputClipboard(Option<Box<Message>>),
     FocusLost,
     Ui(UiEvent),
 }
@@ -390,12 +390,15 @@ fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> O
         // Read regardless of capture: the search field keeps focus and
         // swallows Escape, but navigation keys must still reach the list.
         Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) => {
-            key_message(&key, modifiers).or_else(|| {
-                (status == event::Status::Captured
-                    && modifiers.command()
-                    && matches!(key.to_latin(physical_key), Some('c' | 'x')))
-                .then_some(Message::InputClipboard)
-            })
+            let command = key_message(&key, modifiers);
+            if status == event::Status::Captured
+                && modifiers.command()
+                && matches!(key.to_latin(physical_key), Some('c' | 'x'))
+            {
+                Some(Message::InputClipboard(command.map(Box::new)))
+            } else {
+                command
+            }
         }
         Event::Mouse(mouse::Event::WheelScrolled { delta }) if status != event::Status::Captured => {
             let dy = match delta {
@@ -1496,9 +1499,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.launch_task = None;
             iced::exit()
         }
-        Message::InputClipboard => {
+        Message::InputClipboard(command) => {
             s.clipboard_owner = true;
-            Task::none()
+            command.map_or_else(Task::none, |message| update_inner(s, *message))
         }
         // An open in flight finishes and exits on its own (or shows its error);
         // folder settings may hold unsaved edits or be saving; a copy is pasted
@@ -4121,7 +4124,11 @@ mod tests {
             }
         }
 
-        for (letter, code) in [("c", Code::KeyC), ("x", Code::KeyX)] {
+        for (letter, code, modifiers) in [
+            ("c", Code::KeyC, Modifiers::CTRL),
+            ("x", Code::KeyX, Modifiers::CTRL),
+            ("c", Code::KeyC, Modifiers::CTRL | Modifiers::SHIFT),
+        ] {
             let mut s = search_state();
             let _ = update(&mut s, Message::Query("report".into()));
             let mut clipboard = Clipboard::default();
@@ -4138,13 +4145,13 @@ mod tests {
                     &renderer,
                     &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()),
                 );
-                let pressed = |letter: &str, code| {
+                let pressed = |letter: &str, code, modifiers| {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: Key::Character(letter.into()),
                         modified_key: Key::Character(letter.into()),
                         physical_key: Physical::Code(code),
                         location: keyboard::Location::Standard,
-                        modifiers: Modifiers::CTRL,
+                        modifiers,
                         text: None,
                         repeat: false,
                     })
@@ -4152,8 +4159,9 @@ mod tests {
                 let mut messages = Vec::new();
                 for event in [
                     Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
-                    pressed("a", Code::KeyA),
-                    pressed(letter, code),
+                    pressed("a", Code::KeyA, Modifiers::CTRL),
+                    Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+                    pressed(letter, code, modifiers),
                 ] {
                     let mut shell = Shell::new(&mut messages);
                     widget.update(
@@ -4185,9 +4193,43 @@ mod tests {
             });
             assert!(
                 !actions.iter().any(|action| matches!(action, iced_runtime::Action::Exit)),
-                "Ctrl+{letter} clipboard contents must remain available after clicking the paste destination"
+                "{modifiers:?}+{letter} clipboard contents must remain available after clicking the paste destination"
             );
         }
+    }
+
+    #[test]
+    fn captured_input_copy_also_runs_the_copy_path_command() {
+        use iced::keyboard::key::{Code, Physical};
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+        let expected = match &s.selected().unwrap().target {
+            Target::File(file) => file.path.as_ref().unwrap().to_string_lossy().into_owned(),
+            _ => panic!("a file must be selected"),
+        };
+        let event = Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("c".into()),
+            modified_key: Key::Character("C".into()),
+            physical_key: Physical::Code(Code::KeyC),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+            text: None,
+            repeat: false,
+        });
+        let message = on_event(event, event::Status::Captured, iced::window::Id::unique()).unwrap();
+        let task = update(&mut s, message);
+        let actions = iced::futures::executor::block_on(async {
+            iced_runtime::task::into_stream(task).unwrap().collect::<Vec<_>>().await
+        });
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            iced_runtime::Action::Clipboard(iced_runtime::clipboard::Action::Write { contents, .. })
+                if *contents == expected
+        )));
     }
 
     #[test]
