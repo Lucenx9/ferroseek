@@ -92,6 +92,9 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 | Ctrl+Shift+C | copy the file's path |
 | Esc | clear the action filter, close actions, clear the query, return from folder search, then close |
 
+**Copy path** and Ctrl+Shift+C copy a lossless file URL when the selected file
+or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
+
 Choose **All**, **Applications** or **Files** beside the search field to narrow
 results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
 cycles backward. The choice lasts for this launcher session. Applications mode

@@ -619,7 +619,10 @@ impl Launcher {
                 Task::batch([load, self.resize(), widget::operation::focus(open_with::input_id())])
             }
             (Action::CopyPath, Target::File(f)) => match &f.path {
-                Some(p) => self.copy(p.to_string_lossy().into_owned(), "path"),
+                Some(p) => match p.to_str() {
+                    Some(path) => self.copy(path.to_owned(), "path"),
+                    None => self.copy(f.id.clone(), "file URL"),
+                },
                 None => Task::none(),
             },
             (Action::CopyName, _) => self.copy(item.title.clone(), "name"),
@@ -4295,6 +4298,61 @@ mod tests {
                 !actions.iter().any(|action| matches!(action, iced_runtime::Action::Exit)),
                 "{modifiers:?}+{letter} clipboard contents must remain available after clicking the paste destination"
             );
+        }
+    }
+
+    #[test]
+    fn result_copy_path_preserves_non_utf8_files_and_folders() {
+        use std::os::unix::ffi::OsStringExt;
+
+        for (bytes, url, expected) in [
+            (b"/synthetic/non\xff.txt".as_slice(), "file:///synthetic/non%FF.txt", "file:///synthetic/non%FF.txt"),
+            (
+                "/synthetic/caffè notes.txt".as_bytes(),
+                "file:///synthetic/caff%C3%A8%20notes.txt",
+                "/synthetic/caffè notes.txt",
+            ),
+        ] {
+            for is_dir in [false, true] {
+                for from_panel in [false, true] {
+                    let mut s = search_state();
+                    let _ = update(&mut s, Message::Scope(Scope::Files));
+                    let _ = update(&mut s, Message::Query("synthetic".into()));
+                    let mut file = file_hits().remove(0);
+                    file.id = url.into();
+                    file.path = Some(std::ffi::OsString::from_vec(bytes.to_vec()).into());
+                    file.is_dir = is_dir;
+                    let target = Target::File(file.clone());
+                    let generation = s.generation;
+                    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![file])) });
+                    let task = if from_panel {
+                        let _ = command(&mut s, Command::OpenActions);
+                        update(&mut s, Message::PanelClicked { target, action: Action::CopyPath })
+                    } else {
+                        command(&mut s, Command::CopyPath)
+                    };
+                    let actions = iced::futures::executor::block_on(async {
+                        iced_runtime::task::into_stream(task).unwrap().collect::<Vec<_>>().await
+                    });
+                    let copied: Vec<_> = actions
+                        .iter()
+                        .filter_map(|action| match action {
+                            iced_runtime::Action::Clipboard(iced_runtime::clipboard::Action::Write {
+                                contents,
+                                ..
+                            }) => Some(contents.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    assert_eq!(copied, [expected], "is_dir={is_dir}, from_panel={from_panel}");
+                    assert_eq!(
+                        s.status,
+                        Status::Notice(format!("Copied {}", if expected == url { "file URL" } else { "path" }))
+                    );
+                    assert!(s.clipboard_owner);
+                    assert!(s.opening.is_none());
+                }
+            }
         }
     }
 
