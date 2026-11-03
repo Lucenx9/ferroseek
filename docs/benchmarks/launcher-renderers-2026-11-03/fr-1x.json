@@ -1,0 +1,1013 @@
+{
+  "schema": 3,
+  "validation": "passed",
+  "environment": {
+    "platform": "Linux-6.12.113+deb13-amd64-x86_64-with-glibc2.39",
+    "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           39 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  4\nOn-line CPU(s) list:                     0-3\nVendor ID:                               GenuineIntel\nModel name:                              Intel(R) N95\nCPU family:                              6\nModel:                                   190\nThread(s) per core:                      1\nCore(s) per socket:                      4\nSocket(s):                               1\nStepping:                                0\nCPU(s) scaling MHz:                      61%\nCPU max MHz:                             3400.0000\nCPU min MHz:                             800.0000\nBogoMIPS:                                3379.20\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb cat_l2 cdp_l2 ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdt_a rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nL1d cache:                               128 KiB (4 instances)\nL1i cache:                               256 KiB (4 instances)\nL2 cache:                                2 MiB (1 instance)\nL3 cache:                                6 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-3\nVulnerability Gather data sampling:      Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Reg file data sampling:    Mitigation; Clear Register File\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS Not affected; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n",
+    "kwin": "kwin 5.27.11",
+    "launcher_sha256": "bcd247bf3f1b472d2d1736e62cf8bca33fb08b642e9143c44c7f69dee25e6698",
+    "graphics_environment": {
+      "WGPU_BACKEND": "vulkan",
+      "WGPU_POWER_PREF": null,
+      "ICED_PRESENT_MODE": null,
+      "LIBGL_ALWAYS_SOFTWARE": "1"
+    },
+    "profile": "fr-1x",
+    "keyboard_layout": "fr",
+    "keyboard_preflight": {
+      "expected": "z&",
+      "observed": "z&"
+    },
+    "output": {
+      "logical_geometry": [
+        0,
+        0,
+        1280,
+        800
+      ],
+      "scale": 1.0
+    }
+  },
+  "corpus_files": 10007,
+  "requested_mode": "all",
+  "trials_per_mode": 20,
+  "modes": {
+    "auto": {
+      "arguments": [],
+      "backend": null
+    },
+    "opaque": {
+      "arguments": [
+        "--opaque"
+      ],
+      "backend": null
+    },
+    "software": {
+      "arguments": [],
+      "backend": "tiny-skia"
+    }
+  },
+  "samples": [
+    {
+      "trial": 1,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 328684,
+      "keyboard_focus_us": 551050,
+      "query_ready_us": 11474,
+      "ready_to_frame_us": 24368,
+      "query_frame_us": 35842,
+      "rss_snapshot_kib": 139432,
+      "hwm_snapshot_kib": 139432
+    },
+    {
+      "trial": 2,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 348206,
+      "keyboard_focus_us": 387021,
+      "query_ready_us": 17057,
+      "ready_to_frame_us": 11367,
+      "query_frame_us": 28424,
+      "rss_snapshot_kib": 129472,
+      "hwm_snapshot_kib": 129472
+    },
+    {
+      "trial": 3,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 292846,
+      "keyboard_focus_us": 336023,
+      "query_ready_us": 24512,
+      "ready_to_frame_us": 23016,
+      "query_frame_us": 47528,
+      "rss_snapshot_kib": 18248,
+      "hwm_snapshot_kib": 18248
+    },
+    {
+      "trial": 4,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 366999,
+      "keyboard_focus_us": 407273,
+      "query_ready_us": 14498,
+      "ready_to_frame_us": 12286,
+      "query_frame_us": 26784,
+      "rss_snapshot_kib": 129548,
+      "hwm_snapshot_kib": 129548
+    },
+    {
+      "trial": 5,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 274176,
+      "keyboard_focus_us": 276498,
+      "query_ready_us": 5848,
+      "ready_to_frame_us": 39712,
+      "query_frame_us": 45560,
+      "rss_snapshot_kib": 18096,
+      "hwm_snapshot_kib": 18096
+    },
+    {
+      "trial": 6,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 312403,
+      "keyboard_focus_us": 353783,
+      "query_ready_us": 6717,
+      "ready_to_frame_us": 36795,
+      "query_frame_us": 43512,
+      "rss_snapshot_kib": 129648,
+      "hwm_snapshot_kib": 129648
+    },
+    {
+      "trial": 7,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 280190,
+      "keyboard_focus_us": 288694,
+      "query_ready_us": 5971,
+      "ready_to_frame_us": 33836,
+      "query_frame_us": 39807,
+      "rss_snapshot_kib": 18104,
+      "hwm_snapshot_kib": 18104
+    },
+    {
+      "trial": 8,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 310023,
+      "keyboard_focus_us": 349267,
+      "query_ready_us": 6142,
+      "ready_to_frame_us": 51893,
+      "query_frame_us": 58035,
+      "rss_snapshot_kib": 129956,
+      "hwm_snapshot_kib": 129956
+    },
+    {
+      "trial": 9,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 334880,
+      "keyboard_focus_us": 375607,
+      "query_ready_us": 13050,
+      "ready_to_frame_us": 8133,
+      "query_frame_us": 21183,
+      "rss_snapshot_kib": 130024,
+      "hwm_snapshot_kib": 130024
+    },
+    {
+      "trial": 10,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 318202,
+      "keyboard_focus_us": 358644,
+      "query_ready_us": 6974,
+      "ready_to_frame_us": 45156,
+      "query_frame_us": 52130,
+      "rss_snapshot_kib": 129816,
+      "hwm_snapshot_kib": 129816
+    },
+    {
+      "trial": 11,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 372260,
+      "keyboard_focus_us": 413077,
+      "query_ready_us": 14462,
+      "ready_to_frame_us": 3527,
+      "query_frame_us": 17989,
+      "rss_snapshot_kib": 129680,
+      "hwm_snapshot_kib": 129680
+    },
+    {
+      "trial": 12,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 294245,
+      "keyboard_focus_us": 303537,
+      "query_ready_us": 17260,
+      "ready_to_frame_us": 14884,
+      "query_frame_us": 32144,
+      "rss_snapshot_kib": 18336,
+      "hwm_snapshot_kib": 18336
+    },
+    {
+      "trial": 13,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 366070,
+      "keyboard_focus_us": 414304,
+      "query_ready_us": 18125,
+      "ready_to_frame_us": 7778,
+      "query_frame_us": 25903,
+      "rss_snapshot_kib": 129588,
+      "hwm_snapshot_kib": 129588
+    },
+    {
+      "trial": 14,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 333596,
+      "keyboard_focus_us": 341903,
+      "query_ready_us": 5695,
+      "ready_to_frame_us": 39313,
+      "query_frame_us": 45008,
+      "rss_snapshot_kib": 18224,
+      "hwm_snapshot_kib": 18224
+    },
+    {
+      "trial": 15,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 312580,
+      "keyboard_focus_us": 352664,
+      "query_ready_us": 7400,
+      "ready_to_frame_us": 40499,
+      "query_frame_us": 47899,
+      "rss_snapshot_kib": 129924,
+      "hwm_snapshot_kib": 129924
+    },
+    {
+      "trial": 16,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 256803,
+      "keyboard_focus_us": 266313,
+      "query_ready_us": 7007,
+      "ready_to_frame_us": 41102,
+      "query_frame_us": 48109,
+      "rss_snapshot_kib": 18156,
+      "hwm_snapshot_kib": 18156
+    },
+    {
+      "trial": 17,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 352691,
+      "keyboard_focus_us": 392329,
+      "query_ready_us": 14263,
+      "ready_to_frame_us": 29110,
+      "query_frame_us": 43373,
+      "rss_snapshot_kib": 129496,
+      "hwm_snapshot_kib": 129496
+    },
+    {
+      "trial": 18,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 356340,
+      "keyboard_focus_us": 394867,
+      "query_ready_us": 8895,
+      "ready_to_frame_us": 1845,
+      "query_frame_us": 10740,
+      "rss_snapshot_kib": 129676,
+      "hwm_snapshot_kib": 129676
+    },
+    {
+      "trial": 19,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 345980,
+      "keyboard_focus_us": 388339,
+      "query_ready_us": 6217,
+      "ready_to_frame_us": 31460,
+      "query_frame_us": 37677,
+      "rss_snapshot_kib": 130176,
+      "hwm_snapshot_kib": 130176
+    },
+    {
+      "trial": 20,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 360444,
+      "keyboard_focus_us": 401848,
+      "query_ready_us": 13018,
+      "ready_to_frame_us": 1191,
+      "query_frame_us": 14209,
+      "rss_snapshot_kib": 129292,
+      "hwm_snapshot_kib": 129292
+    },
+    {
+      "trial": 21,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 275780,
+      "keyboard_focus_us": 286297,
+      "query_ready_us": 11959,
+      "ready_to_frame_us": 14699,
+      "query_frame_us": 26658,
+      "rss_snapshot_kib": 17960,
+      "hwm_snapshot_kib": 17960
+    },
+    {
+      "trial": 22,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 310483,
+      "keyboard_focus_us": 350760,
+      "query_ready_us": 11810,
+      "ready_to_frame_us": 13864,
+      "query_frame_us": 25674,
+      "rss_snapshot_kib": 129856,
+      "hwm_snapshot_kib": 129856
+    },
+    {
+      "trial": 23,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 255605,
+      "keyboard_focus_us": 263703,
+      "query_ready_us": 26755,
+      "ready_to_frame_us": 8905,
+      "query_frame_us": 35660,
+      "rss_snapshot_kib": 18288,
+      "hwm_snapshot_kib": 18288
+    },
+    {
+      "trial": 24,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 312231,
+      "keyboard_focus_us": 352967,
+      "query_ready_us": 9171,
+      "ready_to_frame_us": 24802,
+      "query_frame_us": 33973,
+      "rss_snapshot_kib": 129524,
+      "hwm_snapshot_kib": 129524
+    },
+    {
+      "trial": 25,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 288952,
+      "keyboard_focus_us": 303061,
+      "query_ready_us": 13438,
+      "ready_to_frame_us": 30315,
+      "query_frame_us": 43753,
+      "rss_snapshot_kib": 18192,
+      "hwm_snapshot_kib": 18192
+    },
+    {
+      "trial": 26,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 310047,
+      "keyboard_focus_us": 349759,
+      "query_ready_us": 5766,
+      "ready_to_frame_us": 54918,
+      "query_frame_us": 60684,
+      "rss_snapshot_kib": 129676,
+      "hwm_snapshot_kib": 129676
+    },
+    {
+      "trial": 27,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 364660,
+      "keyboard_focus_us": 404184,
+      "query_ready_us": 6740,
+      "ready_to_frame_us": 13700,
+      "query_frame_us": 20440,
+      "rss_snapshot_kib": 129592,
+      "hwm_snapshot_kib": 129592
+    },
+    {
+      "trial": 28,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 314660,
+      "keyboard_focus_us": 353895,
+      "query_ready_us": 12391,
+      "ready_to_frame_us": 17267,
+      "query_frame_us": 29658,
+      "rss_snapshot_kib": 129048,
+      "hwm_snapshot_kib": 129048
+    },
+    {
+      "trial": 29,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 366736,
+      "keyboard_focus_us": 407957,
+      "query_ready_us": 7553,
+      "ready_to_frame_us": 435,
+      "query_frame_us": 7988,
+      "rss_snapshot_kib": 129484,
+      "hwm_snapshot_kib": 129484
+    },
+    {
+      "trial": 30,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 272293,
+      "keyboard_focus_us": 281602,
+      "query_ready_us": 7087,
+      "ready_to_frame_us": 30687,
+      "query_frame_us": 37774,
+      "rss_snapshot_kib": 18368,
+      "hwm_snapshot_kib": 18368
+    },
+    {
+      "trial": 31,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 340335,
+      "keyboard_focus_us": 380986,
+      "query_ready_us": 12540,
+      "ready_to_frame_us": 7467,
+      "query_frame_us": 20007,
+      "rss_snapshot_kib": 129488,
+      "hwm_snapshot_kib": 129488
+    },
+    {
+      "trial": 32,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 311799,
+      "keyboard_focus_us": 320562,
+      "query_ready_us": 22028,
+      "ready_to_frame_us": 10268,
+      "query_frame_us": 32296,
+      "rss_snapshot_kib": 18100,
+      "hwm_snapshot_kib": 18100
+    },
+    {
+      "trial": 33,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 309982,
+      "keyboard_focus_us": 350433,
+      "query_ready_us": 12940,
+      "ready_to_frame_us": 20997,
+      "query_frame_us": 33937,
+      "rss_snapshot_kib": 129324,
+      "hwm_snapshot_kib": 129324
+    },
+    {
+      "trial": 34,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 313336,
+      "keyboard_focus_us": 323295,
+      "query_ready_us": 7506,
+      "ready_to_frame_us": 16900,
+      "query_frame_us": 24406,
+      "rss_snapshot_kib": 18232,
+      "hwm_snapshot_kib": 18232
+    },
+    {
+      "trial": 35,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 362000,
+      "keyboard_focus_us": 403667,
+      "query_ready_us": 11618,
+      "ready_to_frame_us": 35855,
+      "query_frame_us": 47473,
+      "rss_snapshot_kib": 129144,
+      "hwm_snapshot_kib": 129144
+    },
+    {
+      "trial": 36,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 313763,
+      "keyboard_focus_us": 354753,
+      "query_ready_us": 15274,
+      "ready_to_frame_us": 729,
+      "query_frame_us": 16003,
+      "rss_snapshot_kib": 129676,
+      "hwm_snapshot_kib": 129676
+    },
+    {
+      "trial": 37,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 310052,
+      "keyboard_focus_us": 349744,
+      "query_ready_us": 12922,
+      "ready_to_frame_us": 17496,
+      "query_frame_us": 30418,
+      "rss_snapshot_kib": 129888,
+      "hwm_snapshot_kib": 129888
+    },
+    {
+      "trial": 38,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 344186,
+      "keyboard_focus_us": 386383,
+      "query_ready_us": 8957,
+      "ready_to_frame_us": 418,
+      "query_frame_us": 9375,
+      "rss_snapshot_kib": 129336,
+      "hwm_snapshot_kib": 129336
+    },
+    {
+      "trial": 39,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 298177,
+      "keyboard_focus_us": 308303,
+      "query_ready_us": 13834,
+      "ready_to_frame_us": 17436,
+      "query_frame_us": 31270,
+      "rss_snapshot_kib": 18276,
+      "hwm_snapshot_kib": 18276
+    },
+    {
+      "trial": 40,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 315978,
+      "keyboard_focus_us": 356028,
+      "query_ready_us": 12817,
+      "ready_to_frame_us": 7192,
+      "query_frame_us": 20009,
+      "rss_snapshot_kib": 129464,
+      "hwm_snapshot_kib": 129464
+    },
+    {
+      "trial": 41,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 256678,
+      "keyboard_focus_us": 266600,
+      "query_ready_us": 9655,
+      "ready_to_frame_us": 20311,
+      "query_frame_us": 29966,
+      "rss_snapshot_kib": 18244,
+      "hwm_snapshot_kib": 18244
+    },
+    {
+      "trial": 42,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 308456,
+      "keyboard_focus_us": 350791,
+      "query_ready_us": 11372,
+      "ready_to_frame_us": 45946,
+      "query_frame_us": 57318,
+      "rss_snapshot_kib": 130176,
+      "hwm_snapshot_kib": 130176
+    },
+    {
+      "trial": 43,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 288111,
+      "keyboard_focus_us": 296806,
+      "query_ready_us": 14050,
+      "ready_to_frame_us": 18559,
+      "query_frame_us": 32609,
+      "rss_snapshot_kib": 18052,
+      "hwm_snapshot_kib": 18052
+    },
+    {
+      "trial": 44,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 312281,
+      "keyboard_focus_us": 353245,
+      "query_ready_us": 6292,
+      "ready_to_frame_us": 29011,
+      "query_frame_us": 35303,
+      "rss_snapshot_kib": 129396,
+      "hwm_snapshot_kib": 129396
+    },
+    {
+      "trial": 45,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 385458,
+      "keyboard_focus_us": 424265,
+      "query_ready_us": 14414,
+      "ready_to_frame_us": 16131,
+      "query_frame_us": 30545,
+      "rss_snapshot_kib": 129316,
+      "hwm_snapshot_kib": 129316
+    },
+    {
+      "trial": 46,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 309416,
+      "keyboard_focus_us": 348761,
+      "query_ready_us": 7980,
+      "ready_to_frame_us": 20649,
+      "query_frame_us": 28629,
+      "rss_snapshot_kib": 129432,
+      "hwm_snapshot_kib": 129432
+    },
+    {
+      "trial": 47,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 360758,
+      "keyboard_focus_us": 400187,
+      "query_ready_us": 9649,
+      "ready_to_frame_us": 3710,
+      "query_frame_us": 13359,
+      "rss_snapshot_kib": 129200,
+      "hwm_snapshot_kib": 129200
+    },
+    {
+      "trial": 48,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 259208,
+      "keyboard_focus_us": 268696,
+      "query_ready_us": 11034,
+      "ready_to_frame_us": 20968,
+      "query_frame_us": 32002,
+      "rss_snapshot_kib": 18276,
+      "hwm_snapshot_kib": 18276
+    },
+    {
+      "trial": 49,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 311366,
+      "keyboard_focus_us": 352803,
+      "query_ready_us": 7498,
+      "ready_to_frame_us": 4602,
+      "query_frame_us": 12100,
+      "rss_snapshot_kib": 129520,
+      "hwm_snapshot_kib": 129520
+    },
+    {
+      "trial": 50,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 256947,
+      "keyboard_focus_us": 265429,
+      "query_ready_us": 15580,
+      "ready_to_frame_us": 22007,
+      "query_frame_us": 37587,
+      "rss_snapshot_kib": 18156,
+      "hwm_snapshot_kib": 18156
+    },
+    {
+      "trial": 51,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 310302,
+      "keyboard_focus_us": 352028,
+      "query_ready_us": 7383,
+      "ready_to_frame_us": 23967,
+      "query_frame_us": 31350,
+      "rss_snapshot_kib": 129640,
+      "hwm_snapshot_kib": 129640
+    },
+    {
+      "trial": 52,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 301815,
+      "keyboard_focus_us": 310034,
+      "query_ready_us": 10535,
+      "ready_to_frame_us": 24120,
+      "query_frame_us": 34655,
+      "rss_snapshot_kib": 18172,
+      "hwm_snapshot_kib": 18172
+    },
+    {
+      "trial": 53,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 335219,
+      "keyboard_focus_us": 386946,
+      "query_ready_us": 6305,
+      "ready_to_frame_us": 28472,
+      "query_frame_us": 34777,
+      "rss_snapshot_kib": 129136,
+      "hwm_snapshot_kib": 129136
+    },
+    {
+      "trial": 54,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 319581,
+      "keyboard_focus_us": 360091,
+      "query_ready_us": 15874,
+      "ready_to_frame_us": 729,
+      "query_frame_us": 16603,
+      "rss_snapshot_kib": 129980,
+      "hwm_snapshot_kib": 129980
+    },
+    {
+      "trial": 55,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 313019,
+      "keyboard_focus_us": 351796,
+      "query_ready_us": 6785,
+      "ready_to_frame_us": 43322,
+      "query_frame_us": 50107,
+      "rss_snapshot_kib": 129720,
+      "hwm_snapshot_kib": 129720
+    },
+    {
+      "trial": 56,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 341785,
+      "keyboard_focus_us": 380969,
+      "query_ready_us": 12022,
+      "ready_to_frame_us": 2836,
+      "query_frame_us": 14858,
+      "rss_snapshot_kib": 129584,
+      "hwm_snapshot_kib": 129584
+    },
+    {
+      "trial": 57,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 284283,
+      "keyboard_focus_us": 292969,
+      "query_ready_us": 5555,
+      "ready_to_frame_us": 37370,
+      "query_frame_us": 42925,
+      "rss_snapshot_kib": 18100,
+      "hwm_snapshot_kib": 18100
+    },
+    {
+      "trial": 58,
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 314492,
+      "keyboard_focus_us": 354689,
+      "query_ready_us": 12976,
+      "ready_to_frame_us": 2611,
+      "query_frame_us": 15587,
+      "rss_snapshot_kib": 129696,
+      "hwm_snapshot_kib": 129696
+    },
+    {
+      "trial": 59,
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "generation": 6,
+      "first_frame_us": 271939,
+      "keyboard_focus_us": 281722,
+      "query_ready_us": 9884,
+      "ready_to_frame_us": 23661,
+      "query_frame_us": 33545,
+      "rss_snapshot_kib": 18160,
+      "hwm_snapshot_kib": 18160
+    },
+    {
+      "trial": 60,
+      "mode": "auto",
+      "renderer": "wgpu",
+      "generation": 6,
+      "first_frame_us": 309977,
+      "keyboard_focus_us": 349258,
+      "query_ready_us": 5873,
+      "ready_to_frame_us": 44484,
+      "query_frame_us": 50357,
+      "rss_snapshot_kib": 129712,
+      "hwm_snapshot_kib": 129712
+    }
+  ],
+  "summaries": {
+    "auto/wgpu": {
+      "first_trial": {
+        "trial": 1,
+        "mode": "auto",
+        "renderer": "wgpu",
+        "generation": 6,
+        "first_frame_us": 328684,
+        "keyboard_focus_us": 551050,
+        "query_ready_us": 11474,
+        "ready_to_frame_us": 24368,
+        "query_frame_us": 35842,
+        "rss_snapshot_kib": 139432,
+        "hwm_snapshot_kib": 139432
+      },
+      "repeats": {
+        "first_frame_us": {
+          "n": 19,
+          "p50": 312281,
+          "p95": 362000,
+          "max": 362000
+        },
+        "keyboard_focus_us": {
+          "n": 19,
+          "p50": 352664,
+          "p95": 403667,
+          "max": 403667
+        },
+        "query_ready_us": {
+          "n": 19,
+          "p50": 7383,
+          "p95": 14263,
+          "max": 14263
+        },
+        "ready_to_frame_us": {
+          "n": 19,
+          "p50": 31460,
+          "p95": 54918,
+          "max": 54918
+        },
+        "query_frame_us": {
+          "n": 19,
+          "p50": 43373,
+          "p95": 60684,
+          "max": 60684
+        },
+        "rss_snapshot_kib": {
+          "n": 19,
+          "p50": 129648,
+          "p95": 130176,
+          "max": 130176
+        },
+        "hwm_snapshot_kib": {
+          "n": 19,
+          "p50": 129648,
+          "p95": 130176,
+          "max": 130176
+        }
+      }
+    },
+    "opaque/wgpu": {
+      "first_trial": {
+        "trial": 2,
+        "mode": "opaque",
+        "renderer": "wgpu",
+        "generation": 6,
+        "first_frame_us": 348206,
+        "keyboard_focus_us": 387021,
+        "query_ready_us": 17057,
+        "ready_to_frame_us": 11367,
+        "query_frame_us": 28424,
+        "rss_snapshot_kib": 129472,
+        "hwm_snapshot_kib": 129472
+      },
+      "repeats": {
+        "first_frame_us": {
+          "n": 19,
+          "p50": 344186,
+          "p95": 385458,
+          "max": 385458
+        },
+        "keyboard_focus_us": {
+          "n": 19,
+          "p50": 386383,
+          "p95": 424265,
+          "max": 424265
+        },
+        "query_ready_us": {
+          "n": 19,
+          "p50": 12817,
+          "p95": 18125,
+          "max": 18125
+        },
+        "ready_to_frame_us": {
+          "n": 19,
+          "p50": 3710,
+          "p95": 16131,
+          "max": 16131
+        },
+        "query_frame_us": {
+          "n": 19,
+          "p50": 16603,
+          "p95": 30545,
+          "max": 30545
+        },
+        "rss_snapshot_kib": {
+          "n": 19,
+          "p50": 129584,
+          "p95": 130024,
+          "max": 130024
+        },
+        "hwm_snapshot_kib": {
+          "n": 19,
+          "p50": 129584,
+          "p95": 130024,
+          "max": 130024
+        }
+      }
+    },
+    "software/tiny_skia": {
+      "first_trial": {
+        "trial": 3,
+        "mode": "software",
+        "renderer": "tiny_skia",
+        "generation": 6,
+        "first_frame_us": 292846,
+        "keyboard_focus_us": 336023,
+        "query_ready_us": 24512,
+        "ready_to_frame_us": 23016,
+        "query_frame_us": 47528,
+        "rss_snapshot_kib": 18248,
+        "hwm_snapshot_kib": 18248
+      },
+      "repeats": {
+        "first_frame_us": {
+          "n": 19,
+          "p50": 280190,
+          "p95": 333596,
+          "max": 333596
+        },
+        "keyboard_focus_us": {
+          "n": 19,
+          "p50": 288694,
+          "p95": 341903,
+          "max": 341903
+        },
+        "query_ready_us": {
+          "n": 19,
+          "p50": 10535,
+          "p95": 26755,
+          "max": 26755
+        },
+        "ready_to_frame_us": {
+          "n": 19,
+          "p50": 22007,
+          "p95": 41102,
+          "max": 41102
+        },
+        "query_frame_us": {
+          "n": 19,
+          "p50": 34655,
+          "p95": 48109,
+          "max": 48109
+        },
+        "rss_snapshot_kib": {
+          "n": 19,
+          "p50": 18172,
+          "p95": 18368,
+          "max": 18368
+        },
+        "hwm_snapshot_kib": {
+          "n": 19,
+          "p50": 18172,
+          "p95": 18368,
+          "max": 18368
+        }
+      }
+    }
+  },
+  "functional_mode": "auto",
+  "limits": "Diagnostic redraw callback and compositor focus notification, not completed drawing or presentation. Warm daemon; synthetic corpus; keyboard layout verified by input. Requested modes share one compositor; no cold-cache claim. first_frame_us and keyboard_focus_us start at main entry; query_ready_us and query_frame_us start at the final edit; ready_to_frame_us starts when results are applied. RSS/HWM are /proc snapshots after results, before more input, including shared pages and excluding GPU memory. Renderer events identify WGPU or tiny-skia, not the graphics adapter. Material pixels use separate processes."
+}

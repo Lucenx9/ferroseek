@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Real keyboard/focus checks and diagnostic latency samples in virtual KWin."""
 import ast
+from dataclasses import asdict, dataclass
+import hashlib
 import json
 import math
 import os
@@ -14,6 +16,51 @@ import struct
 import subprocess
 import sys
 import time
+
+
+@dataclass(frozen=True)
+class LaunchMode:
+    arguments: tuple[str, ...] = ()
+    backend: str | None = None
+
+
+MODES = {"auto": LaunchMode(), "opaque": LaunchMode(("--opaque",)),
+         "software": LaunchMode(backend="tiny-skia")}
+
+
+@dataclass(frozen=True)
+class LauncherSample:
+    trial: int
+    mode: str
+    renderer: str
+    generation: int
+    first_frame_us: int
+    keyboard_focus_us: int
+    query_ready_us: int
+    ready_to_frame_us: int
+    query_frame_us: int
+    rss_snapshot_kib: int
+    hwm_snapshot_kib: int
+
+
+def launcher_environment(mode, **overrides):
+    environment = {**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1", **overrides}
+    environment.pop("ICED_BACKEND", None)
+    if MODES[mode].backend is not None:
+        environment["ICED_BACKEND"] = MODES[mode].backend
+    return environment
+
+
+def observed_renderer(path):
+    backends = {record["event"].removeprefix("renderer_") for record in records(path)
+                if record.get("event") in {"renderer_wgpu", "renderer_tiny_skia"}}
+    assert len(backends) <= 1, "a launcher changed renderer during its sample"
+    return next(iter(backends), None)
+
+
+def memory_snapshot(pid):
+    fields = dict(line.split(":", 1) for line in Path(f"/proc/{pid}/status").read_text().splitlines())
+    return {key: int(fields[key].split()[0]) for key in ("VmRSS", "VmHWM")}
 
 
 def probe(path):
@@ -71,12 +118,14 @@ def records(path):
     return output
 
 
-def wait_for(predicate, description, timeout=15):
+def wait_for(predicate, description, timeout=15, process=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = predicate()
         if value:
             return value
+        if process is not None and process.poll() is not None:
+            raise AssertionError(f"{description}: launcher exited with status {process.returncode}")
         time.sleep(0.01)
     raise AssertionError("Timed out: " + description)
 
@@ -88,6 +137,12 @@ def main():
     binary, out, helper = map(Path, sys.argv[1:4])
     trials = int(os.environ.get("FERROSEEK_SMOKE_TRIALS", "20"))
     assert 2 <= trials <= 100
+    requested_mode = os.environ.get("FERROSEEK_SMOKE_MODE", "auto")
+    mode_names = list(MODES) if requested_mode == "all" else [requested_mode]
+    assert all(mode in MODES for mode in mode_names), "unknown launcher mode"
+    functional_mode = mode_names[0]
+    schedule = [mode for repetition in range(trials)
+                for mode in mode_names[repetition % len(mode_names):] + mode_names[:repetition % len(mode_names)]]
     probe_log = out / "focus-probe.jsonl"
     processes = []
     samples = []
@@ -100,6 +155,9 @@ def main():
         "gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/KWin",
         "--method", "org.kde.KWin.supportInformation"], text=True, timeout=5))[0]
     (out / "kwin-support.txt").write_text(support)
+    if not re.search(r"(?m)^Compositing Type: OpenGL\s*$", support):
+        print("INCONCLUSIVE: material checks require OpenGL compositing; see kwin-support.txt", file=sys.stderr)
+        raise SystemExit(77)
     screen_count = re.findall(r"(?m)^Number of Screens: (\d+)\s*$", support)
     geometries = re.findall(r"(?m)^Geometry: (-?\d+),(-?\d+),(\d+)x(\d+)\s*$", support)
     scales = re.findall(r"(?m)^Scale: ([0-9.]+)\s*$", support)
@@ -174,15 +232,15 @@ def main():
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
 
-        for trial in range(trials):
+        for trial, mode in enumerate(schedule):
             log = out / f"interaction-{trial + 1}.jsonl"
             with log.open("w") as stream:
-                process = subprocess.Popen([str(binary), "--private"], stdout=stream, stderr=stream,
-                                           env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
+                process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments],
+                                           stdout=stream, stderr=stream, env=launcher_environment(mode))
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "first_frame" for r in records(log))
                          and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
-                         "first redraw and compositor keyboard focus")
+                         "first redraw and compositor keyboard focus", process=process)
                 text_report()  # No click or arbitrary delay; both readiness signals are observed.
 
                 def frame(generation):
@@ -195,10 +253,19 @@ def main():
                 ready = next(r for r in records(log)
                              if r.get("event") == "query_ready" and r["generation"] == result["generation"])
                 assert 0 <= ready["query_us"] <= result["query_us"], "results must precede their redraw event"
-                samples.append({"trial": trial + 1, "generation": result["generation"],
-                                "first_frame_us": first["elapsed_us"], "query_ready_us": ready["query_us"],
-                                "ready_to_frame_us": result["query_us"] - ready["query_us"],
-                                "query_frame_us": result["query_us"]})
+                renderer = wait_for(lambda: observed_renderer(log), "renderer observed in a draw", process=process)
+                if mode == "software":
+                    assert renderer == "tiny_skia", "forced software must actually draw with tiny-skia"
+                focus = next(r for r in records(log) if r.get("event") == "keyboard_focus_enter")
+                memory = memory_snapshot(process.pid)
+                samples.append(LauncherSample(
+                    trial=trial + 1, mode=mode, renderer=renderer, generation=result["generation"],
+                    first_frame_us=first["elapsed_us"], keyboard_focus_us=focus["elapsed_us"],
+                    query_ready_us=ready["query_us"], ready_to_frame_us=result["query_us"] - ready["query_us"],
+                    query_frame_us=result["query_us"], rss_snapshot_kib=memory["VmRSS"],
+                    hwm_snapshot_kib=memory["VmHWM"]))
+                with (out / "samples.jsonl").open("a") as snapshots:
+                    snapshots.write(json.dumps(asdict(samples[-1])) + "\n")
                 # Test focus after the asynchronous reply before any command can refocus a field.
                 tap(14)
                 edited = wait_for(lambda: frame(7), "main input kept focus after asynchronous results")
@@ -257,6 +324,44 @@ def main():
                 tap(14)
                 wait_for(lambda: {"text": ""} in records(probe_log), "probe reset")
 
+        def summary(values):
+            values = sorted(values)
+            return {"n": len(values), "p50": values[math.ceil(len(values) * .5) - 1],
+                    "p95": values[math.ceil(len(values) * .95) - 1], "max": values[-1]} if values else None
+
+        grouped = {}
+        for sample in samples:
+            grouped.setdefault(f"{sample.mode}/{sample.renderer}", []).append(asdict(sample))
+        metrics = ("first_frame_us", "keyboard_focus_us", "query_ready_us", "ready_to_frame_us",
+                   "query_frame_us", "rss_snapshot_kib", "hwm_snapshot_kib")
+        summaries = {key: {"first_trial": group[0],
+                           "repeats": {field: summary([s[field] for s in group[1:]]) for field in metrics}}
+                     for key, group in grouped.items()}
+        with binary.open("rb") as executable:
+            launcher_sha256 = hashlib.file_digest(executable, "sha256").hexdigest()
+        report = {"schema": 3, "validation": "incomplete", "environment": {"platform": platform.platform(),
+                  "cpu": subprocess.check_output(["lscpu"], text=True),
+                  "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
+                  "launcher_sha256": launcher_sha256,
+                  "graphics_environment": {key: os.environ.get(key) for key in
+                      ("WGPU_BACKEND", "WGPU_POWER_PREF", "ICED_PRESENT_MODE", "LIBGL_ALWAYS_SOFTWARE")},
+                  "profile": profile, "keyboard_layout": layout,
+                  "keyboard_preflight": keyboard_preflight,
+                  "output": {"logical_geometry": geometry, "scale": observed_scale}},
+                  "corpus_files": 10007, "requested_mode": requested_mode, "trials_per_mode": trials,
+                  "modes": {mode: asdict(MODES[mode]) for mode in mode_names},
+                  "samples": [asdict(sample) for sample in samples], "summaries": summaries,
+                  "functional_mode": functional_mode,
+                  "limits": (
+                      "Diagnostic redraw callback and compositor focus notification, not completed drawing or presentation. "
+                      "Warm daemon; synthetic corpus; keyboard layout verified by input. "
+                      "Requested modes share one compositor; no cold-cache claim. "
+                      "first_frame_us and keyboard_focus_us start at main entry; query_ready_us and query_frame_us "
+                      "start at the final edit; ready_to_frame_us starts when results are applied. "
+                      "RSS/HWM are /proc snapshots after results, before more input, including shared pages and excluding GPU memory. "
+                      "Renderer events identify WGPU or tiny-skia, not the graphics adapter. Material pixels use separate processes.")}
+        (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
+
         # Launch a real single-instance target, then reactivate it from another app.
         target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
         entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"
@@ -278,15 +383,15 @@ def main():
             log = out / f"activate-{mode}.jsonl"
             with log.open("w") as stream:
                 process = subprocess.Popen(
-                    [str(binary), "--private", "--query", "activation"], stdout=stream, stderr=stream,
-                    env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
-                         "FERROSEEK_ACTIVATION_LOG": str(activation_log), "GSK_RENDERER": "cairo",
-                         "GDK_BACKEND": "wayland", "GTK_A11Y": "none"},
+                    [str(binary), "--private", "--query", "activation", *MODES[functional_mode].arguments],
+                    stdout=stream, stderr=stream,
+                    env=launcher_environment(functional_mode, FERROSEEK_ACTIVATION_LOG=str(activation_log),
+                                             GSK_RENDERER="cairo", GDK_BACKEND="wayland", GTK_A11Y="none"),
                 )
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log))
                          and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
-                         "target selected and compositor keyboard focus received")
+                         "target selected and compositor keyboard focus received", process=process)
                 query_edits = len([r for r in records(log) if r.get("event") == "query_start"])
                 if mode == "action-numbered":
                     chord(29, 37)
@@ -374,14 +479,15 @@ def main():
             before_starts = len([r for r in records(activation_log) if r.get("event") == "started"])
             log = out / f"activate-{mode}.jsonl"
             with log.open("w") as stream:
-                process = subprocess.Popen([str(binary), "--private", "--query", "focus-document"],
+                process = subprocess.Popen([str(binary), "--private", "--query", "focus-document",
+                                            *MODES[functional_mode].arguments],
                                            stdout=stream, stderr=stream,
-                                           env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1"})
+                                           env=launcher_environment(functional_mode))
                 processes.append(process)
                 wait_for(lambda: any(r.get("event") == "query_frame" and r.get("files") == 1
                                      for r in records(log))
                          and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
-                         "indexed document selected and compositor keyboard focus received")
+                         "indexed document selected and compositor keyboard focus received", process=process)
                 if mode == "file-with":
                     chord(29, 37)  # Ctrl+K; filter contextual actions to Open with.
                     wait_for(lambda: any(r.get("event") == "actions_focused"
@@ -434,25 +540,6 @@ def main():
                          "document target owns keyboard focus")
                 capture(f"activation-{mode}.png")
 
-        def summary(values):
-            values = sorted(values)
-            return {"n": len(values), "p50_us": values[math.ceil(len(values) * .5) - 1],
-                    "p95_us": values[math.ceil(len(values) * .95) - 1], "max_us": values[-1]}
-
-        # First process reported separately; no cache-dropping, so neither set is a cold-cache result.
-        report = {"schema": 2, "environment": {"platform": platform.platform(),
-                  "cpu": subprocess.check_output(["lscpu"], text=True),
-                  "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
-                  "profile": profile, "keyboard_layout": layout,
-                  "keyboard_preflight": keyboard_preflight,
-                  "output": {"logical_geometry": geometry, "scale": observed_scale}},
-                  "corpus_files": 10007, "first_trial": samples[0], "samples": samples,
-                  "repeat_first_frame": summary([s["first_frame_us"] for s in samples[1:]]),
-                  "repeat_query_ready": summary([s["query_ready_us"] for s in samples[1:]]),
-                  "repeat_ready_to_frame": summary([s["ready_to_frame_us"] for s in samples[1:]]),
-                  "repeat_query_frame": summary([s["query_frame_us"] for s in samples[1:]]),
-                  "limits": "Diagnostic redraw callback, not compositor presentation. Software-rendered virtual KWin; warm daemon; synthetic corpus; configured keyboard layout verified by ordinary input. Input dispatch and physical display latency are excluded."}
-        (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
         # Fine stripes distinguish compositor blur from simple transparency.
         # The launcher samples are inside a blank results area, away from text.
         from PyQt5.QtGui import QImage
@@ -476,17 +563,18 @@ def main():
             log = out / f"material-{mode}.jsonl"
             with log.open("w") as stream:
                 launcher = subprocess.Popen([str(binary), "--query", "material-fixture-no-match",
-                                             *(["--opaque"] if mode == "opaque" else [])],
-                                            stdout=stream, stderr=stream,
-                                            env={**os.environ, "FERROSEEK_LAUNCHER_TIMINGS": "1",
-                                                 **({"ICED_BACKEND": "tiny-skia"} if mode == "software" else {})})
+                                             *MODES[mode].arguments], stdout=stream, stderr=stream,
+                                            env=launcher_environment(mode))
             processes.append(launcher)
-            wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)), "material results frame")
+            wait_for(lambda: any(r.get("event") == "query_frame" for r in records(log)),
+                     "material results frame", process=launcher)
             if mode == "auto":
                 wait_for(lambda: any(r.get("event") == "material_blur_requested" for r in records(log)), "compositor blur available")
             capture(f"material-{mode}.png")
             values = pixels(f"material-{mode}.png", 400, 580, 160, 20)
-            material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values)}
+            renderer = wait_for(lambda: observed_renderer(log), "material renderer observed", process=launcher)
+            assert renderer == ("tiny_skia" if mode == "software" else "wgpu"), "material control renderer differs"
+            material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values), "renderer": renderer}
             if mode in ["opaque", "software"]:
                 assert set(values) == {0x17}, "opaque mode must not expose the backdrop"
                 if mode == "opaque":
@@ -508,14 +596,22 @@ def main():
                 type_text("preview")
                 wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 7,
                          "preview filter received input")
+                resizes = len([r for r in records(log) if r.get("event") == "surface_resized"])
                 tap(28)
                 wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
+                wait_for(lambda: any(r["width"] == 980 for r in
+                                     [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
+                         "expanded preview surface observed", process=launcher)
                 capture("material-preview.png")
                 expanded = pixels("material-preview.png", 1040, 580, 60, 20)
                 assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
                     "blur must extend into the expanded preview surface"
+                resizes = len([r for r in records(log) if r.get("event") == "surface_resized"])
                 tap(1)
                 wait_for(lambda: any(r.get("event") == "preview_closed" for r in records(log)), "preview closed")
+                wait_for(lambda: any(r["width"] == 720 for r in
+                                     [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
+                         "restored result surface observed", process=launcher)
                 capture("material-preview-closed.png")
                 assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
                     pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"
@@ -525,9 +621,12 @@ def main():
         (out / "material.json").write_text(json.dumps({"profile": profile, "scale": observed_scale,
             "backdrop_stddev": stripe_variance, "samples": material_samples,
             "limits": "Software-rendered isolated KWin; protocol fallback and capability withdrawal use an independent wire peer."}, indent=2) + "\n")
-        print(json.dumps({k: report[k] for k in ("first_trial", "repeat_first_frame", "repeat_query_ready",
-                                                  "repeat_ready_to_frame", "repeat_query_frame")}))
-        print(f"OK: {trials} opens, typing, action-filter focus, Escape/toggle/click outside, background focus restoration")
+        expected_groups = {f"{mode}/{'tiny_skia' if mode == 'software' else 'wgpu'}" for mode in mode_names}
+        assert set(summaries) == expected_groups, "controlled graphics run must retain each requested renderer group"
+        report["validation"] = "passed"
+        (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps(summaries))
+        print(f"OK: {len(samples)} opens, typing, action-filter focus, Escape/toggle/click outside, background focus restoration")
     finally:
         if sys.exc_info()[0] is not None:
             try:
