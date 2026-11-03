@@ -396,7 +396,7 @@ fn subscription(_: &Launcher) -> Subscription<Message> {
 
 fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
-        Event::Window(iced::window::Event::Resized(size)) => {
+        Event::Window(iced::window::Event::Resized(size) | iced::window::Event::Opened { size, .. }) => {
             Some(Message::SurfaceResized((size.width.round() as u32, size.height.round() as u32)))
         }
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {

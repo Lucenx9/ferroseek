@@ -469,7 +469,7 @@ def main():
                     for x in range(round(left * observed_scale), round((left + width) * observed_scale))]
 
         from statistics import mean, pstdev
-        stripe_variance = pstdev(pixels("material-backdrop.png", 400, 280, 160, 20))
+        stripe_variance = pstdev(pixels("material-backdrop.png", 400, 580, 160, 20))
         assert stripe_variance > 60, "backdrop must contain visible high-frequency detail"
         material_samples = {}
         for mode in ["auto", "opaque", "software"]:
@@ -485,7 +485,7 @@ def main():
             if mode == "auto":
                 wait_for(lambda: any(r.get("event") == "material_blur_requested" for r in records(log)), "compositor blur available")
             capture(f"material-{mode}.png")
-            values = pixels(f"material-{mode}.png", 400, 280, 160, 20)
+            values = pixels(f"material-{mode}.png", 400, 580, 160, 20)
             material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values)}
             if mode in ["opaque", "software"]:
                 assert set(values) == {0x17}, "opaque mode must not expose the backdrop"
@@ -508,9 +508,10 @@ def main():
                 type_text("preview")
                 wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 7,
                          "preview filter received input")
+                resizes = len([r for r in records(log) if r.get("event") == "material_resized"])
                 tap(28)
                 wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview loaded")
-                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) >= 2,
+                wait_for(lambda: len([r for r in records(log) if r.get("event") == "material_resized"]) > resizes,
                          "preview surface configured")
                 capture("material-preview.png")
                 expanded = pixels("material-preview.png", 1040, 580, 60, 20)
