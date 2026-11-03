@@ -1077,6 +1077,7 @@ dependencies = [
  "iced",
  "iced_layershell",
  "iced_runtime",
+ "libc",
  "log",
  "tempfile",
  "wayland-client",
