@@ -164,6 +164,7 @@ impl Panel {
             }
             Command::ActivateVisible(slot) if slot < NUMBERED_SLOTS => {
                 if let Some(i) = self.cursor.window(len).nth(slot) {
+                    self.cursor.select(i, len);
                     return Effect::Open(self.apps()[filtered[i]].id.clone());
                 }
             }
