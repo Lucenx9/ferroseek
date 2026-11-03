@@ -133,7 +133,8 @@ impl Usage {
     /// update is a locked read-modify-write of the file, so several
     /// launchers (or a concurrent `--forget-history`) never overwrite each
     /// other's changes. Keys are single-line (desktop IDs and
-    /// percent-encoded file URLs); others are ignored.
+    /// percent-encoded file URLs); others are ignored. A busy history is
+    /// left unchanged so recording after a successful launch cannot block the UI.
     pub fn record(&mut self, kind: Kind, key: &str, query: &str, now: u64) {
         if key.is_empty() || key.contains(['\n', '\r', '\t']) {
             return;
@@ -143,7 +144,7 @@ impl Usage {
             add_use(&mut self.entries, kind, key, query.as_deref(), now);
             return;
         };
-        let r = with_lock(&path, true, || {
+        let r = with_lock(&path, false, || {
             // The file is authoritative: another instance may have added
             // uses, or the history may have been forgotten, since load.
             let mut entries = try_read_entries(&path)?;
@@ -416,6 +417,39 @@ mod tests {
         Usage::forget(&p).unwrap();
         Usage::forget(&p).unwrap();
         assert!(Usage::load(Some(p)).entries.is_empty());
+    }
+
+    #[test]
+    fn recording_returns_without_waiting_for_a_busy_history_lock() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-usage");
+        let mut usage = Usage::load(Some(path.clone()));
+        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        let before = usage.entries.clone();
+        let disk = std::fs::read(&path).unwrap();
+        let lock = private_options().read(true).write(true).open(path.with_extension("lock")).unwrap();
+        lock.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            usage.record(Kind::App, "new.desktop", "new", 100);
+            tx.send(usage).unwrap();
+        });
+        let received = rx.recv_timeout(Duration::from_secs(2));
+        // Release before asserting so a blocking regression cannot hang the test.
+        lock.unlock().unwrap();
+        worker.join().unwrap();
+        let mut usage = received.expect("recording must return while the history lock is held");
+        assert_eq!(usage.entries, before);
+        assert_eq!(std::fs::read(&path).unwrap(), disk);
+
+        usage.record(Kind::App, "new.desktop", "new", 100);
+        let reloaded = Usage::load(Some(path));
+        assert!(reloaded.boost(Kind::App, "new.desktop", "new", 100) > 0);
+        assert!(reloaded.boost(Kind::App, "saved.desktop", "sav", 100) > 0);
     }
 
     #[test]
