@@ -26,7 +26,10 @@ Bind the command to a key yourself, e.g. in KDE System Settings → Keyboard →
 Shortcuts → *Add New* → *Command or Script*. The launcher never registers
 global shortcuts or changes desktop settings. Running it while it is open
 closes the open instance (single instance via the session-bus name
-`io.github.ferroseek.Launcher`).
+`io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
+focus, for example after a click outside it, except while an open is in progress,
+while the folder settings screen is shown, or after a copy in this session: the
+launcher serves the copied value, so it stays until Esc or the toggle closes it.
 
 | Option | Effect |
 |---|---|
@@ -496,6 +499,8 @@ ferroseek-launcher
 - Focus depends on the receiving application and compositor; activation context
   may be unavailable or declined. Application entries still need a usable `Exec`;
   D-Bus-only entries and explicit application-window switching are unsupported.
+- Closing on outside clicks needs the compositor to move keyboard focus away from
+  an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
 - The window is 720 px wide normally and 980 px while the preview sidebar is visible, near the
   top of the active output. Its size/position are not configurable; there is no
   light theme yet.
@@ -544,7 +549,7 @@ probe text are retained in `keyboard-preflight.json` and the schema 2 report.
 Twenty measured opens wait for the first redraw and actual Wayland keyboard Enter
 before typing, without clicking or an arbitrary delay. They verify editing after
 asynchronous results, action-filter focus and return to the main input,
-Escape/toggle and input returning to a background test application. PNGs, diagnostic logs and
+Escape/toggle, a click on another window, and input returning to a background test application. PNGs, diagnostic logs and
 `latency.json` remain in the output directory. It also opens a synthetic
 single-instance application, moves input to another test app, and reactivates
 the existing target through both Enter and a result-row double click. A persistent

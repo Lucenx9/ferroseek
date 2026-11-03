@@ -190,6 +190,9 @@ pub struct Launcher {
     launch_task: Option<iced::task::Handle>,
     /// A dispatched action lost its confirmation; never duplicate it in this session.
     unconfirmed_open: bool,
+    /// Set by any copy and never cleared: only another client's copy ends
+    /// ownership, and the launcher cannot observe it.
+    clipboard_owner: bool,
     icons: Icons,
     query: String,
     scope: Scope,
@@ -260,6 +263,7 @@ pub enum Message {
     ContextMenu(Target),
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
+    FocusLost,
     Ui(UiEvent),
 }
 
@@ -325,6 +329,7 @@ fn boot() -> (Launcher, Task<Message>) {
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
+        clipboard_owner: false,
         icons: Icons::new(ICON_SIZE as u16),
         query: String::new(),
         scope: Scope::All,
@@ -380,6 +385,7 @@ fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> O
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
             Some(Message::TimingFrame(at))
         }
+        Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
         // Read regardless of capture: the search field keeps focus and
         // swallows Escape, but navigation keys must still reach the list.
         Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => key_message(&key, modifiers),
@@ -693,7 +699,13 @@ impl Launcher {
     fn copy(&mut self, s: String, what: &str) -> Task<Message> {
         self.status = Status::Notice(format!("Copied {what}"));
         self.panel = None;
-        Task::batch([iced::clipboard::write(s), widget::operation::focus(search_id())])
+        Task::batch([self.write_clipboard(s), widget::operation::focus(search_id())])
+    }
+
+    /// The launcher then serves the clipboard, so focus loss no longer closes it.
+    fn write_clipboard(&mut self, s: String) -> Task<Message> {
+        self.clipboard_owner = true;
+        iced::clipboard::write(s)
     }
 
     fn primary(&self) -> Option<Action> {
@@ -899,7 +911,7 @@ impl Launcher {
                 self.request_preview(),
                 widget::operation::snap_to(preview::scroll_id(), RelativeOffset::START),
             ]),
-            preview::Effect::Copy(location) => iced::clipboard::write(location),
+            preview::Effect::Copy(location) => self.write_clipboard(location),
             preview::Effect::Scroll(y) => {
                 widget::operation::scroll_by(preview::scroll_id(), AbsoluteOffset { x: 0.0, y })
             }
@@ -933,7 +945,7 @@ impl Launcher {
                 self.start_preview(panel.file.clone())
             }
             details::Effect::Refresh => self.request_file_details(),
-            details::Effect::Copy(location) => iced::clipboard::write(location),
+            details::Effect::Copy(location) => self.write_clipboard(location),
             details::Effect::Scroll(y) => {
                 widget::operation::scroll_by(details::scroll_id(), AbsoluteOffset { x: 0.0, y })
             }
@@ -1473,6 +1485,13 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             s.resize()
         }
         Message::Ui(UiEvent::Toggle) => {
+            s.launch_task = None;
+            iced::exit()
+        }
+        // An open in flight finishes and exits on its own (or shows its error);
+        // folder settings may hold unsaved edits or be saving; a copy is pasted
+        // from the launcher after the click into the destination window.
+        Message::FocusLost if s.opening.is_none() && s.folder_settings.is_none() && !s.clipboard_owner => {
             s.launch_task = None;
             iced::exit()
         }
@@ -2266,6 +2285,7 @@ mod tests {
             opening: None,
             launch_task: None,
             unconfirmed_open: false,
+            clipboard_owner: false,
             icons: Icons::disabled(),
             query: String::new(),
             scope: Scope::All,
@@ -4038,6 +4058,37 @@ mod tests {
         let _ = update(&mut s, Message::ShowFolders);
         let _ = update(&mut s, Message::Folder { generation: old, event: folders::Event::Back });
         assert!(s.folder_settings.is_some(), "a late event cannot close a reopened settings view");
+    }
+
+    #[test]
+    fn focus_loss_closes_unless_an_open_folder_settings_or_a_copy_must_finish() {
+        fn exits(task: Task<Message>) -> bool {
+            let actions = iced::futures::executor::block_on(async {
+                match iced_runtime::task::into_stream(task) {
+                    Some(stream) => stream.collect::<Vec<_>>().await,
+                    None => Vec::new(),
+                }
+            });
+            actions.iter().any(|action| matches!(action, iced_runtime::Action::Exit))
+        }
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        assert!(exits(update(&mut s, Message::FocusLost)));
+
+        let mut s = search_state();
+        s.opening = Some(("report.desktop".into(), "report".into()));
+        assert!(!exits(update(&mut s, Message::FocusLost)), "a pending open reports its own result");
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::ShowFolders);
+        assert!(!exits(update(&mut s, Message::FocusLost)), "unsaved folder edits stay open");
+        assert!(s.folder_settings.is_some());
+
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let _ = s.perform(Action::CopyName);
+        let _ = update(&mut s, Message::Query("other".into()));
+        assert!(!exits(update(&mut s, Message::FocusLost)), "the launcher still serves the copied name");
     }
 
     #[test]
