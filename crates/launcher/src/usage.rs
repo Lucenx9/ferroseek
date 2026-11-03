@@ -77,8 +77,10 @@ pub struct Usage {
 
 /// Lower-case, single-spaced, at most `MAX_QUERY_CHARS`; `None` if empty.
 pub fn normalize_query(q: &str) -> Option<String> {
-    let n: String =
-        q.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase().chars().take(MAX_QUERY_CHARS).collect();
+    let n: String = crate::matcher::fold(&q.split_whitespace().collect::<Vec<_>>().join(" "))
+        .chars()
+        .take(MAX_QUERY_CHARS)
+        .collect();
     (!n.is_empty()).then_some(n)
 }
 
@@ -89,10 +91,10 @@ fn related(stored: &str, current: &str) -> bool {
 impl Usage {
     /// Default location under `$XDG_STATE_HOME`.
     pub fn default_path() -> Option<PathBuf> {
-        let state = std::env::var_os("XDG_STATE_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+        let state =
+            std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| {
+                std::env::var_os("HOME").map(PathBuf::from).filter(|p| p.is_absolute()).map(|p| p.join(".local/state"))
+            })?;
         Some(state.join("ferroseek/launcher-usage"))
     }
 
@@ -212,8 +214,12 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
         }
     }
     if entries.len() > MAX_ITEMS {
+        // The item just opened is the one the user asked to remember. A full
+        // history of heavier entries would otherwise delete it before return.
+        let keep = (kind, key.to_string());
         let weight = |r: &Record| r.general.map_or(0.0, |e| e.decayed(now));
-        let mut by_weight: Vec<_> = entries.iter().map(|(k, r)| (weight(r), k.clone())).collect();
+        let mut by_weight: Vec<_> =
+            entries.iter().filter(|(k, _)| **k != keep).map(|(k, r)| (weight(r), k.clone())).collect();
         by_weight.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, k) in by_weight.into_iter().take(entries.len() - MAX_ITEMS) {
             entries.remove(&k);
@@ -324,6 +330,55 @@ mod tests {
     use super::*;
 
     const DAY: u64 = 24 * 3600;
+
+    #[test]
+    fn state_paths_ignore_relative_xdg_and_home_values() {
+        const CHILD: &str = "FERROSEEK_TEST_STATE_PATH";
+        if let Some(expected) = std::env::var_os(CHILD) {
+            let expected = (!expected.is_empty()).then(|| PathBuf::from(expected));
+            assert_eq!(Usage::default_path(), expected);
+            assert_eq!(
+                crate::favorites::Favorites::default_path(),
+                expected.map(|p| p.with_file_name("launcher-favorites"))
+            );
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let state = temp.path().join("state");
+        let fallback = home.join(".local/state/ferroseek/launcher-usage");
+        let explicit = state.join("ferroseek/launcher-usage");
+        for (xdg, home, expected) in [
+            (Some(state.as_path()), Some(home.as_path()), Some(explicit.as_path())),
+            (Some(Path::new("relative")), Some(home.as_path()), Some(fallback.as_path())),
+            (Some(Path::new("")), Some(home.as_path()), Some(fallback.as_path())),
+            (None, Some(home.as_path()), Some(fallback.as_path())),
+            (Some(state.as_path()), None, Some(explicit.as_path())),
+            (Some(Path::new("relative")), None, None),
+            (None, Some(Path::new("relative")), None),
+            (None, Some(Path::new("")), None),
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args(["--exact", "usage::tests::state_paths_ignore_relative_xdg_and_home_values", "--nocapture"])
+                .env_remove("XDG_STATE_HOME")
+                .env_remove("HOME")
+                .env(CHILD, expected.unwrap_or(Path::new("")));
+            if let Some(value) = xdg {
+                command.env("XDG_STATE_HOME", value);
+            }
+            if let Some(value) = home {
+                command.env("HOME", value);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     #[test]
     fn boost_grows_slowly_is_capped_and_decays() {
@@ -441,6 +496,21 @@ mod tests {
     }
 
     #[test]
+    fn recording_a_new_item_survives_a_full_history() {
+        let mut u = Usage::disabled();
+        let t = 1_000_000;
+        for i in 0..MAX_ITEMS {
+            let key = format!("old-{i}.desktop");
+            u.record(Kind::App, &key, "", t);
+            u.record(Kind::App, &key, "", t);
+        }
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        u.record(Kind::App, "new.desktop", "", t);
+        assert_eq!(u.entries.len(), MAX_ITEMS);
+        assert!(u.boost(Kind::App, "new.desktop", "", t) > 0, "the launch just recorded must stay in history");
+    }
+
+    #[test]
     fn related_queries_add_a_specific_boost() {
         let mut u = Usage::disabled();
         let t = 1_000;
@@ -462,6 +532,23 @@ mod tests {
         assert!(r.by_query.iter().any(|(q, _)| q == "fir"), "the strongest query is kept");
         assert_eq!(normalize_query(&"x".repeat(100)).unwrap().len(), MAX_QUERY_CHARS);
         assert_eq!(normalize_query("  \t "), None);
+        u.record(Kind::App, "osmos.desktop", "ΟΣΜΟΣ", t);
+        let general_only = u.boost(Kind::App, "osmos.desktop", "", t);
+        for query in ["ΟΣ", "οσ", "ος"] {
+            assert!(u.boost(Kind::App, "osmos.desktop", query, t) > general_only, "{query}");
+        }
+    }
+
+    #[test]
+    fn legacy_greek_history_queries_receive_prefix_boosts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-usage");
+        std::fs::write(&path, "app\t1\t1000\tosmos.desktop\nqapp\t1\t1000\tοσμος\tosmos.desktop\n").unwrap();
+        let usage = Usage::load(Some(path));
+        let general_only = usage.boost(Kind::App, "osmos.desktop", "", 1000);
+        for query in ["ΟΣ", "οσ", "ος", "ΟΣΜΟΣ", "οσμοσ"] {
+            assert!(usage.boost(Kind::App, "osmos.desktop", query, 1000) > general_only, "{query}");
+        }
     }
 
     #[test]

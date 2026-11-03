@@ -53,6 +53,11 @@ fn index_search_status_config() {
 
     let o = run(t.path(), &["search", "--long", "intro"]);
     assert!(stdout(&o).starts_with("f "), "{}", stdout(&o));
+    // One byte short of 1 MiB rounds to the next unit, not "1024.0K".
+    fs::File::create(root.join("Music/Album/01 - Intro Track.flac")).unwrap().set_len(1024 * 1024 - 1).unwrap();
+    assert!(run(t.path(), &["index", "--full"]).status.success());
+    let o = run(t.path(), &["search", "--long", "intro"]);
+    assert!(stdout(&o).starts_with("f    1.0M "), "{}", stdout(&o));
 
     let o = run(t.path(), &["search", "--in", root.join("Music/Album").to_str().unwrap(), "track"]);
     assert_eq!(stdout(&o).lines().count(), 1);

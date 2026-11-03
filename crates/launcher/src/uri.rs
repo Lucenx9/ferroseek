@@ -18,7 +18,11 @@ pub fn path_from_file_url(u: &str) -> Option<PathBuf> {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' {
-            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            let hex = b.get(i + 1..i + 3)?;
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return None;
+            }
+            let hex = std::str::from_utf8(hex).ok()?;
             out.push(u8::from_str_radix(hex, 16).ok()?);
             i += 3;
         } else {
@@ -45,5 +49,13 @@ mod tests {
         assert!(path_from_file_url("file:///x%2").is_none());
         assert!(path_from_file_url("file:///x%00").is_none());
         assert!(path_from_file_url("http:///x").is_none());
+    }
+
+    #[test]
+    fn rejects_signed_percent_escapes() {
+        for escape in ["%+1", "%+A", "%-1", "%gg", "%1", "%"] {
+            assert!(path_from_file_url(&format!("file:///tmp/file{escape}")).is_none(), "accepted {escape}");
+        }
+        assert_eq!(path_from_file_url("file:///tmp/%2b%41").unwrap(), PathBuf::from("/tmp/+A"));
     }
 }
