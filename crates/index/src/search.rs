@@ -119,6 +119,22 @@ fn fts_phrase(tokens: &[&String]) -> String {
     tokens.iter().map(|t| format!("\"{}\"", t.replace('"', "\"\""))).collect::<Vec<_>>().join(" ")
 }
 
+/// Exclusive upper bound for a binary prefix range, including U+10FFFF suffixes.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut upper = prefix.to_string();
+    while let Some(last) = upper.pop() {
+        let next = match last {
+            char::MAX => continue,
+            '\u{d7ff}' => '\u{e000}', // Skip the surrogate range.
+            _ => char::from_u32(last as u32 + 1).unwrap(),
+        };
+        upper.push(next);
+        return Some(upper);
+    }
+    // A prefix consisting entirely of U+10FFFF has no finite upper bound.
+    None
+}
+
 fn is_boundary(key: &str, name: &[u8], pos: usize) -> bool {
     if pos == 0 {
         return true;
@@ -231,11 +247,10 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             q.name_tokens
                 .first()
                 .map(|s| {
-                    format!(
-                        " AND e.key >= '{}' AND e.key < '{}'",
-                        s.replace('\'', "''"),
-                        format!("{s}\u{10ffff}").replace('\'', "''")
-                    )
+                    let upper = prefix_upper_bound(s)
+                        .map(|upper| format!(" AND e.key < '{}'", upper.replace('\'', "''")))
+                        .unwrap_or_default();
+                    format!(" AND e.key >= '{}'{upper}", s.replace('\'', "''"))
                 })
                 .unwrap_or_default()
         } else {
@@ -258,12 +273,17 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                 &[&joined],
                 100,
             )?;
-            let upper = format!("{first}\u{10FFFF}");
+            let upper = prefix_upper_bound(first);
+            let upper_clause = if upper.is_some() { " AND e.key < ?2" } else { "" };
+            let mut params: Vec<&dyn rusqlite::ToSql> = vec![first];
+            if let Some(upper) = &upper {
+                params.push(upper);
+            }
             add_rows(
                 &mut conn.prepare_cached(&format!(
-                    "SELECT {COLS} FROM entries e WHERE e.key >= ?1 AND e.key < ?2{restriction} ORDER BY e.key, e.id"
+                    "SELECT {COLS} FROM entries e WHERE e.key >= ?1{upper_clause}{restriction} ORDER BY e.key, e.id"
                 ))?,
-                &[first, &upper],
+                &params,
                 prefix_cap,
             )?;
         } else {

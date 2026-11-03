@@ -306,6 +306,41 @@ fn short_queries_match_prefixes() {
 }
 
 #[test]
+fn prefix_search_includes_the_maximum_unicode_scalar() {
+    let (_t, db) = setup();
+    let (mut writer, _) = Writer::open(&db).unwrap();
+    let mut tx = writer.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let folder = tx.upsert(root, b"folder", dir(2)).unwrap().0;
+    for (i, name) in [
+        "ab\u{10ffff}.txt",
+        "ab\u{10ffff}\u{10ffff}.txt",
+        "ac.txt",
+        "\u{10ffff}tail.txt",
+        "\u{d7ff}tail.txt",
+        "\u{e000}tail.txt",
+        "a\u{10ffff}tail.txt",
+    ]
+    .iter()
+    .enumerate()
+    {
+        tx.upsert(folder, name.as_bytes(), file(i as u64 + 3)).unwrap();
+    }
+    tx.commit().unwrap();
+    let reader = Reader::open(&db).unwrap();
+    assert!(reader.lookup(Path::new("/r/folder/ab\u{10ffff}.txt")).unwrap().is_some());
+    assert_eq!(names(&search(&db, "ab\u{10ffff}.txt")), ["ab\u{10ffff}.txt"]);
+    for within in [None, Some(PathBuf::from("/r/folder"))] {
+        let opts = SearchOptions { within, ..Default::default() };
+        let found = names(&reader.search(&Query::parse("ab"), &opts).unwrap());
+        assert_eq!(found, ["ab\u{10ffff}.txt", "ab\u{10ffff}\u{10ffff}.txt"]);
+        assert_eq!(names(&reader.search(&Query::parse("\u{10ffff}"), &opts).unwrap()), ["\u{10ffff}tail.txt"]);
+        assert_eq!(names(&reader.search(&Query::parse("\u{d7ff}"), &opts).unwrap()), ["\u{d7ff}tail.txt"]);
+        assert_eq!(names(&reader.search(&Query::parse("a\u{10ffff}"), &opts).unwrap()), ["a\u{10ffff}tail.txt"]);
+    }
+}
+
+#[test]
 fn multi_token_and_path_tokens() {
     let (_t, db) = ranked_fixture();
     assert_eq!(names(&search(&db, "report 2024")), vec!["annual-report-2024.pdf"]);
