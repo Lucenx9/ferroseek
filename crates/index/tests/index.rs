@@ -299,6 +299,26 @@ fn ranking_prefers_exact_then_stem_then_prefix_then_boundary() {
 }
 
 #[test]
+fn ranking_uses_the_best_occurrence_of_each_name_token() {
+    for (query, boundary, embedded) in [
+        ("report", "zreport-report.txt", "areportxreport.txt"),
+        ("go-go", "zgo-go-go.txt", "ago-goxxx.txt"),
+        ("report", "zreportReport.txt", "areportxreport.tx"),
+    ] {
+        let (_t, db) = setup();
+        let (mut writer, _) = Writer::open(&db).unwrap();
+        let mut tx = writer.transaction().unwrap();
+        let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+        tx.upsert(root, embedded.as_bytes(), file(2)).unwrap();
+        tx.upsert(root, boundary.as_bytes(), file(3)).unwrap();
+        tx.commit().unwrap();
+        let hits = search(&db, query);
+        assert_eq!(names(&hits), [boundary, embedded], "query {query}");
+        assert!(hits[0].score > hits[1].score, "a later word boundary must beat an embedded match");
+    }
+}
+
+#[test]
 fn short_queries_match_prefixes() {
     let (_t, db) = ranked_fixture();
     let n = names(&search(&db, "cv"));

@@ -85,6 +85,17 @@ pub enum Target {
     Calc(String),
 }
 
+impl Target {
+    /// Display metadata can change without changing the file to act on.
+    /// A file/folder replacement must invalidate captured actions.
+    pub fn same_identity(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::File(a), Self::File(b)) => a.id == b.id && a.is_dir == b.is_dir,
+            _ => self == other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Calculator,
@@ -393,12 +404,13 @@ pub struct ClickTracker {
 
 impl ClickTracker {
     pub fn press(&mut self, target: &Target) {
-        self.repeated = self.previous.as_ref() == Some(target);
+        self.repeated = self.previous.as_ref().is_some_and(|previous| previous.same_identity(target));
         self.previous = Some(target.clone());
     }
 
     pub fn double_click(&mut self, target: &Target) -> bool {
-        let same_target = self.repeated && self.previous.as_ref() == Some(target);
+        let same_target =
+            self.repeated && self.previous.as_ref().is_some_and(|previous| previous.same_identity(target));
         *self = Self::default();
         same_target
     }
@@ -447,7 +459,7 @@ impl Cursor {
     /// Resolves the clicked target against the current list, which may
     /// have changed since the row was drawn.
     pub fn select_target(&mut self, target: &Target, items: &[Item]) -> bool {
-        let Some(index) = items.iter().position(|item| item.target == *target) else { return false };
+        let Some(index) = items.iter().position(|item| item.target.same_identity(target)) else { return false };
         self.select(index, items.len());
         true
     }
@@ -1036,6 +1048,31 @@ mod tests {
         assert!(!cursor.select_target(&target, &items), "removed targets cannot activate a different row");
         assert_eq!(cursor.selected, 0);
         assert!(!cursor.select_target(&target, &[]));
+    }
+
+    #[test]
+    fn file_selection_and_double_clicks_ignore_display_updates_but_not_kind_changes() {
+        let original = Target::File(file("report.txt", false));
+        let mut refreshed = file("report.txt", false);
+        refreshed.icon = "application-pdf".into();
+        refreshed.subtext = "Updated display path".into();
+        let current = Target::File(refreshed.clone());
+        let items = build_items(&[], &[], &[file("other.txt", false), refreshed.clone()]);
+        let mut cursor = Cursor::new(2);
+        assert!(cursor.select_target(&original, &items));
+        assert_eq!(cursor.selected, 1);
+        let mut clicks = ClickTracker::default();
+        clicks.press(&original);
+        clicks.press(&current);
+        assert!(clicks.double_click(&current));
+
+        refreshed.is_dir = true;
+        let folder = Target::File(refreshed.clone());
+        let items = build_items(&[], &[], &[refreshed]);
+        assert!(!cursor.select_target(&original, &items), "a changed kind invalidates captured file actions");
+        clicks.press(&original);
+        clicks.press(&folder);
+        assert!(!clicks.double_click(&folder));
     }
 
     #[test]
