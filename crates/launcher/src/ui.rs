@@ -1674,7 +1674,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             a.map_or_else(Task::none, |a| s.perform(a))
         }
         Message::ApplicationOpened { id, result } => {
-            if !s.opening.as_ref().is_some_and(|(pending, _)| *pending == id) {
+            if s.opening.as_ref().is_none_or(|(pending, _)| *pending != id) {
                 return Task::none();
             }
             let (_, query) = s.opening.take().unwrap();

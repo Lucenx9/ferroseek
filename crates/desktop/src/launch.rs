@@ -108,7 +108,7 @@ fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::R
     // Its own process group: a signal to the launcher's group (e.g. ^C in
     // the terminal it was started from) must not reach the application.
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    if let Some(dir) = app.working_dir.as_deref().filter(|d| d.is_dir()) {
+    if let Some(dir) = app.working_dir.as_deref() {
         cmd.current_dir(dir);
     }
     // The launcher exits right after; the child is reparented, not reaped
@@ -160,6 +160,25 @@ mod tests {
         assert_eq!(&s[..6], ["systemd-run", "--user", "--scope", "--collect", "--quiet", "--slice=app.slice"]);
         assert!(s[6].starts_with("--unit=app-ferroseek-org.ex.T_1-"));
         assert_eq!(&s[7..], ["--", "prog", "--x"]);
+    }
+
+    #[test]
+    fn unavailable_working_directory_refuses_to_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("not a directory");
+        std::fs::write(&file, "file").unwrap();
+        for (path, expected) in
+            [(temp.path().join("missing"), io::ErrorKind::NotFound), (file, io::ErrorKind::NotADirectory)]
+        {
+            let app = app(&format!("Path={}\n", path.display()));
+            match spawn(&app, vec!["/bin/true"], None) {
+                Err(error) => assert_eq!(error.kind(), expected),
+                Ok(mut child) => {
+                    child.wait().unwrap();
+                    panic!("launched with an unavailable working directory: {}", path.display());
+                }
+            }
+        }
     }
 
     #[test]

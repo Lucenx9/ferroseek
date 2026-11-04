@@ -236,6 +236,8 @@ to another command.
 Applications start without a shell, from the parsed `Exec` argument vector,
 in their own transient systemd user scope when a user manager is available.
 `Terminal=true` entries run in `xdg-terminal-exec` or a known terminal.
+When an entry specifies `Path`, launching requires that working directory to
+be accessible. Restore it or correct the entry before retrying a failed launch.
 
 ## Application activation
 
