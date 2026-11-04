@@ -635,6 +635,9 @@ impl Launcher {
             let actions = panel.filtered_actions().len();
             panel.cursor.move_by(0, actions);
         }
+        if let Some(panel) = &mut self.application_picker {
+            panel.resize(geometry.height, self.opening.is_some());
+        }
         if self.placement == Some(geometry) && compact == self.compact {
             return Task::none();
         }
@@ -1131,7 +1134,7 @@ impl Launcher {
                 if self.opening.is_some() || !self.application_picker.as_mut().is_some_and(|panel| panel.loading()) {
                     return Task::none();
                 }
-                Task::batch([self.request_applications(), crate::input::focus(open_with::input_id())])
+                Task::batch([self.request_applications(), self.resize(), crate::input::focus(open_with::input_id())])
             }
             open_with::Effect::Open(app) => {
                 if self.opening.is_some() || self.unconfirmed_open {
@@ -1144,7 +1147,7 @@ impl Launcher {
                 self.status = Status::Notice("Opening…".into());
                 let (task, handle) = Task::perform(self.backend.clone().run_with(id, app), Message::Opened).abortable();
                 self.launch_task = Some(handle.abort_on_drop());
-                task
+                Task::batch([task, self.resize()])
             }
         }
     }
@@ -1421,7 +1424,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             {
                 panel.loaded(result, &mut s.icons);
                 timing::event("applications_loaded");
-                return crate::input::focus(open_with::input_id());
+                return Task::batch([s.resize(), crate::input::focus(open_with::input_id())]);
             }
             Task::none()
         }
@@ -2003,6 +2006,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         background: Some(Background::Color(palette::BORDER.resolve(theme))),
         ..Default::default()
     });
+    let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
         let path = folder.path.as_deref().and_then(|path| path.to_str()).unwrap_or(&folder.id);
@@ -2030,7 +2034,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(2)
         .into()
     } else {
-        if s.window_width < 640 {
+        if header_extra > 0 {
             column![
                 input,
                 row![scopes, space::horizontal(), index_status, folders, appearance]
@@ -2045,10 +2049,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
                 .into()
         }
     };
-    let header = container(header)
-        .padding([0, 8])
-        .height(INPUT_HEIGHT + if s.window_width < 640 { 30.0 } else { 0.0 })
-        .align_y(Vertical::Center);
+    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT + header_extra as f32).align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {

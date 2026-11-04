@@ -337,9 +337,12 @@ def main():
                     burst(29, 42, 51, -51, -42, -29)
                     wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)),
                              "layout preferences loaded", process=process)
+                    ready_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_ready")
+                    wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > ready_at for r in records(log)),
+                             "appearance page rendered before pointer input", process=process)
                     # Pointer uses the same tab as Ctrl+Tab; coordinates are logical.
                     left = (geometry[2] - widths[1]) / 2
-                    subprocess.run([str(helper), "--double-click", str(round(left + 205)), str(round(upper + 20))],
+                    subprocess.run([str(helper), "--double-click", str(round(left + 235)), str(round(upper + 20))],
                                    check=True, timeout=5)
 
                     def choose(index):

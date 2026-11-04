@@ -415,6 +415,7 @@ impl Panel {
                 space::horizontal(),
                 button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
             ]
+            .spacing(8)
             .padding([8, 16])
             .align_y(iced::Center),
             ui::divider(),

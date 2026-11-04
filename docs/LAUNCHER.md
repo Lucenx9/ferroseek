@@ -602,8 +602,8 @@ ferroseek-launcher
   an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
 - The default width is 720 logical px, or 980 with the preview sidebar.
   Appearance → Layout changes width and placement; output bounds can reduce
-  the effective width and row count. There is no
-  light theme yet.
+  the effective width and row count. Physical desktops and multiple-output
+  transitions remain unverified.
 
 ## Tests
 

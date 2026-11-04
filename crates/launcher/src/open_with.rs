@@ -96,7 +96,6 @@ impl Panel {
         self.error = None;
         self.icons.clear();
         self.cursor.reset();
-        self.cursor.visible = 6;
         true
     }
 
@@ -116,13 +115,11 @@ impl Panel {
 
     pub fn failed(&mut self, error: String) {
         self.error = Some(error);
-        self.cursor.visible = 4;
         self.cursor.select(self.cursor.selected, self.filtered().len());
     }
 
     pub fn opening(&mut self) {
         self.error = None;
-        self.cursor.visible = 6;
         self.cursor.select(self.cursor.selected, self.filtered().len());
     }
 
@@ -177,6 +174,21 @@ impl Panel {
             _ => {}
         }
         Effect::None
+    }
+
+    /// Fit rows after reserving the title, input, range and footer. Error text
+    /// can wrap; opening feedback needs one additional line.
+    pub fn resize(&mut self, height: u32, opening: bool) {
+        let reserved = 200
+            + if self.error.is_some() {
+                100
+            } else if opening {
+                20
+            } else {
+                0
+            };
+        self.cursor.visible = (height.saturating_sub(reserved) as usize / 47).clamp(1, 6);
+        self.cursor.move_by(0, self.filtered().len());
     }
 
     pub fn wheel(&mut self, delta: isize) {
