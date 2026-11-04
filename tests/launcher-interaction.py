@@ -186,7 +186,7 @@ def multimonitor(binary, out, helper):
             "gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
             "--method", "org.freedesktop.DBus.NameHasOwner", "io.github.ferroseek.Launcher"], text=True, timeout=5)
 
-    def capture(name, expected, scale):
+    def capture_native(name):
         destination = out / f"{name}.png"
         with destination.with_suffix(".log").open("w") as stream:
             subprocess.run(["spectacle", "-b", "-n", "-m", "-o", str(destination)], check=True, timeout=15,
@@ -194,6 +194,10 @@ def multimonitor(binary, out, helper):
                            env={**os.environ, "XDG_DATA_DIRS": "/usr/local/share:/usr/share", "XDG_CONFIG_DIRS": "/etc/xdg"})
         image = QImage(str(destination))
         assert (image.width(), image.height()) == (1280, 800), "capture must retain the selected output's native mode"
+        return image
+
+    def capture(name, expected, scale):
+        image = capture_native(name)
         def dark(x, y):
             color = image.pixelColor(x, y)
             return max(color.red(), color.green(), color.blue()) < 160
@@ -205,6 +209,34 @@ def multimonitor(binary, out, helper):
         wanted = [left, top, left+width, top+height]
         assert all(abs(a-b) <= 4 for a,b in zip(actual,wanted)), (name, actual, wanted)
         return actual
+
+    def clipboard():
+        result = subprocess.run(["wl-paste", "--no-newline"], text=True, capture_output=True, timeout=3)
+        return result.stdout if result.returncode == 0 else None
+
+    copy_sequence = 0
+    def copied(codes, accepts, description):
+        nonlocal copy_sequence
+        copy_sequence += 1
+        sentinel = f"ferroseek-selection-{copy_sequence}"
+        source = subprocess.Popen(["wl-copy", "--foreground", "--type", "text/plain", sentinel])
+        processes.append(source)
+        wait_for(lambda: clipboard() == sentinel, "private clipboard sentinel ready")
+        keys(*codes)
+        def received():
+            value = clipboard()
+            return value if value is not None and value != sentinel and accepts(value) else None
+        return wait_for(received, description)
+
+    def selected_path(expected=None, previous=None):
+        def accepts(value):
+            return (value == expected if expected else value != previous and Path(value).is_file())
+        return copied((29,42,46,-46,-42,-29), accepts, "fresh selected file path copied")
+
+    def assert_query():
+        chord(30)
+        assert copied((29,46,-46,-29), lambda value: value == "report", "exact search query copied") == "report"
+        keys(106,-106)  # Collapse the main field selection without editing it.
 
     def start_probe(index):
         path = out / f"probe-{index}.jsonl"
@@ -232,15 +264,19 @@ def multimonitor(binary, out, helper):
                  and any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log)),
                  "launcher focused with daemon results", process=p)
         wait_bounds(log, bounds, p)
+        renderer = wait_for(lambda: observed_renderer(log), "renderer observed on selected output", process=p)
+        assert renderer == ("tiny_skia" if mode == "software" else "wgpu"), "controlled profile must exercise the requested graphics path"
         return p, log
 
     def wait_bounds(log, bounds, p):
-        wait_for(lambda: [r for r in records(log) if r.get("event") == "output_geometry"][-1:]
-                 and [r for r in records(log) if r.get("event") == "output_geometry"][-1]["width"] == bounds[0]
-                 and [r for r in records(log) if r.get("event") == "output_geometry"][-1]["height"] == bounds[1],
-                 "entered output logical bounds", process=p)
-        wait_for(lambda: any(r.get("event") == "surface_resized" and r["width"] == bounds[2]
-                             and r["height"] == bounds[3] for r in records(log)), "surface fits selected output", process=p)
+        def ready():
+            events = records(log)
+            outputs = [r for r in events if r.get("event") == "output_geometry"]
+            surfaces = [r for r in events if r.get("event") == "surface_resized"]
+            return (outputs and surfaces
+                    and (outputs[-1]["width"], outputs[-1]["height"],
+                         surfaces[-1]["width"], surfaces[-1]["height"]) == bounds)
+        wait_for(ready, "latest output bounds and actual surface extent", process=p)
 
     def close(p, index):
         subprocess.run([str(binary)], check=True, timeout=5)
@@ -267,7 +303,10 @@ def multimonitor(binary, out, helper):
         start_probe(0)
         second_probe = start_probe(1)
         cases = []
-        for mode in MODES:
+        requested_mode = os.environ.get("FERROSEEK_SMOKE_MODE", "auto")
+        mode_names = list(MODES) if requested_mode == "all" else [requested_mode]
+        assert all(mode in MODES for mode in mode_names)
+        for mode in mode_names:
             configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\ndark_theme="slate"\nwidth="wide"\nposition="centered"\n')
             for index, bounds, rectangle in [(0,(1280,800,880,501),(200,149.5,880,501)),
                                               (1,(853,533,821,501),(16,16,821,501))]:
@@ -277,14 +316,25 @@ def multimonitor(binary, out, helper):
                 wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 3 for r in records(log)), "typing after opening on selected monitor", process=p)
                 capture(f"{mode}-monitor-{index}", rectangle, 1 if index == 0 else 1.5)
                 if index == 1:
-                    apply(f"dense-{mode}", dense, f"output.{names[1]}.scale.2")
-                    wait_bounds(log, (640,400,608,339), p)
-                    capture(f"{mode}-scale-2", (16,30.5,608,339), 2)
-                    apply(f"restore-{mode}", both, f"output.{names[1]}.scale.1.5")
-                    wait_bounds(log, bounds, p)
                     chord(15)
                     chord(15)
                     wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 5 for r in records(log)), "file target selected", process=p)
+                    assert_query()
+                    first_target = selected_path()
+                    keys(108,-108,108,-108,108,-108)
+                    target = selected_path(previous=first_target)
+                    saved_before_scale = configuration.read_bytes()
+                    apply(f"dense-{mode}", dense, f"output.{names[1]}.scale.2")
+                    wait_bounds(log, (640,400,608,339), p)
+                    capture(f"{mode}-scale-2", (16,30.5,608,339), 2)
+                    assert_query()
+                    assert selected_path(expected=target) == target
+                    assert configuration.read_bytes() == saved_before_scale
+                    apply(f"restore-{mode}", both, f"output.{names[1]}.scale.1.5")
+                    wait_bounds(log, bounds, p)
+                    assert_query()
+                    assert selected_path(expected=target) == target
+                    assert configuration.read_bytes() == saved_before_scale
                     chord(37)
                     wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "preview actions focused", process=p)
                     type_text("preview")
@@ -296,7 +346,14 @@ def multimonitor(binary, out, helper):
             p, log = launch(mode,"disconnect",(853,533,821,501))
             keys(29,42,51,-51,-42,-29)
             wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded before output removal", process=p)
+            ready_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_ready")
+            wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > ready_at for r in records(log)), "appearance rendered before draft input", process=p)
             keys(108,-108,28,-28)  # Unsaved Light draft; the compositor will close its surface.
+            light = wait_for(lambda: next((r for r in reversed(records(log)) if r.get("event") == "appearance_light"), None), "Light draft accepted", process=p)
+            wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > light["elapsed_us"] for r in records(log)), "Light draft redrawn", process=p)
+            image = capture_native(f"{mode}-unsaved-light")
+            color = image.pixelColor(640, 40)
+            assert min(color.red(), color.green(), color.blue()) > 220, "the unsaved Light draft must be visible before output removal"
             saved = configuration.read_bytes()
             apply(f"disabled-{mode}",[([0,0,1280,800],1.0)],f"output.{names[1]}.disable")
             wait_for(lambda: p.poll() is not None, "removed output closed its launcher", process=p)
@@ -312,7 +369,7 @@ def multimonitor(binary, out, helper):
             focus(1)
             p,log = launch(mode,"reconnected",(853,533,821,501))
             close(p,1)
-            cases.append({"mode":mode,"validation":"passed"})
+            cases.append({"mode":mode,"renderer":observed_renderer(log),"validation":"passed"})
         (out / "multimonitor.json").write_text(json.dumps({"topology":snapshots,"cases":cases,"validation":"passed"},indent=2)+"\n")
         print("OK: distinct mixed-scale outputs, focus, resizing, preview, disable/re-enable and reopening")
     finally:
