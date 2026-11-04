@@ -671,7 +671,8 @@ normal screenshot authorization; caller-defined data/config paths are excluded. 
 no activation services, no real user-manager socket is visible, and inherited
 startup context is cleared.
 
-Before input, KWin's support information must report one 1280×800 logical output
+For the three baseline profiles, KWin's support information must report one
+1280×800 logical output
 at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
 1920×1200 at 1.5×. Ordinary typing and the unshifted Digit1 symbol (`1` or `&`)
 verify that the requested keyboard layout actually applies. Expected and observed
@@ -716,6 +717,30 @@ surface width, separately from content loading, before asserting on pixels.
 Protocol tests use an independent socket peer for standard/legacy selection,
 capability withdrawal/restoration, manager removal, rounded resize regions and
 missing/disabled blur. These tests do not use the real session or desktop.
+
+The functional `us-multi` profile uses two virtual outputs and requires
+`kscreen-doctor` (`libkf5screen-bin` on Ubuntu 24.04) and `wl-copy`/`wl-paste`
+(`wl-clipboard`) in addition to the existing graphical dependencies:
+
+```sh
+FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_PROFILE=us-multi FERROSEEK_SMOKE_MODE=all \
+  tests/launcher-smoke.sh target/release target/launcher-multimonitor
+```
+
+This profile has its own topology checks and no latency samples. It arranges
+1280×800 at 1× beside 853×533 logical at 1.5×, observes both disjoint geometries,
+and checks the launcher's bounds in native captures of the selected output.
+Fullscreen input probes target each output. Checks cover opening, typing and
+returning to the previous app; live scaling to 2× and back with exact query,
+selected file and saved preferences preserved; preview after scaling; and
+output disable/re-enable with clean closure and reopening on a remaining output.
+An unsaved appearance draft must be rendered before its output is disabled and
+must never be saved by that closure. Clipboard freshness checks use tracked
+foreground helpers on the private Wayland socket. KScreen runs in-process on
+the disposable compositor and private bus. No real desktop output is changed.
+`multimonitor.json`, topology snapshots, process logs and native PNGs are retained
+in the workflow artifact. Output disable/re-enable does not certify physical
+cable hotplug, GPU drivers or suspend/resume.
 
 Other compositors, physical keyboards and IMEs remain unverified.
 

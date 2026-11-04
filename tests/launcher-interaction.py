@@ -138,12 +138,14 @@ def wait_for(predicate, description, timeout=15, process=None):
 def multimonitor(binary, out, helper):
     """Two real virtual outputs, changed only on the disposable KWin socket."""
     from PyQt5.QtGui import QImage
+    import tomllib
     assert os.environ.get("FERROSEEK_SMOKE_ISOLATED") == "1"
     assert os.environ.get("WAYLAND_DISPLAY", "").startswith("wayland-ferroseek-smoke-")
     control_env = {**os.environ, "KSCREEN_BACKEND_INPROCESS": "1", "KSCREEN_BACKEND": "KWayland"}
     processes = []
     configuration = Path(os.environ["FERROSEEK_CONFIG"])
     original = configuration.read_bytes()
+    corpus = Path(tomllib.loads(original.decode())["roots"][0])
     snapshots = []
 
     def doctor(*args):
@@ -230,7 +232,7 @@ def multimonitor(binary, out, helper):
 
     def selected_path(expected=None, previous=None):
         def accepts(value):
-            return (value == expected if expected else value != previous and Path(value).is_file())
+            return (value == expected if expected else value != previous and Path(value).is_relative_to(corpus) and Path(value).is_file())
         return copied((29,42,46,-46,-42,-29), accepts, "fresh selected file path copied")
 
     def assert_query():
@@ -344,6 +346,7 @@ def multimonitor(binary, out, helper):
                 close(p,index)
             focus(1)
             p, log = launch(mode,"disconnect",(853,533,821,501))
+            saved = configuration.read_bytes()
             keys(29,42,51,-51,-42,-29)
             wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded before output removal", process=p)
             ready_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_ready")
@@ -354,7 +357,7 @@ def multimonitor(binary, out, helper):
             image = capture_native(f"{mode}-unsaved-light")
             color = image.pixelColor(640, 40)
             assert min(color.red(), color.green(), color.blue()) > 220, "the unsaved Light draft must be visible before output removal"
-            saved = configuration.read_bytes()
+            assert configuration.read_bytes() == saved, "previewing Light must not save the draft"
             apply(f"disabled-{mode}",[([0,0,1280,800],1.0)],f"output.{names[1]}.disable")
             wait_for(lambda: p.poll() is not None, "removed output closed its launcher", process=p)
             assert p.returncode == 0 and not owner(), "removed output left an invisible launcher owning the toggle"
