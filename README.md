@@ -96,8 +96,8 @@ More navigation keys and history settings are in the [launcher guide](docs/LAUNC
 
 Choose Compact, Standard or Wide width and upper or centered placement in
 Appearance → Layout. Changes preview immediately; Save keeps them.
-Virtual KWin checks cover constrained outputs at 1× and 1.5×; physical desktops
-and multiple-output transitions remain unverified. Application focus depends on the
+Virtual KWin checks cover constrained and mixed-scale multi-output layouts.
+Physical desktops, cable hotplug and suspend/resume remain unverified. Application focus depends on the
 receiving app and compositor; application launches, file opens and reveal actions
 supply fresh Wayland activation context when available. See [activation behavior](docs/LAUNCHER.md#application-activation)
 and the [desktop validation matrix](docs/LAUNCHER.md#desktop-validation).

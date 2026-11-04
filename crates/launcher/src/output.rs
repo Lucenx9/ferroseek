@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Observe the output containing the launcher without taking over iced's surface.
+//! Observe entered output bounds without taking over iced's surface.
 //!
 //! The backend does not expose its output events. An input-transparent 1px child
 //! receives its own output Enter, while iced retains the parent and its commits.
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_output, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
 };
-use wayland_client::{Connection, Dispatch, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 
 #[derive(Debug, Clone, Copy)]
@@ -29,12 +29,24 @@ struct State {
     manager: Option<(u32, zxdg_output_manager_v1::ZxdgOutputManagerV1)>,
     parent: Option<wl_surface::WlSurface>,
     probe: Option<Probe>,
-    output: Option<wl_output::WlOutput>,
+    entered: Vec<EnteredOutput>,
+    generation: u64,
+    known: Option<(u32, u32)>,
+    size: (u32, u32),
+}
+struct EnteredOutput {
+    output: wl_output::WlOutput,
     xdg: Option<zxdg_output_v1::ZxdgOutputV1>,
     generation: u64,
     pending: Option<(u32, u32)>,
-    known: Option<(u32, u32)>,
-    size: (u32, u32),
+    bounds: Option<(u32, u32)>,
+}
+impl Drop for EnteredOutput {
+    fn drop(&mut self) {
+        if let Some(xdg) = self.xdg.take() {
+            xdg.destroy();
+        }
+    }
 }
 struct Probe {
     surface: wl_surface::WlSurface,
@@ -61,10 +73,8 @@ impl Observer {
                 manager: None,
                 parent: None,
                 probe: None,
-                output: None,
-                xdg: None,
+                entered: Vec::new(),
                 generation: 0,
-                pending: None,
                 known: None,
                 size,
             })))),
@@ -85,6 +95,8 @@ impl Observer {
             let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
             if state.parent.as_ref() != Some(&parent) {
                 state.probe = None;
+                state.entered.clear();
+                state.notify(None);
                 state.parent = Some(parent);
             }
             state.map(queue);
@@ -110,19 +122,19 @@ impl Observer {
             }
             wl_registry::Event::Global { name, interface, version } if interface == "zxdg_output_manager_v1" => {
                 state.manager = Some((*name, registry.bind(*name, (*version).min(2), queue, ())));
-                if let Some(output) = state.output.clone() {
-                    state.observe(output, queue);
-                }
+                state.bind_outputs(queue);
             }
             wl_registry::Event::GlobalRemove { name } if state.manager.as_ref().is_some_and(|(id, _)| id == name) => {
                 if let Some((_, manager)) = state.manager.take() {
                     manager.destroy();
                 }
-                if let Some(xdg) = state.xdg.take() {
-                    xdg.destroy();
+                for output in &mut state.entered {
+                    if let Some(xdg) = output.xdg.take() {
+                        xdg.destroy();
+                    }
+                    output.pending = None;
+                    output.bounds = None;
                 }
-                state.generation = state.generation.wrapping_add(1);
-                state.pending = None;
                 state.notify(None);
             }
             _ => {}
@@ -172,19 +184,29 @@ impl State {
         // Iced applies the parent commit, including the new child association.
         let _ = self.tx.unbounded_send(Event::Mapped);
     }
-    fn observe(&mut self, output: wl_output::WlOutput, queue: &QueueHandle<Worker>) {
-        if self.output.as_ref() == Some(&output) && self.xdg.is_some() {
-            return;
-        }
-        if let Some(xdg) = self.xdg.take() {
-            xdg.destroy();
-        }
-        self.generation = self.generation.wrapping_add(1);
-        self.pending = None;
-        self.output = Some(output.clone());
+    fn bind_outputs(&mut self, queue: &QueueHandle<Worker>) {
+        self.entered.retain(|member| member.output.is_alive());
         if let Some((_, manager)) = &self.manager {
-            self.xdg = Some(manager.get_xdg_output(&output, queue, self.generation));
+            for member in &mut self.entered {
+                if member.xdg.is_none() {
+                    self.generation = self.generation.wrapping_add(1);
+                    member.generation = self.generation;
+                    member.xdg = Some(manager.get_xdg_output(&member.output, queue, member.generation));
+                }
+            }
         }
+    }
+    fn update_bounds(&mut self) {
+        self.entered.retain(|member| member.output.is_alive());
+        // An oversized surface can enter neighbouring outputs, in any order.
+        // Fit all observed bounds until the compositor's target is the only
+        // remaining member; choosing one Enter can sustain the wrong overlap.
+        let bounds = self
+            .entered
+            .iter()
+            .filter_map(|member| member.bounds)
+            .reduce(|(w, h), (next_w, next_h)| (w.min(next_w), h.min(next_h)));
+        self.notify(bounds);
     }
     fn notify(&mut self, bounds: Option<(u32, u32)>) {
         if self.known != bounds {
@@ -207,8 +229,18 @@ impl Dispatch<wl_surface::WlSurface, ()> for Worker {
         if !inner.probe.as_ref().is_some_and(|probe| probe.surface == *surface) {
             return;
         }
-        if let wl_surface::Event::Enter { output } = event {
-            inner.observe(output, queue);
+        match event {
+            wl_surface::Event::Enter { output } => {
+                if !inner.entered.iter().any(|member| member.output == output) {
+                    inner.entered.push(EnteredOutput { output, xdg: None, generation: 0, pending: None, bounds: None });
+                }
+                inner.bind_outputs(queue);
+            }
+            wl_surface::Event::Leave { output } => {
+                inner.entered.retain(|member| member.output != output);
+                inner.update_bounds();
+            }
+            _ => {}
         }
     }
 }
@@ -223,16 +255,18 @@ impl Dispatch<zxdg_output_v1::ZxdgOutputV1, u64> for Worker {
     ) {
         let Some(inner) = &state.output.0 else { return };
         let mut inner = inner.lock().unwrap_or_else(|e| e.into_inner());
-        if inner.generation != *generation {
+        let Some(member) =
+            inner.entered.iter_mut().find(|member| member.generation == *generation && member.xdg.is_some())
+        else {
             return;
-        }
+        };
         match event {
             zxdg_output_v1::Event::LogicalSize { width, height } if width > 0 && height > 0 => {
-                inner.pending = Some((width as u32, height as u32))
+                member.pending = Some((width as u32, height as u32))
             }
             zxdg_output_v1::Event::Done => {
-                let bounds = inner.pending;
-                inner.notify(bounds);
+                member.bounds = member.pending;
+                inner.update_bounds();
             }
             _ => {}
         }

@@ -63,7 +63,7 @@ def memory_snapshot(pid):
     return {key: int(fields[key].split()[0]) for key in ("VmRSS", "VmHWM")}
 
 
-def probe(path):
+def probe(path, screen_name=None):
     from PyQt5.QtCore import QEvent
     from PyQt5.QtWidgets import QApplication, QLineEdit
 
@@ -78,7 +78,12 @@ def probe(path):
     field = Input()
     field.setWindowTitle("FerroSeek isolated focus probe")
     field.textChanged.connect(lambda text: Path(path).write_text(json.dumps({"text": text}) + "\n"))
-    field.showMaximized()  # Any point outside the launcher panel lands on a probe.
+    if screen_name is None:
+        field.showMaximized()  # Any point outside the launcher panel lands on a probe.
+    else:
+        field.winId()
+        field.windowHandle().setScreen(next(screen for screen in app.screens() if screen.name() == screen_name))
+        field.showFullScreen()
     field.setFocus()
     app.exec()
 
@@ -130,11 +135,284 @@ def wait_for(predicate, description, timeout=15, process=None):
     raise AssertionError("Timed out: " + description)
 
 
+def multimonitor(binary, out, helper):
+    """Two real virtual outputs, changed only on the disposable KWin socket."""
+    from PyQt5.QtGui import QImage
+    import tomllib
+    assert os.environ.get("FERROSEEK_SMOKE_ISOLATED") == "1"
+    assert os.environ.get("WAYLAND_DISPLAY", "").startswith("wayland-ferroseek-smoke-")
+    output_helper = os.environ["FERROSEEK_SMOKE_OUTPUT_HELPER"]
+    processes = []
+    configuration = Path(os.environ["FERROSEEK_CONFIG"])
+    original = configuration.read_bytes()
+    corpus = Path(tomllib.loads(original.decode())["roots"][0])
+    snapshots = []
+
+    def output_control(*args):
+        command = [output_helper, "--list"]
+        if args == ("-j",):
+            return subprocess.check_output(command, text=True, timeout=15)
+        devices = json.loads(subprocess.check_output(command, text=True, timeout=15))["outputs"]
+        changed = {}
+        for argument in args:
+            parts = argument.split(".", 3)
+            device = next(d for d in devices if d["name"] == parts[1])
+            changed[device["name"]] = device
+            if parts[2] == "position":
+                device["pos"]["x"], device["pos"]["y"] = map(int, parts[3].split(","))
+            elif parts[2] == "scale":
+                device["scale"] = float(parts[3])
+            else:
+                assert parts[2] in ("enable", "disable")
+                device["enabled"] = parts[2] == "enable"
+        command = [output_helper]
+        for name, d in changed.items():
+            command += [name, str(d["pos"]["x"]), str(d["pos"]["y"]), str(d["scale"]), str(int(d["enabled"]))]
+        return subprocess.check_output(command, text=True, timeout=15)
+
+    def topology(label, expected):
+        support = ast.literal_eval(subprocess.check_output([
+            "gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/KWin",
+            "--method", "org.kde.KWin.supportInformation"], text=True, timeout=5))[0]
+        found = [[int(v) for v in entry] for entry in re.findall(
+            r"(?m)^Geometry: (-?\d+),(-?\d+),(\d+)x(\d+)\s*$", support)]
+        scales = [float(v) for v in re.findall(r"(?m)^Scale: ([0-9.]+)\s*$", support)]
+        observed = sorted(zip(found, scales))
+        if observed != sorted(expected):
+            return None
+        (out / f"topology-{label}.txt").write_text(support)
+        snapshots.append({"stage": label, "outputs": observed})
+        return observed
+
+    def apply(label, expected, *args):
+        (out / f"configure-{label}.log").write_text(output_control(*args))
+        wait_for(lambda: topology(label, expected), "applied non-overlapping output geometry")
+
+    def keys(*codes):
+        subprocess.run([str(helper), *map(str, codes)], check=True, timeout=5)
+
+    def chord(code):
+        keys(29, code, -code, -29)
+
+    alphabet = dict(zip("abcdefghijklmnopqrstuvwxyz", [
+        30,48,46,32,18,33,34,35,23,36,37,38,50,49,24,25,16,19,31,20,22,47,17,45,21,44]))
+
+    def type_text(value):
+        for character in value:
+            code = alphabet[character]
+            keys(code, -code)
+
+    def owner():
+        return "true" in subprocess.check_output([
+            "gdbus", "call", "--session", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+            "--method", "org.freedesktop.DBus.NameHasOwner", "io.github.ferroseek.Launcher"], text=True, timeout=5)
+
+    def capture_native(name):
+        destination = out / f"{name}.png"
+        with destination.with_suffix(".log").open("w") as stream:
+            subprocess.run(["spectacle", "-b", "-n", "-m", "-o", str(destination)], check=True, timeout=15,
+                           stdout=stream, stderr=stream,
+                           env={**os.environ, "XDG_DATA_DIRS": "/usr/local/share:/usr/share", "XDG_CONFIG_DIRS": "/etc/xdg"})
+        image = QImage(str(destination))
+        assert (image.width(), image.height()) == (1280, 800), "capture must retain the selected output's native mode"
+        return image
+
+    def capture(name, expected, scale):
+        image = capture_native(name)
+        def dark(x, y):
+            color = image.pixelColor(x, y)
+            return max(color.red(), color.green(), color.blue()) < 160
+        left, top, width, height = [v * scale for v in expected]
+        ys = [y for y in range(image.height()) if sum(dark(x, y) for x in range(0, image.width(), 4)) > width * 0.7 / 4]
+        xs = [x for x in range(image.width()) if sum(dark(x, y) for y in range(round(top+30), round(top+height-30), 6)) > (height-60)*0.65/6]
+        assert xs and ys, "launcher missing from selected monitor capture"
+        actual = [min(xs), min(ys), max(xs)+1, max(ys)+1]
+        wanted = [left, top, left+width, top+height]
+        assert all(abs(a-b) <= 4 for a,b in zip(actual,wanted)), (name, actual, wanted)
+        return actual
+
+    def clipboard():
+        result = subprocess.run(["wl-paste", "--no-newline"], text=True, capture_output=True, timeout=3)
+        return result.stdout if result.returncode == 0 else None
+
+    copy_sequence = 0
+    def copied(codes, accepts, description):
+        nonlocal copy_sequence
+        copy_sequence += 1
+        sentinel = f"ferroseek-selection-{copy_sequence}"
+        source = subprocess.Popen(["wl-copy", "--foreground", "--type", "text/plain", sentinel])
+        processes.append(source)
+        wait_for(lambda: clipboard() == sentinel, "private clipboard sentinel ready")
+        keys(*codes)
+        def received():
+            value = clipboard()
+            return value if value is not None and value != sentinel and accepts(value) else None
+        return wait_for(received, description)
+
+    def selected_path(expected=None, previous=None):
+        def accepts(value):
+            return (value == expected if expected else value != previous and Path(value).is_relative_to(corpus) and Path(value).is_file())
+        return copied((29,42,46,-46,-42,-29), accepts, "fresh selected file path copied")
+
+    def assert_query():
+        chord(30)
+        assert copied((29,46,-46,-29), lambda value: value == "report", "exact search query copied") == "report"
+        keys(106,-106)  # Collapse the main field selection without editing it.
+
+    def start_probe(index):
+        path = out / f"probe-{index}.jsonl"
+        path.unlink(missing_ok=True)
+        p = subprocess.Popen([sys.executable, __file__, "--probe", str(path), names[index]])
+        processes.append(p)
+        wait_for(lambda: records(path), "fullscreen background input probe mapped", process=p)
+        return p
+
+    def focus(index):
+        x = 200 if index == 0 else 1480
+        subprocess.run([str(helper), "--double-click", str(x), "150"], check=True, timeout=5)
+        chord(30)
+        type_text("p" if index == 0 else "s")
+        wanted = {"text": "p" if index == 0 else "s"}
+        wait_for(lambda: wanted in records(out / f"probe-{index}.jsonl"), "input on selected output")
+
+    def launch(mode, label, bounds):
+        log = out / f"multi-{mode}-{label}.jsonl"
+        with log.open("w") as stream:
+            p = subprocess.Popen([str(binary), "--private", "--query", "report", *MODES[mode].arguments],
+                                 stdout=stream, stderr=stream, env=launcher_environment(mode))
+        processes.append(p)
+        wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log))
+                 and any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log)),
+                 "launcher focused with daemon results", process=p)
+        wait_bounds(log, bounds, p)
+        renderer = wait_for(lambda: observed_renderer(log), "renderer observed on selected output", process=p)
+        assert renderer == ("tiny_skia" if mode == "software" else "wgpu"), "controlled profile must exercise the requested graphics path"
+        return p, log
+
+    def wait_bounds(log, bounds, p):
+        def ready():
+            events = records(log)
+            outputs = [r for r in events if r.get("event") == "output_geometry"]
+            surfaces = [r for r in events if r.get("event") == "surface_resized"]
+            return (outputs and surfaces
+                    and (outputs[-1]["width"], outputs[-1]["height"],
+                         surfaces[-1]["width"], surfaces[-1]["height"]) == bounds)
+        wait_for(ready, "latest output bounds and actual surface extent", process=p)
+
+    def close(p, index):
+        subprocess.run([str(binary)], check=True, timeout=5)
+        assert p.wait(timeout=5) == 0
+        wait_for(lambda: not owner(), "launcher released its bus name")
+        path = out / f"probe-{index}.jsonl"
+        wait_for(lambda: any(r.get("event") == "focus" for r in records(path)), "previous app regained focus")
+        type_text("z")
+        wait_for(lambda: {"text": "pz" if index == 0 else "sz"} in records(path), "typing returned to previous app")
+
+    try:
+        initial = json.loads(output_control("-j"))
+        (out / "initial-outputs.json").write_text(json.dumps(initial, indent=2))
+        devices = sorted(initial["outputs"], key=lambda entry: entry["name"])
+        assert len(devices) == 2 and all(d["enabled"] for d in devices)
+        names = [d["name"] for d in devices]
+        both = [([0,0,1280,800],1.0), ([1280,0,853,533],1.5)]
+        dense = [([0,0,1280,800],1.0), ([1280,0,640,400],2.0)]
+        apply("initial", both, f"output.{names[0]}.position.0,0", f"output.{names[1]}.position.1280,0", f"output.{names[1]}.scale.1.5")
+        hold = subprocess.Popen([str(helper), "--hold"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        processes.append(hold)
+        wait_for(lambda: select.select([hold.stdout],[],[],0)[0], "persistent input seat")
+        assert hold.stdout.readline().strip() == "ready"
+        start_probe(0)
+        second_probe = start_probe(1)
+        cases = []
+        requested_mode = os.environ.get("FERROSEEK_SMOKE_MODE", "auto")
+        mode_names = list(MODES) if requested_mode == "all" else [requested_mode]
+        assert all(mode in MODES for mode in mode_names)
+        for mode in mode_names:
+            configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\ndark_theme="slate"\nwidth="wide"\nposition="centered"\n')
+            for index, bounds, rectangle in [(0,(1280,800,880,501),(200,149.5,880,501)),
+                                              (1,(853,533,821,501),(16,16,821,501))]:
+                focus(index)
+                p, log = launch(mode, str(index), bounds)
+                keys(14,-14,20,-20)  # Backspace + t proves main input owns focus.
+                wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 3 for r in records(log)), "typing after opening on selected monitor", process=p)
+                capture(f"{mode}-monitor-{index}", rectangle, 1 if index == 0 else 1.5)
+                if index == 1:
+                    chord(15)
+                    chord(15)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 5 for r in records(log)), "file target selected", process=p)
+                    assert_query()
+                    first_target = selected_path()
+                    keys(108,-108,108,-108,108,-108)
+                    target = selected_path(previous=first_target)
+                    saved_before_scale = configuration.read_bytes()
+                    apply(f"dense-{mode}", dense, f"output.{names[1]}.scale.2")
+                    wait_bounds(log, (640,400,608,339), p)
+                    capture(f"{mode}-scale-2", (16,30.5,608,339), 2)
+                    assert_query()
+                    assert selected_path(expected=target) == target
+                    assert configuration.read_bytes() == saved_before_scale
+                    apply(f"restore-{mode}", both, f"output.{names[1]}.scale.1.5")
+                    wait_bounds(log, bounds, p)
+                    assert_query()
+                    assert selected_path(expected=target) == target
+                    assert configuration.read_bytes() == saved_before_scale
+                    chord(37)
+                    wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "preview actions focused", process=p)
+                    type_text("preview")
+                    keys(28,-28)
+                    wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)), "preview after live scale change", process=p)
+                    capture(f"{mode}-preview", rectangle, 1.5)
+                close(p,index)
+            focus(1)
+            p, log = launch(mode,"disconnect",(853,533,821,501))
+            saved = configuration.read_bytes()
+            keys(29,42,51,-51,-42,-29)
+            wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded before output removal", process=p)
+            ready_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_ready")
+            wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > ready_at for r in records(log)), "appearance rendered before draft input", process=p)
+            keys(108,-108,28,-28)  # Unsaved Light draft; the compositor will close its surface.
+            light = wait_for(lambda: next((r for r in reversed(records(log)) if r.get("event") == "appearance_light"), None), "Light draft accepted", process=p)
+            wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > light["elapsed_us"] for r in records(log)), "Light draft redrawn", process=p)
+            image = capture_native(f"{mode}-unsaved-light")
+            color = image.pixelColor(640, 40)
+            assert min(color.red(), color.green(), color.blue()) > 220, "the unsaved Light draft must be visible before output removal"
+            assert configuration.read_bytes() == saved, "previewing Light must not save the draft"
+            apply(f"disabled-{mode}",[([0,0,1280,800],1.0)],f"output.{names[1]}.disable")
+            wait_for(lambda: p.poll() is not None, "removed output closed its launcher", process=p)
+            assert p.returncode == 0 and not owner(), "removed output left an invisible launcher owning the toggle"
+            assert configuration.read_bytes() == saved, "removing an output must not save the appearance draft"
+            second_probe.terminate()
+            second_probe.wait(timeout=5)
+            focus(0)
+            p,log = launch(mode,"remaining",(1280,800,880,501))
+            close(p,0)
+            apply(f"enabled-{mode}",both,f"output.{names[1]}.enable",f"output.{names[1]}.position.1280,0",f"output.{names[1]}.scale.1.5")
+            second_probe = start_probe(1)
+            focus(1)
+            p,log = launch(mode,"reconnected",(853,533,821,501))
+            close(p,1)
+            cases.append({"mode":mode,"renderer":observed_renderer(log),"validation":"passed"})
+        (out / "multimonitor.json").write_text(json.dumps({"topology":snapshots,"cases":cases,"validation":"passed"},indent=2)+"\n")
+        print("OK: distinct mixed-scale outputs, focus, resizing, preview, disable/re-enable and reopening")
+    finally:
+        configuration.write_bytes(original)
+        for p in reversed(processes):
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait()
+
+
 def main():
     if (os.environ.get("FERROSEEK_SMOKE_ISOLATED") != "1"
             or not os.environ.get("WAYLAND_DISPLAY", "").startswith("wayland-ferroseek-smoke-")):
         raise SystemExit("Run through FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh")
     binary, out, helper = map(Path, sys.argv[1:4])
+    if os.environ.get("FERROSEEK_SMOKE_PROFILE") == "us-multi":
+        return multimonitor(binary, out, helper)
     trials = int(os.environ.get("FERROSEEK_SMOKE_TRIALS", "20"))
     assert 2 <= trials <= 100
     requested_mode = os.environ.get("FERROSEEK_SMOKE_MODE", "auto")
@@ -952,7 +1230,7 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--probe"]:
-        probe(sys.argv[2])
+        probe(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     elif sys.argv[1:2] == ["--material-backdrop"]:
         material_backdrop(sys.argv[2])
     else:

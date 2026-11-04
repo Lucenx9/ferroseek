@@ -98,8 +98,9 @@ reset; Back and discard restore the last saved settings.
 Automatic bounds require the compositor's XDG output and subsurface interfaces.
 Without them the requested preset still applies, with final sizing controlled
 by the compositor. The bounds describe the logical output, not a panel-free
-work area. No desktop configuration is changed. Multiple-output transitions and
-physical desktops remain unverified. Versions predating these controls reject
+work area. No desktop configuration is changed. Mixed-scale virtual output
+changes are checked in isolated KWin; physical desktops and cable hotplug remain
+unverified. Versions predating these controls reject
 `width` and `position`; remove those keys before downgrading.
 
 System follows the read-only XDG Settings portal's color preference and change
@@ -608,8 +609,8 @@ ferroseek-launcher
   an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
 - The default width is 720 logical px, or 980 with the preview sidebar.
   Appearance → Layout changes width and placement; output bounds can reduce
-  the effective width and row count. Physical desktops and multiple-output
-  transitions remain unverified.
+  the effective width and row count. Mixed-scale virtual output changes are
+  checked in isolated KWin; physical desktops and cable hotplug remain unverified.
 
 ## Tests
 
@@ -671,7 +672,8 @@ normal screenshot authorization; caller-defined data/config paths are excluded. 
 no activation services, no real user-manager socket is visible, and inherited
 startup context is cleared.
 
-Before input, KWin's support information must report one 1280×800 logical output
+For the three baseline profiles, KWin's support information must report one
+1280×800 logical output
 at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
 1920×1200 at 1.5×. Ordinary typing and the unshifted Digit1 symbol (`1` or `&`)
 verify that the requested keyboard layout actually applies. Expected and observed
@@ -717,6 +719,38 @@ Protocol tests use an independent socket peer for standard/legacy selection,
 capability withdrawal/restoration, manager removal, rounded resize regions and
 missing/disabled blur. These tests do not use the real session or desktop.
 
+The functional `us-multi` profile uses two virtual outputs and requires
+`wl-copy`/`wl-paste` (`wl-clipboard`) in addition to the existing graphical dependencies:
+
+```sh
+FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_PROFILE=us-multi FERROSEEK_SMOKE_MODE=all \
+  tests/launcher-smoke.sh target/release target/launcher-multimonitor
+```
+
+This profile has its own topology checks and no latency samples. It arranges
+1280×800 at 1× beside 853×533 logical at 1.5×, observes both disjoint geometries,
+and checks the launcher's bounds in native captures of the selected output.
+Fullscreen input probes target each output. Checks cover opening, typing and
+returning to the previous app; live scaling to 2× and back with exact query,
+selected file and saved preferences preserved; preview after scaling; and
+output disable/re-enable with clean closure and reopening on a remaining output.
+An unsaved appearance draft must be rendered before its output is disabled and
+must never be saved by that closure. Clipboard freshness checks use tracked
+foreground helpers on the private Wayland socket. A test-only C helper configures
+virtual outputs directly through the KDE output protocol on the disposable
+compositor. It refuses other sockets and output names. No real desktop output
+is changed.
+`multimonitor.json`, topology snapshots, process logs and native PNGs are retained
+in the workflow artifact. Output disable/re-enable does not certify physical
+cable hotplug, GPU drivers or suspend/resume.
+
+![Secondary virtual output after scaling to 2×](assets/launcher-multimonitor-2x.png)
+
+Native capture of the second virtual output at 2× (640×400 logical, 1280×800
+native), with synthetic data and the nonfirst selected file retained. See the
+[recorded functional run](https://github.com/Lucenx9/ferroseek/actions/runs/41852818639/job/126653374573).
+The background input probe remains visible outside the launcher.
+
 Other compositors, physical keyboards and IMEs remain unverified.
 
 ### Desktop validation
@@ -724,13 +758,17 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Environment | Evidence | Still unverified |
 |---|---|---|
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
+| Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)
-retain exact environment and source provenance. Multiple monitors, IMEs and
-multiple seats are not covered. KWin's virtual output count alone is insufficient:
-its 5.27 virtual backend initially overlaps outputs at the same coordinates.
+retain exact environment and source provenance. The
+[mixed-scale functional run](https://github.com/Lucenx9/ferroseek/actions/runs/41852818639/job/126653374573)
+retains both output topologies, native captures and per-process diagnostics.
+Output count alone cannot establish placement: `us-multi` explicitly configures
+and checks disjoint geometries. Physical cable hotplug, suspend/resume, IMEs and
+multiple seats remain unverified.
 
 ### Local timing diagnostics
 
@@ -761,7 +799,10 @@ identify accepted preview replies and closing the sidebar.
 root widget's draw path, once initially and again if it changes. They identify
 the renderer implementation, not the graphics adapter or completed rendering.
 They appear only when timings are enabled.
-`output_geometry` records the observed logical output bounds; `layout_requested`
+`output_geometry` records the effective logical limits of the entered outputs.
+An oversized surface may temporarily enter its neighbour; minimum width and
+height constrain that overlap until resizing leaves only the target output.
+`layout_requested`
 records the requested surface size, result row count and placement. A request
 is not compositor acknowledgement or a presented-frame measurement.
 `surface_resized` records logical `width` and `height` after the launcher handles
