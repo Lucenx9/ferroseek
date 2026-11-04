@@ -388,3 +388,47 @@ Mode benchmarks and reproduction commands: [access-mode validation](benchmarks/m
 See [tool-discovery guidance and fresh-session evaluation](MCP_DISCOVERY.md)
 for metadata behavior, measured selection outcomes and optional user-level
 instructions. Registration does not guarantee that a model will invoke a tool.
+
+## Contributor constraints
+
+- `ferroseek-mcp` must stay read-only, stdio-only and opt-in. It must never
+  start an indexer, write the index or add a schema change. Its index API
+  additions are `Reader::roots()` and `SearchOptions::accept`. The latter
+  must stay `None` for daemon and CLI searches. `accept`-only
+  searches use an exact top-k early stop (name score + MAX_BONUS bound).
+  Never truncate them by name score: depth and recency can reorder.
+- Every path leaving the process passes `Policy::visible_under` *and* lies
+  inside the requested scope. Client paths are validated, not normalized;
+  never echo refused paths in errors.
+- Disk metadata only via `beneath::stat_beneath` (no symlink traversal
+  below the allowed dir); never `symlink_metadata` on client-visible paths.
+  Enforce policy via `accept` inside the index budget, never only after search.
+  Never return the DB path or whole-index stats unless `expose_index_totals`.
+  Deny matching is ASCII case-insensitive.
+- Structured outputs must satisfy `outputSchema`, including `required` fields.
+  Fields omitted by serde need `#[serde(default)]`; the protocol test checks this.
+- Live agent checks use `claude -p --mcp-config … --strict-mcp-config` and
+  `codex exec -c mcp_servers.…`, with temp synthetic data. Never register
+  test servers in the user's agent configs.
+- Stale-prefix recovery filters deleted entries inside the candidate budget
+  only after the normal query was starved. Preserve authorization before
+  filesystem access. `omitted_stale` is a lower bound; concurrent retry
+  exhaustion sets `incomplete_due_to_changes`.
+- MCP validation is in `docs/benchmarks/mcp-validation-2026-10-31/`. Keep native
+  comparisons semantic-equivalent and filesystem-oracle checked. wait4 peak RSS
+  includes a pre-exec Python image; use post-exec sampling. Only index-costs.json
+  supplies fresh-build costs. Harnesses use disposable data and a private bus.
+- all_indexed is the default for new unconfigured MCP servers; legacy TOML
+  allowlists without an explicit mode and CLI --allow retain restricted semantics.
+  Document this scope-changing upgrade. all_indexed uses / only as an authorization
+  boundary; results still come from Reader. home uses HOME, never engine roots.
+- Custom deny wins over deny_exceptions; exceptions only relax built-in names.
+  Preserve hidden filtering and no-symlink traversal. Global registration requires
+  typing all_indexed, then client-edit consent; tests never alter live agent modes.
+- For discovery changes, read `docs/MCP_DISCOVERY.md`. Metadata guidance fits
+  within 512 initialization characters; keep server/tool names stable and filename
+  search distinct from contents, authorization distinct from indexed coverage.
+  Metadata alone did not improve spontaneous selection in the recorded evaluation.
+- `scripts/benchmark-mcp-discovery.py` makes authenticated model requests only
+  when requested; use temporary profiles/indexes and keep raw logs in bench-out.
+  `tests/mcp-discovery-smoke.py` is the offline CI check.
