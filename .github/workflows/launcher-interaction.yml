@@ -55,6 +55,9 @@ jobs:
             export FERROSEEK_SMOKE_PROFILE=us-layout-1.5x
           fi
           xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/layout"
+          if [[ '${{ matrix.profile }}' == 'us-1x' ]]; then
+            FERROSEEK_SMOKE_PROFILE=us-short-1x xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/short"
+          fi
       - name: Exercise screenshot-only smoke mode
         run: |
           export LIBGL_ALWAYS_SOFTWARE=1

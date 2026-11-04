@@ -148,7 +148,7 @@ def main():
     samples = []
     activation_log = out / "activation-target.jsonl"
     profile = os.environ.get("FERROSEEK_SMOKE_PROFILE", "us-1x")
-    layout_only = profile in ("us-layout-1x", "us-layout-1.5x")
+    layout_only = profile in ("us-layout-1x", "us-layout-1.5x", "us-short-1x")
     assert layout_only or profile in ["us-1x", "fr-1x", "us-1.5x"], "unknown launcher profile"
     layout = "fr" if profile == "fr-1x" else "us"
     requested_scale = 1.5 if profile.endswith("1.5x") else 1.0
@@ -165,7 +165,8 @@ def main():
     assert screen_count == ["1"] and len(geometries) == len(scales) == 1, "expected exactly one observed output"
     geometry = [int(value) for value in geometries[0]]
     observed_scale = float(scales[0])
-    expected_geometry = ([0, 0, 640, 480] if profile == "us-layout-1x" else
+    expected_geometry = ([0, 0, 640, 360] if profile == "us-short-1x" else
+                         [0, 0, 640, 480] if profile == "us-layout-1x" else
                          [0, 0, 960, 640] if profile == "us-layout-1.5x" else [0, 0, 1280, 800])
     assert geometry == expected_geometry, "unexpected logical output geometry"
     assert observed_scale == requested_scale, "requested scale differs from actual compositor scale"
@@ -287,6 +288,37 @@ def main():
 
             for mode in mode_names:
                 configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\nmaterial="glass"\ndark_theme="slate"\n')
+                if profile == "us-short-1x":
+                    log = out / f"chooser-one-row-{mode}.jsonl"
+                    with log.open("w") as stream:
+                        process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments,
+                                                    "--query", "report"], stdout=stream, stderr=stream,
+                                                   env=launcher_environment(mode))
+                    processes.append(process)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log))
+                             and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
+                             "short-output search ready", process=process)
+                    chord(29, 15)
+                    chord(29, 15)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 3 for r in records(log)),
+                             "short-output Files scope ready", process=process)
+                    chord(29, character_keys["k"])
+                    wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "short-output actions focused")
+                    type_text("with")
+                    tap(28)
+                    wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
+                             "one-row chooser loaded", process=process)
+                    burst(29, 102, -102, -29, 109, -109, 109, -109, 104, -104)
+                    capture(f"chooser-one-row-{mode}.png")
+                    selected_handler.unlink(missing_ok=True)
+                    chord(29, 2)
+                    selected = wait_for(lambda: selected_handler.read_text() if selected_handler.exists() else None,
+                                        "paged application dispatched")
+                    assert selected == "1", "Page Down twice then Page Up must reach the second app when one row fits"
+                    assert process.wait(timeout=5) == 0
+                    wait_for(lambda: not owner(), "one-row chooser closed")
+                    cases.append({"mode": mode, "one_row_paging": "passed"})
+                    continue
                 for restart in (False, True):
                     log = out / f"layout-{mode}-{int(restart)}.jsonl"
                     with log.open("w") as stream:
