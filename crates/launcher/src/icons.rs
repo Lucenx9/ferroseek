@@ -110,7 +110,7 @@ fn load(p: &Path) -> Option<Icon> {
 /// setting, then Breeze/hicolor via the lookup's own fallback.
 fn current_theme() -> String {
     let config = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
+        .filter(|v| Path::new(v).is_absolute())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
     if let Some(dir) = config
@@ -142,6 +142,41 @@ fn ini_value(text: &str, group: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icon_theme_ignores_relative_xdg_config_home() {
+        const CASE: &str = "FERROSEEK_TEST_ICON_THEME";
+        if let Ok(expected) = std::env::var(CASE) {
+            assert_eq!(current_theme(), expected);
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        for (dir, theme) in [
+            (home.join(".config"), "HomeTheme"),
+            (temp.path().join("relative"), "WorkingDirectoryTheme"),
+            (temp.path().to_path_buf(), "WorkingDirectoryTheme"),
+            (temp.path().join("absolute"), "ExplicitTheme"),
+        ] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("kdeglobals"), format!("[Icons]\nTheme={theme}\n")).unwrap();
+        }
+        for (config, expected) in [
+            (PathBuf::new(), "HomeTheme"),
+            (PathBuf::from("relative"), "HomeTheme"),
+            (temp.path().join("absolute"), "ExplicitTheme"),
+        ] {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "icons::tests::icon_theme_ignores_relative_xdg_config_home"])
+                .current_dir(temp.path())
+                .env("HOME", &home)
+                .env("XDG_CONFIG_HOME", config)
+                .env(CASE, expected)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        }
+    }
 
     #[test]
     fn reads_kdeglobals_icon_theme() {
