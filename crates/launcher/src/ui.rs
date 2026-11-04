@@ -2779,6 +2779,23 @@ mod tests {
     fn delayed_focus_tasks_cannot_steal_action_input_or_reset_its_selection() {
         let mut s = search_state();
         let _ = update(&mut s, Message::Query("report".into()));
+        let temp = tempfile::tempdir().unwrap();
+        s.settings_path = temp.path().join("config.toml");
+        std::fs::write(&s.settings_path, "roots = []\n").unwrap();
+        let _ = update(&mut s, Message::ShowFolders);
+        let generation = s.folder_generation;
+        let folder_focus = update(
+            &mut s,
+            Message::Folder {
+                generation,
+                event: folders::Event::Loaded {
+                    revision: 1,
+                    result: ferroseek_config::folders::Document::load(temp.path().join("config.toml")),
+                },
+            },
+        );
+        let _ = command(&mut s, Command::Back);
+        assert!(s.folder_settings.is_none());
         let mut cache = iced_runtime::user_interface::Cache::default();
         widget_batch(&mut s, &mut cache, &[typed("k", Modifiers::CTRL)], true);
         settle_widgets(&mut s, &mut cache);
@@ -2804,13 +2821,19 @@ mod tests {
                 &mut renderer,
             );
             for target in [search_id(), actions_id()] {
-                let mut stream = iced_runtime::task::into_stream(crate::input::focus(target)).unwrap();
+                let mut stream = iced_runtime::task::into_stream(crate::input::focus::<Message>(target)).unwrap();
                 let action = iced::futures::executor::block_on(stream.next()).unwrap();
                 let iced_runtime::Action::Widget(mut operation) = action else {
                     panic!("focus must use a widget operation")
                 };
                 ui.operate(&renderer, operation.as_mut());
             }
+            let mut stream = iced_runtime::task::into_stream(folder_focus).unwrap();
+            let action = iced::futures::executor::block_on(stream.next()).unwrap();
+            let iced_runtime::Action::Widget(mut operation) = action else {
+                panic!("loaded folder settings must request focus")
+            };
+            ui.operate(&renderer, operation.as_mut());
             cache = ui.into_cache();
         }
         widget_batch(&mut s, &mut cache, &[typed("é", Modifiers::empty())], false);
