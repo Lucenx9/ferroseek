@@ -200,10 +200,8 @@ pub fn kind_str(k: Kind) -> &'static str {
 }
 
 /// RFC 3339 UTC from nanoseconds since the epoch (civil-from-days).
+/// Includes the epoch and earlier times.
 pub fn rfc3339(ns: i64) -> Option<String> {
-    if ns <= 0 {
-        return None;
-    }
     let secs = ns.div_euclid(1_000_000_000);
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     let z = days + 719_468;
@@ -224,7 +222,8 @@ fn entry(path: &Path, meta: &Meta) -> Entry {
         path: s.map(str::to_owned).unwrap_or_else(|| path.to_string_lossy().into_owned()),
         kind: kind_str(meta.kind),
         size: (meta.kind != Kind::Dir).then_some(meta.size),
-        modified: rfc3339(meta.mtime_ns),
+        // A directory mtime of 0 is the unreconciled sentinel, not the epoch.
+        modified: if meta.kind == Kind::Dir && meta.mtime_ns == 0 { None } else { rfc3339(meta.mtime_ns) },
         non_utf8: s.is_none(),
     }
 }
@@ -623,3 +622,34 @@ impl FerroSeekMcp {
                     authorization, not full coverage. Read-only, local stdio."
 )]
 impl ServerHandler for FerroSeekMcp {}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use ferroseek_index::{Kind, Meta};
+
+    use super::{entry, rfc3339};
+
+    #[test]
+    fn rfc3339_keeps_the_epoch_and_earlier_modification_times() {
+        assert_eq!(rfc3339(0).as_deref(), Some("1970-01-01T00:00:00Z"));
+        assert_eq!(rfc3339(-1_000_000_000).as_deref(), Some("1969-12-31T23:59:59Z"));
+        // One and a half seconds before the epoch floors to the previous second.
+        assert_eq!(rfc3339(-1_500_000_000).as_deref(), Some("1969-12-31T23:59:58Z"));
+        assert_eq!(rfc3339(-2_208_988_800_000_000_000).as_deref(), Some("1900-01-01T00:00:00Z"));
+        assert_eq!(rfc3339(1_709_210_096_000_000_000).as_deref(), Some("2024-02-29T12:34:56Z"));
+    }
+
+    #[test]
+    fn unreconciled_directories_stay_undated_while_old_files_keep_their_time() {
+        let dir = Meta { kind: Kind::Dir, size: 0, mtime_ns: 0, ino: 1 };
+        assert_eq!(entry(Path::new("/data/src"), &dir).modified, None);
+        let epoch = Meta { kind: Kind::File, size: 3, mtime_ns: 0, ino: 2 };
+        assert_eq!(entry(Path::new("/data/epoch.txt"), &epoch).modified.as_deref(), Some("1970-01-01T00:00:00Z"));
+        let old = Meta { kind: Kind::File, size: 3, mtime_ns: -1_000_000_000, ino: 3 };
+        assert_eq!(entry(Path::new("/data/notes.txt"), &old).modified.as_deref(), Some("1969-12-31T23:59:59Z"));
+        let reconciled = Meta { kind: Kind::Dir, size: 0, mtime_ns: -1_000_000_000, ino: 4 };
+        assert_eq!(entry(Path::new("/data/old"), &reconciled).modified.as_deref(), Some("1969-12-31T23:59:59Z"));
+    }
+}
