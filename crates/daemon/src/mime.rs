@@ -11,13 +11,16 @@ use std::collections::{HashMap, HashSet};
 
 use ferroseek_desktop::apps::data_dirs;
 
+/// Candidates in directory-priority, weight and original line order.
+type GlobMap = HashMap<String, Vec<(u32, String)>>;
+
 pub struct MimeDb {
     /// Case-insensitive globs, keyed lowercase.
-    by_ext: HashMap<String, (u32, String)>,
-    by_name: HashMap<String, (u32, String)>,
+    by_ext: GlobMap,
+    by_name: GlobMap,
     /// Case-sensitive (`cs`) globs, keyed verbatim.
-    by_ext_cs: HashMap<String, (u32, String)>,
-    by_name_cs: HashMap<String, (u32, String)>,
+    by_ext_cs: GlobMap,
+    by_name_cs: GlobMap,
     generic: HashMap<String, String>,
     related: HashMap<String, Vec<String>>,
 }
@@ -39,14 +42,7 @@ impl MimeDb {
         // Lower-priority dirs first so user dirs override.
         for dir in data_dirs().iter().rev() {
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/globs2")) {
-                // Resolve weights within each file, then let the higher-priority
-                // directory replace identical patterns regardless of weight.
-                let mut layer = Self::empty();
-                layer.add_globs2(&s);
-                db.by_ext.extend(layer.by_ext);
-                db.by_name.extend(layer.by_name);
-                db.by_ext_cs.extend(layer.by_ext_cs);
-                db.by_name_cs.extend(layer.by_name_cs);
+                db.add_globs2(&s);
             }
             if let Ok(s) = std::fs::read_to_string(dir.join("mime/generic-icons")) {
                 for l in s.lines() {
@@ -115,31 +111,50 @@ impl MimeDb {
     }
 
     pub fn add_globs2(&mut self, s: &str) {
+        let mut layer = Self::empty();
+        let mut removed = HashSet::new();
         for line in s.lines() {
             if line.starts_with('#') {
                 continue;
             }
             let mut it = line.split(':');
             let (Some(w), Some(mime), Some(glob)) = (it.next(), it.next(), it.next()) else { continue };
+            if glob == "__NOGLOBS__" {
+                removed.insert(mime);
+                continue;
+            }
             let Ok(weight) = w.parse::<u32>() else { continue };
             let cs = it.next().is_some_and(|f| f.split(',').any(|x| x == "cs"));
             let (map, key) = if let Some(ext) = glob.strip_prefix("*.") {
                 if ext.contains(['*', '?', '[']) {
                     continue;
                 }
-                if cs { (&mut self.by_ext_cs, ext.to_string()) } else { (&mut self.by_ext, ext.to_lowercase()) }
+                if cs { (&mut layer.by_ext_cs, ext.to_string()) } else { (&mut layer.by_ext, ext.to_lowercase()) }
             } else if !glob.contains(['*', '?', '[']) {
-                if cs { (&mut self.by_name_cs, glob.to_string()) } else { (&mut self.by_name, glob.to_lowercase()) }
+                if cs { (&mut layer.by_name_cs, glob.to_string()) } else { (&mut layer.by_name, glob.to_lowercase()) }
             } else {
                 continue;
             };
-            // Highest weight wins; on ties the earlier line wins (globs2 is
-            // sorted by weight, then by preference).
-            match map.get(&key) {
-                Some((ow, _)) if *ow >= weight => {}
-                _ => {
-                    map.insert(key, (weight, mime.to_string()));
-                }
+            map.entry(key).or_default().push((weight, mime.to_string()));
+        }
+        // Keep alternatives until resets have been applied, including rules
+        // shadowed by a higher-priority directory or a higher-weight MIME type.
+        for (previous, current) in [
+            (&mut self.by_ext, layer.by_ext),
+            (&mut self.by_name, layer.by_name),
+            (&mut self.by_ext_cs, layer.by_ext_cs),
+            (&mut self.by_name_cs, layer.by_name_cs),
+        ] {
+            previous.retain(|_, rules| {
+                rules.retain(|(_, mime)| !removed.contains(mime.as_str()));
+                !rules.is_empty()
+            });
+            for (key, mut rules) in current {
+                // Stable sorting preserves the earlier line on equal weights.
+                rules.sort_by_key(|(weight, _)| std::cmp::Reverse(*weight));
+                let older = previous.entry(key).or_default();
+                rules.append(older);
+                *older = rules;
             }
         }
     }
@@ -150,6 +165,7 @@ impl MimeDb {
         if let Some((_, m)) = [self.by_name.get(&name.to_lowercase()), self.by_name_cs.get(name)]
             .into_iter()
             .flatten()
+            .filter_map(|rules| rules.first())
             .max_by_key(|(weight, _)| *weight)
         {
             return Some(m);
@@ -161,7 +177,11 @@ impl MimeDb {
             if ext.is_empty() {
                 continue;
             }
-            for hit in [self.by_ext_cs.get(ext), self.by_ext.get(&ext.to_lowercase())].into_iter().flatten() {
+            for hit in [self.by_ext_cs.get(ext), self.by_ext.get(&ext.to_lowercase())]
+                .into_iter()
+                .flatten()
+                .filter_map(|rules| rules.first())
+            {
                 if best.is_none_or(|(weight, _)| hit.0 > *weight) {
                     best = Some(hit);
                 }
@@ -316,6 +336,93 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    }
+
+    #[test]
+    fn glob_deleteall_is_not_a_literal_filename() {
+        let mut db = MimeDb::empty();
+        db.add_globs2("0:text/x-diff:__NOGLOBS__\n50:text/x-diff:*.diff\n");
+        assert_eq!(db.mime_for("__NOGLOBS__"), None);
+        assert_eq!(db.icon_for("__NOGLOBS__"), "unknown");
+        assert!(db.handler_types("__NOGLOBS__").is_empty());
+        assert_eq!(db.mime_for("file.diff"), Some("text/x-diff"));
+    }
+
+    #[test]
+    fn glob_deleteall_preserves_alternative_associations() {
+        for (pattern, name) in
+            [("*.probe", "file.probe"), ("*.PROBE:cs", "file.PROBE"), ("Probe", "Probe"), ("Probe:cs", "Probe")]
+        {
+            let mut db = MimeDb::empty();
+            db.add_globs2(&format!(
+                "80:text/x-removed:{pattern}\n40:text/x-low:{pattern}\n50:text/x-retained:{pattern}\n50:text/x-tied:{pattern}\n"
+            ));
+            assert_eq!(db.mime_for(name), Some("text/x-removed"));
+            db.add_globs2("0:text/x-removed:__NOGLOBS__\n");
+            assert_eq!(db.mime_for(name), Some("text/x-retained"), "lost alternative for {pattern}");
+            assert_eq!(db.icon_for(name), "text-x-retained");
+            assert!(db.handler_types(name).contains(&"text/x-retained".into()));
+
+            db.add_globs2(&format!("10:text/x-user:{pattern}\n"));
+            assert_eq!(db.mime_for(name), Some("text/x-user"), "directory priority precedes weight");
+            db.add_globs2("0:text/x-user:__NOGLOBS__\n");
+            assert_eq!(db.mime_for(name), Some("text/x-retained"), "lost alternative from an earlier directory");
+            db.add_globs2("0:text/x-retained:__NOGLOBS__\n");
+            assert_eq!(db.mime_for(name), Some("text/x-tied"), "equal weights preserve line order");
+            db.add_globs2("0:text/x-tied:__NOGLOBS__\n");
+            assert_eq!(db.mime_for(name), Some("text/x-low"));
+        }
+    }
+
+    #[test]
+    fn user_glob_deleteall_removes_previous_patterns_without_becoming_a_filename() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_MIME_DELETEALL";
+        if std::env::var_os(CASE).is_some() {
+            let db = MimeDb::load();
+            for name in ["file.patch", "file.OLD", "OldLiteral", "OldExact", "file.removed"] {
+                assert_eq!(db.mime_for(name), None, "deleted rule still matches {name}");
+                assert_eq!(db.icon_for(name), "unknown");
+                assert!(MimeDb::load_for_handlers().handler_types(name).is_empty());
+            }
+            assert_eq!(db.mime_for("__NOGLOBS__"), None, "a reset directive is not a filename rule");
+            assert_eq!(db.mime_for("file.diff"), Some("text/x-diff"));
+            assert_eq!(db.mime_for("file.keep"), Some("text/x-keep"));
+            assert_eq!(db.mime_for("file.probe"), Some("text/x-retained"));
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (directory, globs) in [
+            (
+                "system",
+                concat!(
+                    "80:text/x-diff:*.patch\n80:text/x-diff:*.diff\n80:text/x-diff:*.OLD:cs\n",
+                    "80:text/x-diff:OldLiteral\n80:text/x-diff:OldExact:cs\n",
+                    "50:text/x-removed:*.removed\n50:text/x-keep:*.keep\n",
+                    "80:text/x-removed:*.probe\n50:text/x-retained:*.probe\n",
+                ),
+            ),
+            ("user", "0:text/x-diff:__NOGLOBS__\n50:text/x-diff:*.diff\n0:text/x-removed:__NOGLOBS__\n"),
+        ] {
+            let mime = temp.path().join(directory).join("mime");
+            std::fs::create_dir_all(&mime).unwrap();
+            std::fs::write(mime.join("globs2"), globs).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mime::tests::user_glob_deleteall_removes_previous_patterns_without_becoming_a_filename"])
+            .env(CASE, "1")
+            .env("HOME", temp.path())
+            .env("XDG_DATA_HOME", temp.path().join("user"))
+            .env("XDG_DATA_DIRS", temp.path().join("system"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
