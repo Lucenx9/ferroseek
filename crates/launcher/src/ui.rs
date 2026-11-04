@@ -4726,6 +4726,55 @@ mod tests {
     }
 
     #[test]
+    fn picker_reload_keeps_selection_across_read_errors() {
+        for failures in [0, 1, 2] {
+            let mut s = picker_state();
+            let generation = s.application_generation;
+            let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(3)) });
+            let _ = command(&mut s, Command::Down);
+            for _ in 0..failures {
+                let _ = update(&mut s, Message::RefreshSearchStatus);
+                let generation = s.application_generation;
+                let _ = update(
+                    &mut s,
+                    Message::ApplicationsLoaded { generation, result: Err("service unavailable".into()) },
+                );
+            }
+            let _ = update(&mut s, Message::RefreshSearchStatus);
+            let generation = s.application_generation;
+            let mut choices = picker_choices(3);
+            choices.rotate_right(1);
+            let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(choices) });
+            assert!(
+                matches!(
+                    s.application_picker.as_mut().unwrap().command(Command::Activate),
+                    open_with::Effect::Open(id) if id == "editor-01.desktop"
+                ),
+                "selection lost after {failures} read errors"
+            );
+            assert!(s.opening.is_none());
+        }
+    }
+
+    #[test]
+    fn picker_clearing_filter_during_reload_resets_selection() {
+        let mut s = picker_state();
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(3)) });
+        let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("Editor".into()) });
+        let _ = command(&mut s, Command::Down);
+        let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Reload });
+        let _ = command(&mut s, Command::Back);
+        assert!(s.application_picker.as_ref().unwrap().query.is_empty());
+        let generation = s.application_generation;
+        let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(3)) });
+        assert!(matches!(
+            s.application_picker.as_mut().unwrap().command(Command::Activate),
+            open_with::Effect::Open(id) if id == "editor-00.desktop"
+        ));
+    }
+
+    #[test]
     fn picker_read_errors_can_retry_but_unconfirmed_dispatch_cannot_duplicate() {
         let mut s = picker_state();
         let old = s.application_generation;
