@@ -183,6 +183,7 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    input_epoch: u64,
     material: Material,
     glass: bool,
     activation: Activation,
@@ -238,11 +239,12 @@ pub struct Launcher {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
+    InputApplied,
+    InputFocused { epoch: u64, field: Id, at: std::time::Instant },
     MaterialChanged(bool),
     SurfaceResized((u32, u32)),
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
-    ActionsFocusChecked(bool),
     Query(String),
     ContextQuery { generation: u64, query: String },
     Scope(Scope),
@@ -329,10 +331,15 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let (Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. }, material) =
-        BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    let (data, material) = BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    boot_from(data, material, Icons::new(ICON_SIZE as u16))
+}
+
+fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Message>) {
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. } = data;
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        input_epoch: 0,
         material,
         glass: false,
         activation,
@@ -344,7 +351,7 @@ fn boot() -> (Launcher, Task<Message>) {
         launch_task: None,
         unconfirmed_open: false,
         clipboard_owner: false,
-        icons: Icons::new(ICON_SIZE as u16),
+        icons,
         query: String::new(),
         scope: Scope::All,
         search_folder: None,
@@ -377,16 +384,16 @@ fn boot() -> (Launcher, Task<Message>) {
         status: Status::Idle,
         compact: true,
     };
+    state.rebuild(false); // recently opened items for the empty query
     let prefill = if first_run {
         state.show_folders(true)
     } else if initial_query.is_empty() {
         Task::none()
     } else {
-        Task::batch([Task::done(Message::Query(initial_query)), widget::operation::move_cursor_to_end(search_id())])
+        update(&mut state, Message::Query(initial_query))
     };
-    state.rebuild(false); // recently opened items for the empty query
     let size = state.resize();
-    (state, Task::batch([widget::operation::focus(search_id()), size, prefill]))
+    (state, Task::batch([size, prefill]))
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -394,7 +401,7 @@ fn subscription(_: &Launcher) -> Subscription<Message> {
     Subscription::batch([events, Subscription::run(ui_events), Subscription::run(material_events)])
 }
 
-fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
+fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
         Event::Window(iced::window::Event::Resized(size) | iced::window::Event::Opened { size, .. }) => {
             Some(Message::SurfaceResized((size.width.round() as u32, size.height.round() as u32)))
@@ -403,27 +410,30 @@ fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> O
             Some(Message::TimingFrame(at))
         }
         Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
-        // Read regardless of capture: the search field keeps focus and
-        // swallows Escape, but navigation keys must still reach the list.
-        Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) => {
-            let command = key_message(&key, modifiers);
-            if status == event::Status::Captured
-                && modifiers.command()
-                && matches!(key.to_latin(physical_key), Some('c' | 'x'))
-            {
-                Some(Message::InputClipboard(command.map(Box::new)))
-            } else {
-                command
-            }
-        }
-        Event::Mouse(mouse::Event::WheelScrolled { delta }) if status != event::Status::Captured => {
-            let dy = match delta {
-                ScrollDelta::Lines { y, .. } => y,
-                ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
-            };
-            (dy != 0.0).then_some(Message::Wheel(dy))
-        }
         _ => None,
+    }
+}
+
+pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Message> {
+    if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
+        if status == event::Status::Captured {
+            return None;
+        }
+        let dy = match delta {
+            ScrollDelta::Lines { y, .. } => *y,
+            ScrollDelta::Pixels { y, .. } => *y / ROW_HEIGHT,
+        };
+        return (dy != 0.0).then_some(Message::Wheel(dy));
+    }
+    let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
+    let command = key_message(key, *modifiers);
+    if status == event::Status::Captured
+        && modifiers.command()
+        && matches!(key.to_latin(*physical_key), Some('c' | 'x'))
+    {
+        Some(Message::InputClipboard(command.map(Box::new)))
+    } else {
+        command
     }
 }
 
@@ -616,7 +626,7 @@ impl Launcher {
                 self.panel = None;
                 self.application_picker = Some(open_with::Panel::new(file.clone()));
                 let load = self.request_applications();
-                Task::batch([load, self.resize(), widget::operation::focus(open_with::input_id())])
+                Task::batch([load, self.resize(), crate::input::focus(open_with::input_id())])
             }
             (Action::CopyPath, Target::File(f)) => match &f.path {
                 Some(p) => match p.to_str() {
@@ -635,7 +645,7 @@ impl Launcher {
                 let change = update(self, Message::Query(query));
                 Task::batch([
                     change,
-                    widget::operation::focus(search_id()),
+                    crate::input::focus(search_id()),
                     widget::operation::move_cursor_to_end(search_id()),
                 ])
             }
@@ -700,7 +710,7 @@ impl Launcher {
             Err(e) => Status::Error(format!("Cannot update favorites: {e}")),
         };
         let focus = if self.panel.is_some() { actions_id() } else { search_id() };
-        Task::batch([self.resize(), widget::operation::focus(focus)])
+        Task::batch([self.resize(), crate::input::focus(focus)])
     }
 
     fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
@@ -727,7 +737,7 @@ impl Launcher {
             }
             Err(e) => Status::Error(format!("Cannot reset ranking: {e}")),
         };
-        Task::batch([self.resize(), widget::operation::focus(search_id())])
+        Task::batch([self.resize(), crate::input::focus(search_id())])
     }
 
     /// Copies and stays open: on Wayland the clipboard is served by its
@@ -736,7 +746,7 @@ impl Launcher {
     fn copy(&mut self, s: String, what: &str) -> Task<Message> {
         self.status = Status::Notice(format!("Copied {what}"));
         self.panel = None;
-        Task::batch([self.write_clipboard(s), widget::operation::focus(search_id())])
+        Task::batch([self.write_clipboard(s), crate::input::focus(search_id())])
     }
 
     /// The launcher then serves the clipboard, so focus loss no longer closes it.
@@ -811,7 +821,7 @@ impl Launcher {
         self.scope_generation += 1;
         self.scope = Scope::Files;
         let query = update(self, Message::Query(String::new()));
-        Task::batch([query, widget::operation::focus(search_id())])
+        Task::batch([query, crate::input::focus(search_id())])
     }
 
     fn restore_folder_search(&mut self, frame: FolderSearchFrame) {
@@ -851,7 +861,7 @@ impl Launcher {
         Task::batch([
             refresh,
             self.resize(),
-            widget::operation::focus(search_id()),
+            crate::input::focus(search_id()),
             widget::operation::move_cursor_to_end(search_id()),
         ])
     }
@@ -916,7 +926,7 @@ impl Launcher {
             self.status = Status::Notice("File no longer in results. Select a file to preview.".into());
             Task::none()
         };
-        Task::batch([load, self.resize(), widget::operation::focus(search_id())])
+        Task::batch([load, self.resize(), crate::input::focus(search_id())])
     }
 
     fn request_preview(&mut self) -> Task<Message> {
@@ -943,7 +953,7 @@ impl Launcher {
                 self.preview_enabled = false;
                 self.cancel_preview(true);
                 timing::event("preview_closed");
-                Task::batch([self.resize(), widget::operation::focus(search_id())])
+                Task::batch([self.resize(), crate::input::focus(search_id())])
             }
             preview::Effect::Refresh => Task::batch([
                 self.request_preview(),
@@ -976,7 +986,7 @@ impl Launcher {
                     self.cursor.select_target(&Target::File(panel.file), &self.items);
                 }
                 self.details_generation += 1;
-                Task::batch([self.resize(), widget::operation::focus(search_id())])
+                Task::batch([self.resize(), crate::input::focus(search_id())])
             }
             details::Effect::Preview => {
                 let Some(panel) = &self.file_details else { return Task::none() };
@@ -1008,19 +1018,19 @@ impl Launcher {
     fn application_effect(&mut self, effect: open_with::Effect) -> Task<Message> {
         match effect {
             open_with::Effect::None => Task::none(),
-            open_with::Effect::Focus => widget::operation::focus(open_with::input_id()),
+            open_with::Effect::Focus => crate::input::focus(open_with::input_id()),
             open_with::Effect::Close => {
                 if let Some(panel) = self.application_picker.take() {
                     self.cursor.select_target(&Target::File(panel.file), &self.items);
                 }
                 self.application_generation += 1;
-                Task::batch([self.resize(), widget::operation::focus(search_id())])
+                Task::batch([self.resize(), crate::input::focus(search_id())])
             }
             open_with::Effect::Reload => {
                 if self.opening.is_some() || !self.application_picker.as_mut().is_some_and(|panel| panel.loading()) {
                     return Task::none();
                 }
-                Task::batch([self.request_applications(), widget::operation::focus(open_with::input_id())])
+                Task::batch([self.request_applications(), crate::input::focus(open_with::input_id())])
             }
             open_with::Effect::Open(app) => {
                 if self.opening.is_some() || self.unconfirmed_open {
@@ -1072,7 +1082,7 @@ impl Launcher {
                 self.folder_settings = None;
                 self.folder_generation += 1;
                 let refresh = if refresh { update(self, Message::Query(self.query.clone())) } else { Task::none() };
-                Task::batch([task, refresh, self.resize(), widget::operation::focus(search_id())])
+                Task::batch([task, refresh, self.resize(), crate::input::focus(search_id())])
             }
             folders::Effect::Applied => {
                 self.folder_settings = None;
@@ -1084,7 +1094,7 @@ impl Launcher {
                 let query = self.deferred_query.take().unwrap_or_else(|| self.query.clone());
                 let search = update(self, Message::Query(query));
                 self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
-                Task::batch([task, search, self.resize(), widget::operation::focus(search_id())])
+                Task::batch([task, search, self.resize(), crate::input::focus(search_id())])
             }
         }
     }
@@ -1107,6 +1117,20 @@ fn update(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Message::InputApplied = message {
+        s.input_epoch = s.input_epoch.wrapping_add(1);
+        return Task::none();
+    }
+    if let Message::InputFocused { epoch, field, at } = message {
+        if epoch == s.input_epoch {
+            if field == actions_id() && s.panel.is_some() {
+                timing::event_at("actions_focused", at);
+            } else if field == search_id() {
+                timing::event_at("search_focused", at);
+            }
+        }
+        return Task::none();
+    }
     if let Message::SurfaceResized(size) = message {
         s.material.resize(size);
         timing::surface_resized(size);
@@ -1115,12 +1139,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     if let Message::MaterialChanged(enabled) = message {
         s.glass = enabled;
         timing::event(if enabled { "material_blur_requested" } else { "material_opaque" });
-        return Task::none();
-    }
-    if let Message::ActionsFocusChecked(focused) = message {
-        if focused && s.panel.is_some() {
-            timing::event("actions_focused");
-        }
         return Task::none();
     }
     if let Message::TimingFrame(at) = message {
@@ -1260,7 +1278,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             {
                 panel.loaded(result, &mut s.icons);
                 timing::event("applications_loaded");
-                return widget::operation::focus(open_with::input_id());
+                return crate::input::focus(open_with::input_id());
             }
             Task::none()
         }
@@ -1325,7 +1343,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::RefreshSearchStatus => Task::none(),
         Message::CloseSearchStatus => {
             s.search_status = None;
-            Task::batch([s.resize(), widget::operation::focus(search_id())])
+            Task::batch([s.resize(), crate::input::focus(search_id())])
         }
         Message::SearchStatusLoaded { generation, result } => {
             if generation == s.status_generation && s.search_status.is_some() {
@@ -1385,7 +1403,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 let query = s.query.clone();
                 update(s, Message::Query(query))
             };
-            Task::batch([search, widget::operation::focus(search_id())])
+            Task::batch([search, crate::input::focus(search_id())])
         }
         Message::ActionQuery(q) => {
             if let Some(panel) = &mut s.panel {
@@ -1429,8 +1447,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let had_panel = s.panel.is_some();
             s.rebuild(true);
             timing::ready(generation, s.items.len(), s.files.len(), success);
-            let focus =
-                if had_panel && s.panel.is_none() { widget::operation::focus(search_id()) } else { Task::none() };
+            let focus = if had_panel && s.panel.is_none() { crate::input::focus(search_id()) } else { Task::none() };
             Task::batch([s.resize(), focus, s.sync_preview()])
         }
         Message::Cmd(cmd) => command(s, cmd),
@@ -1451,14 +1468,14 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             if s.panel.is_some() {
                 s.clicks = ClickTracker::default();
                 s.panel = None;
-                return widget::operation::focus(search_id());
+                return crate::input::focus(search_id());
             }
             if s.cursor.select_target(&target, &s.items) {
                 s.clicks.press(&target);
             } else {
                 s.clicks = ClickTracker::default();
             }
-            widget::operation::focus(search_id())
+            crate::input::focus(search_id())
         }
         Message::Clicked(target) => {
             if !s.clicks.double_click(&target) || !s.cursor.select_target(&target, &s.items) {
@@ -1476,7 +1493,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 return Task::none();
             }
             s.panel = s.selected().map(|item| s.panel_for(item));
-            widget::operation::focus(actions_id())
+            crate::input::focus(actions_id())
         }
         Message::PanelClicked { target, action } => {
             // A filter or a late result can change rows after they were drawn.
@@ -1644,12 +1661,12 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             Command::Back if !p.query.is_empty() => {
                 p.filter(String::new());
                 timing::event("action_filter_cleared");
-                return widget::operation::focus(actions_id());
+                return crate::input::focus(actions_id());
             }
             Command::Back | Command::ToggleActions => {
                 s.panel = None;
                 timing::event("actions_closed");
-                return widget::operation::focus(search_id());
+                return crate::input::focus(search_id());
             }
             _ => {}
         }
@@ -1693,12 +1710,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
         Command::ToggleActions | Command::OpenActions => {
             if let Some(item) = s.selected() {
                 s.panel = Some(s.panel_for(item));
-                let focus = widget::operation::focus(actions_id());
-                return if timing::enabled() {
-                    focus.chain(widget::operation::is_focused(actions_id()).map(Message::ActionsFocusChecked))
-                } else {
-                    focus
-                };
+                return crate::input::focus(actions_id());
             }
         }
         Command::BrowseFolder | Command::BackFolder | Command::ScrollPreview(_) => {
@@ -1709,7 +1721,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
                 return s.back_folder_search();
             }
             let clear = update(s, Message::Query(String::new()));
-            return Task::batch([clear, widget::operation::focus(search_id())]);
+            return Task::batch([clear, crate::input::focus(search_id())]);
         }
         Command::Back => {
             if s.query.is_empty() {
@@ -1718,7 +1730,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             }
             // Apply the clear synchronously so it cannot arrive in a later context.
             let clear = update(s, Message::Query(String::new()));
-            return Task::batch([clear, widget::operation::focus(search_id())]);
+            return Task::batch([clear, crate::input::focus(search_id())]);
         }
     }
     Task::none()
@@ -1727,7 +1739,22 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
-    crate::material::renderer::opaque_fallback(view_content(s), material_theme(false))
+    let focus = if s.file_details.is_some() || s.search_status.is_some() {
+        None
+    } else if s.folder_settings.is_some() {
+        Some(folders::input_id())
+    } else if s.application_picker.is_some() {
+        Some(open_with::input_id())
+    } else if s.panel.is_some() {
+        Some(actions_id())
+    } else {
+        Some(search_id())
+    };
+    crate::input::capture(
+        crate::material::renderer::opaque_fallback(view_content(s), material_theme(false)),
+        s.input_epoch,
+        focus,
+    )
 }
 
 fn view_content(s: &Launcher) -> Element<'_, Message> {
@@ -2335,6 +2362,258 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    fn typed(value: &str, modifiers: Modifiers) -> Event {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character(value.into()),
+            modified_key: Key::Character(value.into()),
+            physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: (!modifiers.command()).then(|| value.into()),
+            repeat: false,
+        })
+    }
+
+    fn widget_batch(
+        s: &mut Launcher,
+        cache: &mut iced_runtime::user_interface::Cache,
+        events: &[Event],
+        initial: bool,
+    ) {
+        widget_batch_at(s, cache, events, initial, mouse::Cursor::Unavailable);
+    }
+
+    fn widget_batch_at(
+        s: &mut Launcher,
+        cache: &mut iced_runtime::user_interface::Cache,
+        events: &[Event],
+        initial: bool,
+        cursor: mouse::Cursor,
+    ) {
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let (messages, next_cache) = {
+            let mut ui = iced_runtime::UserInterface::build(
+                view(s),
+                iced::Size::new(s.window_width as f32, full_height() as f32),
+                std::mem::take(cache),
+                &mut renderer,
+            );
+            if initial {
+                ui.operate(&renderer, &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()));
+            }
+            let mut messages = Vec::new();
+            let (_, statuses) =
+                ui.update(events, cursor, &mut renderer, &mut iced::advanced::clipboard::Null, &mut messages);
+            for (event, status) in events.iter().cloned().zip(statuses) {
+                if let Some(message) = on_event(event, status, iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+            }
+            (messages, ui.into_cache())
+        };
+        *cache = next_cache;
+        // Deliberately do not run asynchronous widget-focus tasks. The actual
+        // tree must keep later keys away from a field whose context just ended.
+        for message in messages {
+            let _ = update(s, message);
+        }
+    }
+
+    fn settle_widgets(s: &mut Launcher, cache: &mut iced_runtime::user_interface::Cache) {
+        for _ in 0..16 {
+            widget_batch(
+                s,
+                cache,
+                &[Event::Window(iced::window::Event::RedrawRequested(std::time::Instant::now()))],
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[], true);
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed("k", Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+                typed("p", Modifiers::empty()),
+                typed("i", Modifiers::empty()),
+                typed("n", Modifiers::empty()),
+            ],
+            false,
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "pin");
+    }
+
+    #[test]
+    fn repeated_menu_transitions_preserve_order_and_native_text_editing() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[], true);
+        let control = |value| {
+            [
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed(value, Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+            ]
+        };
+        let mut events = Vec::new();
+        events.extend(control("k"));
+        events.push(typed("p", Modifiers::empty()));
+        events.extend(control("k"));
+        events.push(typed("z", Modifiers::empty()));
+        events.push(Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(keyboard::key::Named::Backspace),
+            modified_key: Key::Named(keyboard::key::Named::Backspace),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Backspace),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        })); // Restore a matching result before opening its actions again.
+        events.extend(control("k"));
+        events.push(typed("x", Modifiers::empty()));
+        events.extend(control("a")); // Native select-all in the new action field.
+        events.push(typed("é", Modifiers::empty()));
+        widget_batch(&mut s, &mut cache, &events, false);
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.generation, 3, "the temporary edit and its deletion both reached the main field");
+        assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
+    #[test]
+    fn query_prefill_is_applied_before_the_first_input_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config, "roots = []\n").unwrap();
+        let (mut s, _pending_tasks) = boot_from(
+            Boot {
+                opaque: true,
+                activation: Activation::default(),
+                backend: Backend::disconnected(),
+                apps: search_state().apps,
+                usage: Usage::disabled(),
+                favorites: Favorites::disabled(),
+                initial_query: "report".into(),
+                settings_path: config,
+            },
+            Material::default(),
+            Icons::disabled(),
+        );
+        assert_eq!(s.query, "report");
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[typed("x", Modifiers::empty())], false);
+        assert_eq!(s.query, "reportx");
+    }
+
+    #[test]
+    fn context_click_and_immediate_typing_share_one_ordered_widget_batch() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch_at(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+                typed("p", Modifiers::empty()),
+            ],
+            true,
+            mouse::Cursor::Available(iced::Point::new(200.0, 90.0)),
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "p");
+    }
+
+    #[test]
+    fn focus_loss_discards_deferred_keys_before_the_next_activation() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        s.clipboard_owner = true; // A clipboard-serving instance may remain open.
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                typed("k", Modifiers::CTRL),
+                typed("p", Modifiers::empty()),
+                Event::Window(iced::window::Event::Unfocused),
+            ],
+            true,
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert!(s.panel.as_ref().unwrap().query.is_empty());
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Window(iced::window::Event::Focused),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+                typed("x", Modifiers::empty()),
+            ],
+            false,
+        );
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "x");
+    }
+
+    #[test]
+    fn delayed_focus_tasks_cannot_steal_action_input_or_reset_its_selection() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[typed("k", Modifiers::CTRL)], true);
+        settle_widgets(&mut s, &mut cache);
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                typed("o", Modifiers::empty()),
+                typed("p", Modifiers::empty()),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed("a", Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+            ],
+            false,
+        );
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        {
+            let mut ui = iced_runtime::UserInterface::build(
+                view(&s),
+                iced::Size::new(WIDTH as f32, full_height() as f32),
+                std::mem::take(&mut cache),
+                &mut renderer,
+            );
+            for target in [search_id(), actions_id()] {
+                let mut stream = iced_runtime::task::into_stream(crate::input::focus(target)).unwrap();
+                let action = iced::futures::executor::block_on(stream.next()).unwrap();
+                let iced_runtime::Action::Widget(mut operation) = action else {
+                    panic!("focus must use a widget operation")
+                };
+                ui.operate(&renderer, operation.as_mut());
+            }
+            cache = ui.into_cache();
+        }
+        widget_batch(&mut s, &mut cache, &[typed("é", Modifiers::empty())], false);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
     #[test]
     fn material_changes_preserve_the_current_search_and_actions() {
         let mut state = application_actions(&["New window"]);
@@ -2387,6 +2666,7 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            input_epoch: 0,
             material: Material::default(),
             glass: false,
             activation: Activation::default(),
@@ -3094,7 +3374,11 @@ mod tests {
                 }
                 messages
             };
-            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            assert_eq!(
+                messages.iter().filter(|message| !matches!(message, Message::InputApplied)).count(),
+                1,
+                "one route per essential keyboard event"
+            );
             for message in messages.drain(..) {
                 let _ = update(&mut s, message);
             }
@@ -3174,7 +3458,11 @@ mod tests {
                 }
                 messages
             };
-            assert_eq!(messages.len(), 1, "one route per essential keyboard event");
+            assert_eq!(
+                messages.iter().filter(|message| !matches!(message, Message::InputApplied)).count(),
+                1,
+                "one route per essential keyboard event"
+            );
             for message in messages.drain(..) {
                 let _ = update(&mut s, message);
             }
@@ -3420,7 +3708,7 @@ mod tests {
                 assert_eq!(s.query, "report");
                 continue;
             }
-            assert_eq!(messages.len(), 1);
+            assert_eq!(messages.iter().filter(|message| !matches!(message, Message::InputApplied)).count(), 1);
             if code == Code::KeyX {
                 if s.search_folder.is_none() {
                     departed_root_input = messages.into_iter().next();
@@ -3622,6 +3910,9 @@ mod tests {
                 messages.push(message);
             }
         }
+        // These fixtures assert domain actions; full cached-tree tests above
+        // also apply and verify the internal input acknowledgement.
+        messages.retain(|message| !matches!(message, Message::InputApplied));
         messages
     }
 
@@ -4117,7 +4408,7 @@ mod tests {
                 assert_eq!(shell.event_status(), iced::event::Status::Captured);
                 messages
             };
-            assert_eq!(messages.len(), 1);
+            assert_eq!(messages.iter().filter(|message| !matches!(message, Message::InputApplied)).count(), 1);
             match slot {
                 Some(slot) => assert!(matches!(&messages[0], Message::Cmd(Command::ActivateVisible(i)) if *i == slot)),
                 None => assert!(
@@ -4397,7 +4688,7 @@ mod tests {
             text: None,
             repeat: false,
         });
-        let message = on_event(event, event::Status::Captured, iced::window::Id::unique()).unwrap();
+        let message = input_event(&event, event::Status::Captured).unwrap();
         let task = update(&mut s, message);
         let actions = iced::futures::executor::block_on(async {
             iced_runtime::task::into_stream(task).unwrap().collect::<Vec<_>>().await

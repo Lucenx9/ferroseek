@@ -645,8 +645,13 @@ LIBGL_ALWAYS_SOFTWARE=1 FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_MODE=all \
 ```
 
 The workflow `Launcher interaction` installs the Linux test dependencies and
-retains PNGs, per-process diagnostic logs and `latency.json`. The JSON records
-the OS, CPU, KWin version, keyboard profile, observed logical output geometry/scale
+retains PNGs, per-process diagnostic logs, `latency.json` and
+`input-readiness.json`. The latter records separate burst checks after compositor
+keyboard Enter, with no widget-focus or redraw gate: immediate search typing,
+menu transitions and context-click filtering in every mode. Its focus timestamps
+and edit counts are checked against `input-burst-*.jsonl`. This does not establish
+physical shortcut, IME or input capture before compositor focus. The latency JSON
+records the OS, CPU, KWin version, keyboard profile, observed logical output geometry/scale
 and every sample. Schema 3 records the matching query generation,
 `query_ready_us`, `ready_to_frame_us`, `keyboard_focus_us`, observed renderer and
 live RSS/HWM snapshots. There are 20 process launches per mode by
@@ -784,9 +789,10 @@ To reproduce the current workload, use the command in section 12 with
 `FERROSEEK_SMOKE_PROFILE=us-1x`, `fr-1x` or `us-1.5x`; preserve each profile in its
 own output directory. The workflow runs all three. It checks actual KWin geometry,
 scale, ordinary key symbols and native screenshot sizes before assigning evidence
-to a profile. Preset queries wait for compositor keyboard focus; action text waits
-for confirmed widget focus. Typeahead before those transitions complete is not
-established by this suite. Raw support information, timings and original PNGs are
+to a profile. The historical runs waited for compositor keyboard focus and
+confirmed widget focus before action text. Current runs add the separate burst
+checks described in section 15; they do not capture input sent before compositor
+keyboard focus. Raw support information, timings and original PNGs are
 retained as artifacts. No presentation or physical-desktop latency is measured.
 
 ## 14. Current renderer diagnostics — 2026-11-03
@@ -824,3 +830,22 @@ Preliminary runs also stalled before their first redraw. A later reduced
 300-open startup check and the accepted matrix passed, but no startup root cause
 or timeout fix is claimed. The dataset documents this remaining stability gap;
 physical desktops and hardware GPU drivers still require validation.
+
+
+## 15. Input readiness and refreshed diagnostics — 2026-11-04
+
+[Reports, environment and reproduction](benchmarks/launcher-input-readiness-2026-11-04/README.md)
+record source `d9474b0`, Rust 1.99.1 release builds on Ubuntu 24.04 GitHub-hosted
+AMD EPYC runners, virtual KWin 5.27.11 and llvmpipe. All three keyboard/scale
+profiles completed 20 opens per mode (180 total), plus nine separate burst-input
+processes. The existing raw-log verifier passed for every sample and burst report.
+
+Immediate typing after compositor keyboard Enter, Ctrl+K and context clicks now
+reaches the intended field. Same-batch widget tests cover the reproduced menu
+transition defect, native editing, delayed focus operations and cancellation on
+focus loss. No global shortcut-to-focus capture or physical IME claim is made.
+
+The snapshot keeps first-process and repeated samples separate and records actual
+renderers, focus, result readiness, redraw intervals and live memory. It refreshes
+the diagnostic baseline; different runner hardware and Rust prevent a speed-gain
+comparison with section 14. Physical display presentation remains unmeasured.

@@ -52,9 +52,12 @@ int main(int argc, char **argv)
         wl_display_disconnect(display);
         return 0;
     }
+    int burst = 0;
     for (int i = 1; i < argc; i++) {
         char *end;
-        if (!strcmp(argv[i], "--double-click")) {
+        if (!strcmp(argv[i], "--burst")) { burst = 1; continue; }
+        if (!strcmp(argv[i], "--double-click") || !strcmp(argv[i], "--right-click")) {
+            const int right = !strcmp(argv[i], "--right-click");
             if (i + 2 >= argc) return 1;
             errno = 0;
             long x = strtol(argv[++i], &end, 10);
@@ -62,12 +65,13 @@ int main(int argc, char **argv)
             long y = strtol(argv[++i], &end, 10);
             if (errno || *end || y < 0 || y > 4096) return 1;
             org_kde_kwin_fake_input_pointer_motion_absolute(input, wl_fixed_from_int((int)x), wl_fixed_from_int((int)y));
-            if (wl_display_roundtrip(display) < 0) return 1;
-            for (int click = 0; click < 2; click++) {
-                org_kde_kwin_fake_input_button(input, 0x110, 1); /* BTN_LEFT */
-                if (wl_display_roundtrip(display) < 0) return 1;
-                org_kde_kwin_fake_input_button(input, 0x110, 0);
-                if (wl_display_roundtrip(display) < 0) return 1;
+            if (!burst && wl_display_roundtrip(display) < 0) return 1;
+            for (int click = 0; click < (right ? 1 : 2); click++) {
+                const uint32_t button = right ? 0x111 : 0x110; /* BTN_RIGHT / BTN_LEFT */
+                org_kde_kwin_fake_input_button(input, button, 1);
+                if (!burst && wl_display_roundtrip(display) < 0) return 1;
+                org_kde_kwin_fake_input_button(input, button, 0);
+                if (!burst && wl_display_roundtrip(display) < 0) return 1;
             }
             continue;
         }
@@ -75,8 +79,9 @@ int main(int argc, char **argv)
         long key = strtol(argv[i], &end, 10);
         if (errno || *end || key == 0 || key < -255 || key > 255) return 1;
         org_kde_kwin_fake_input_keyboard_key(input, (uint32_t)labs(key), key > 0 ? 1 : 0);
-        if (wl_display_roundtrip(display) < 0) return 1;
+        if (!burst && wl_display_roundtrip(display) < 0) return 1;
     }
+    if (burst && wl_display_roundtrip(display) < 0) return 1;
     wl_display_disconnect(display);
     return 0;
 }

@@ -47,8 +47,11 @@ pub fn frame(at: Instant, generation: u64, visible: bool) {
 }
 
 pub fn event(event: &'static str) {
+    event_at(event, Instant::now());
+}
+
+pub fn event_at(event: &'static str, at: Instant) {
     with_trace(|trace| {
-        let at = Instant::now();
         trace.record(event, at, 0, 0, 0, at);
     });
 }

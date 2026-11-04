@@ -20,6 +20,8 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 ferroseek-desktop.workspace = true
 ferroseek-config.workspace = true
 iced = { version = "0.14", default-features = false, features = ["advanced", "tiny-skia", "wgpu", "web-colors", "wayland", "svg", "image", "thread-pool"] }
+# Custom focus effects use the runtime operation adapter without a reply channel.
+iced_runtime = "0.14"
 iced_layershell = { version = "0.19", default-features = false }
 # iced_exdevtools 0.19.1 does not build against winit-core beta.4
 # (NativeKeyCode became non-exhaustive); keep the beta.2 it was written for.
@@ -36,6 +38,5 @@ libc.workspace = true
 
 [dev-dependencies]
 iced_tiny_skia = { version = "0.14", default-features = false }
-iced_runtime = "0.14"
 ferroseek-engine.workspace = true
 tempfile.workspace = true

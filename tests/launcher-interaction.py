@@ -188,6 +188,16 @@ def main():
     def text_report():
         type_text("report")
 
+    def text_codes(value):
+        return [code for character in value for code in (character_keys[character], -character_keys[character])]
+
+    def control_codes(character):
+        code = character_keys[character]
+        return [29, code, -code, -29]
+
+    def burst(*codes):
+        subprocess.run([str(helper), "--burst", *map(str, codes)], check=True, timeout=5)
+
     def capture(name):
         with (out / (name + ".log")).open("w") as capture_log:
             subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(out / name)],
@@ -339,7 +349,7 @@ def main():
                      for key, group in grouped.items()}
         with binary.open("rb") as executable:
             launcher_sha256 = hashlib.file_digest(executable, "sha256").hexdigest()
-        report = {"schema": 3, "validation": "incomplete", "environment": {"platform": platform.platform(),
+        report = {"schema": 3, "validation": "incomplete", "input_burst_checks": True, "environment": {"platform": platform.platform(),
                   "cpu": subprocess.check_output(["lscpu"], text=True),
                   "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
                   "launcher_sha256": launcher_sha256,
@@ -361,6 +371,54 @@ def main():
                       "RSS/HWM are /proc snapshots after results, before more input, including shared pages and excluding GPU memory. "
                       "Renderer events identify WGPU or tiny-skia, not the graphics adapter. Material pixels use separate processes.")}
         (out / "latency.json").write_text(json.dumps(report, indent=2) + "\n")
+
+        # These processes are functional checks, separate from the measured
+        # workload. Send each sequence without per-key server roundtrips or a
+        # widget-focus wait between a shortcut/click and the following text.
+        input_cases = []
+        for mode in mode_names:
+            log = out / f"input-burst-{mode}.jsonl"
+            with log.open("w") as stream:
+                process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments],
+                                           stdout=stream, stderr=stream, env=launcher_environment(mode))
+            processes.append(process)
+            wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
+                     "burst launcher owns compositor focus", process=process)
+            burst(*text_codes("report"))
+            wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 6 and r["files"] == 15
+                                 for r in records(log)), "opening input burst reached search", process=process)
+            burst(*control_codes("k"), *text_codes("pin"))
+            wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 3,
+                     "immediate action filter input", process=process)
+            assert len([r for r in records(log) if r.get("event") == "query_start"]) == 6
+            burst(*control_codes("k"), 14, -14, *text_codes("t"),
+                  *control_codes("k"), *text_codes("open"), 1, -1, 1, -1, 14, -14, *text_codes("t"))
+            wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 10 and r["files"] == 15
+                                 for r in records(log)), "burst returned to the original search", process=process)
+            assert len([r for r in records(log) if r.get("event") == "action_input"]) == 7
+            assert len([r for r in records(log) if r.get("event") == "action_filter_cleared"]) == 1
+            assert len([r for r in records(log) if r.get("event") == "actions_closed"]) == 2
+            burst("--right-click", 500, 295, *text_codes("launch"))
+            wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 13,
+                     "right-click and immediate action text", process=process)
+            assert len([r for r in records(log) if r.get("event") == "query_start"]) == 10
+            capture(f"input-burst-actions-{mode}.png")
+            current = records(log)
+            field_ready = next(r for r in current if r.get("event") == "search_focused")
+            focus = next(r for r in current if r.get("event") == "keyboard_focus_enter")
+            input_cases.append({"mode": mode, "renderer": observed_renderer(log),
+                                "keyboard_focus_us": focus["elapsed_us"],
+                                "search_widget_focus_us": field_ready["elapsed_us"],
+                                "query_edits": sum(r.get("event") == "query_start" for r in current),
+                                "action_edits": sum(r.get("event") == "action_input" for r in current),
+                                "action_filter_clears": sum(r.get("event") == "action_filter_cleared" for r in current),
+                                "action_closes": sum(r.get("event") == "actions_closed" for r in current)})
+            subprocess.run([str(binary), "--private"], check=True, timeout=5)
+            assert process.wait(timeout=5) == 0
+            wait_for(lambda: not owner(), "burst launcher name released")
+        (out / "input-readiness.json").write_text(json.dumps({"schema": 1, "validation": "passed",
+            "profile": profile, "cases": input_cases,
+            "limits": "Input is injected only after compositor keyboard Enter. Widget focus is not presentation. No physical shortcut, IME or pre-focus capture claim."}, indent=2) + "\n")
 
         # Launch a real single-instance target, then reactivate it from another app.
         target = Path(__file__).resolve().with_name("launcher-activation-probe.py")

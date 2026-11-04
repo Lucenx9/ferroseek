@@ -91,6 +91,22 @@ def main():
             widths = [record["width"] for record in records if record.get("event") == "surface_resized"]
             expanded = widths.index(980)
             assert 720 in widths[expanded + 1:], "preview surface did not restore its logical width"
+    readiness_path = args.directory / "input-readiness.json"
+    if report.get("input_burst_checks"):
+        assert readiness_path.exists(), "input burst evidence is missing"
+    if readiness_path.exists():
+        readiness = json.loads(readiness_path.read_text())
+        assert readiness["schema"] == 1 and readiness["validation"] == "passed"
+        assert readiness["profile"] == report["environment"]["profile"]
+        assert {case["mode"] for case in readiness["cases"]} == modes
+        for case in readiness["cases"]:
+            records = load_records(args.directory / f"input-burst-{case['mode']}.jsonl")
+            for field, event in (("query_edits", "query_start"), ("action_edits", "action_input"),
+                                 ("action_filter_clears", "action_filter_cleared"), ("action_closes", "actions_closed")):
+                assert case[field] == sum(record.get("event") == event for record in records)
+            for field, event in (("keyboard_focus_us", "keyboard_focus_enter"), ("search_widget_focus_us", "search_focused")):
+                assert case[field] == next(record["elapsed_us"] for record in records if record.get("event") == event)
+            assert any(record.get("event") == f"renderer_{case['renderer']}" for record in records)
     print(f"OK: {len(samples)} samples, {len(groups)} renderer groups, raw timings and aggregates verified")
 
 
