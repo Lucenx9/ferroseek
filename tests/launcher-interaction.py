@@ -251,6 +251,16 @@ def main():
             configuration = Path(os.environ["FERROSEEK_CONFIG"])
             original = configuration.read_bytes()
             cases = []
+            selected_handler = out / "selected-handler.txt"
+            handler = out / "layout-handler"
+            handler.write_text("#!/usr/bin/python3\nfrom pathlib import Path\nimport sys\n"
+                               + f"Path({str(selected_handler)!r}).write_text(sys.argv[1])\n")
+            handler.chmod(0o755)
+            applications = Path(os.environ["XDG_DATA_HOME"]) / "applications"
+            for index in range(7):
+                (applications / f"layout-handler-{index}.desktop").write_text(
+                    f"[Desktop Entry]\nType=Application\nName=Layout Handler {index} with a deliberately long name for readability\n"
+                    f"MimeType=text/plain;\nExec={handler} {index} %f\n")
             # Worked examples in logical pixels, independent of the production calculator.
             small = geometry[2] == 640
             height, upper, centered = (435, 29, 22.5) if small else (501, 123, 69.5)
@@ -297,7 +307,24 @@ def main():
                         tap(14)
                         wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 2 for r in records(log)),
                                  "typing after layout restart", process=process)
-                        subprocess.run([str(binary)], check=True, timeout=5)
+                        chord(29, 15)
+                        chord(29, 15)
+                        wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 4 for r in records(log)),
+                                 "chooser Files scope ready", process=process)
+                        chord(29, character_keys["k"])
+                        wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "chooser actions focused")
+                        type_text("with")
+                        tap(28)
+                        wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
+                                 "seven long application names loaded", process=process)
+                        burst(29, 107, -107, -29)  # Last application; numbers follow visible rows.
+                        capture(f"layout-chooser-last-{mode}.png")
+                        selected_handler.unlink(missing_ok=True)
+                        chord(29, 2)  # First visible numbered choice, after scrolling to the last.
+                        wait_for(lambda: selected_handler.exists(), "visible chooser application dispatched", process=None)
+                        assert selected_handler.read_text() == ("2" if small else "1"), "chooser dispatched a row outside its constrained window"
+                        if process.poll() is None and owner():
+                            subprocess.run([str(binary)], check=True, timeout=5)
                         assert process.wait(timeout=5) == 0
                         wait_for(lambda: not owner(), "layout restart closed")
                         continue
@@ -310,7 +337,10 @@ def main():
                     burst(29, 42, 51, -51, -42, -29)
                     wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)),
                              "layout preferences loaded", process=process)
-                    chord(29, 15)  # Colors -> Layout, without changing result scope.
+                    # Pointer uses the same tab as Ctrl+Tab; coordinates are logical.
+                    left = (geometry[2] - widths[1]) / 2
+                    subprocess.run([str(helper), "--double-click", str(round(left + 205)), str(round(upper + 20))],
+                                   check=True, timeout=5)
 
                     def choose(index):
                         before = len([r for r in records(log) if r.get("event") == "appearance_frame"])
