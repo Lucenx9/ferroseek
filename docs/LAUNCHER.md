@@ -638,7 +638,10 @@ and `us-layout-1.5x` (960×640 logical, 1440×960 native). These run functional
 layout cases instead of latency trials: three width presets, upper/centered
 placement measured from native screenshots, live reset/discard, save/restart,
 side preview and typing after returning to results, in all three renderer modes.
-The existing US/AZERTY/1.5× latency workloads are unchanged. See `layout.json`
+A separate `us-short-1x` (640×360) case exercises Page Up/Down and numbered
+application dispatch when the chooser fits one row; each page still moves at
+least one application. The existing US/AZERTY/1.5× latency workloads are unchanged.
+See `layout.json`
 and the companion native captures in the workflow artifacts. These checks cover
 single virtual outputs; hotplug, output switching and physical panels remain open.
 

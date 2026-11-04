@@ -152,6 +152,7 @@ impl Panel {
     pub fn command(&mut self, cmd: Command) -> Effect {
         let filtered = self.filtered();
         let len = filtered.len();
+        let page = self.cursor.visible.saturating_sub(1).max(1) as isize;
         match cmd {
             Command::Back => return self.event(Event::Back),
             Command::Activate => {
@@ -167,8 +168,8 @@ impl Panel {
             }
             Command::Up => self.cursor.move_by(-1, len),
             Command::Down => self.cursor.move_by(1, len),
-            Command::PageUp => self.cursor.move_by(-(self.cursor.visible as isize - 1), len),
-            Command::PageDown => self.cursor.move_by(self.cursor.visible as isize - 1, len),
+            Command::PageUp => self.cursor.move_by(-page, len),
+            Command::PageDown => self.cursor.move_by(page, len),
             Command::First => self.cursor.move_by(-(len as isize), len),
             Command::Last => self.cursor.move_by(len as isize, len),
             _ => {}
