@@ -321,10 +321,10 @@ def main():
                         capture(f"layout-chooser-last-{mode}.png")
                         selected_handler.unlink(missing_ok=True)
                         chord(29, 2)  # First visible numbered choice, after scrolling to the last.
-                        wait_for(lambda: selected_handler.exists(), "visible chooser application dispatched", process=None)
-                        assert selected_handler.read_text() == ("2" if small else "1"), "chooser dispatched a row outside its constrained window"
-                        if process.poll() is None and owner():
-                            subprocess.run([str(binary)], check=True, timeout=5)
+                        selected = wait_for(lambda: selected_handler.read_text() if selected_handler.exists() else None,
+                                            "visible chooser application dispatched")
+                        assert selected == ("2" if small else "1"), "chooser dispatched a row outside its constrained window"
+                        # A successful Open with closes the launcher itself.
                         assert process.wait(timeout=5) == 0
                         wait_for(lambda: not owner(), "layout restart closed")
                         continue

@@ -48,7 +48,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
 
 [Dark appearance](assets/launcher-appearance-dark.png). Native captures from the
-[isolated KWin matrix](https://github.com/Lucenx9/ferroseek/actions/runs/41831244131),
+[isolated KWin matrix](https://github.com/Lucenx9/ferroseek/actions/runs/41841162147),
 AZERTY 1× profile, with synthetic data.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
@@ -79,6 +79,12 @@ dark_theme = "iron"
 width = "standard"   # compact (640), standard (720), wide (880) logical px
 position = "upper"   # upper, centered
 ```
+
+![Layout settings on a constrained output](assets/launcher-layout.png)
+
+[Wide centered layout at 1.5×](assets/launcher-layout-centered.png). Native
+captures from the same matrix: 640×480 at 1× and 960×640 logical at 1.5×,
+respectively. The matrix artifacts retain the full keyboard and pixel checks.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview
