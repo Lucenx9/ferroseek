@@ -66,6 +66,7 @@ static void global(void *data, struct wl_registry *registry, uint32_t id, const 
         manager = wl_registry_bind(registry, id, &kde_output_management_v2_interface, 1);
     } else if (!strcmp(interface, "kde_output_device_v2") && version >= 2 && count < 8) {
         struct output *o = &outputs[count++];
+        o->scale = 1.0;
         o->proxy = wl_registry_bind(registry, id, &kde_output_device_v2_interface, 2);
         kde_output_device_v2_add_listener(o->proxy, &output_listener, o);
     }

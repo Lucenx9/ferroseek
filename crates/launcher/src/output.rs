@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_output, wl_registry, wl_shm, wl_shm_pool, wl_subcompositor, wl_subsurface, wl_surface,
 };
-use wayland_client::{Connection, Dispatch, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +30,7 @@ struct State {
     parent: Option<wl_surface::WlSurface>,
     probe: Option<Probe>,
     output: Option<wl_output::WlOutput>,
+    entered: Vec<wl_output::WlOutput>,
     xdg: Option<zxdg_output_v1::ZxdgOutputV1>,
     generation: u64,
     pending: Option<(u32, u32)>,
@@ -62,6 +63,7 @@ impl Observer {
                 parent: None,
                 probe: None,
                 output: None,
+                entered: Vec::new(),
                 xdg: None,
                 generation: 0,
                 pending: None,
@@ -85,6 +87,8 @@ impl Observer {
             let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
             if state.parent.as_ref() != Some(&parent) {
                 state.probe = None;
+                state.entered.clear();
+                state.observe(None, queue);
                 state.parent = Some(parent);
             }
             state.map(queue);
@@ -111,7 +115,7 @@ impl Observer {
             wl_registry::Event::Global { name, interface, version } if interface == "zxdg_output_manager_v1" => {
                 state.manager = Some((*name, registry.bind(*name, (*version).min(2), queue, ())));
                 if let Some(output) = state.output.clone() {
-                    state.observe(output, queue);
+                    state.observe(Some(output), queue);
                 }
             }
             wl_registry::Event::GlobalRemove { name } if state.manager.as_ref().is_some_and(|(id, _)| id == name) => {
@@ -172,8 +176,18 @@ impl State {
         // Iced applies the parent commit, including the new child association.
         let _ = self.tx.unbounded_send(Event::Mapped);
     }
-    fn observe(&mut self, output: wl_output::WlOutput, queue: &QueueHandle<Worker>) {
-        if self.output.as_ref() == Some(&output) && self.xdg.is_some() {
+    fn update_output(&mut self, queue: &QueueHandle<Worker>) {
+        self.entered.retain(|output| output.is_alive());
+        // Resizing can briefly overlap a neighbouring output. Keep the current
+        // member until it leaves, so that transient Enter cannot expand the
+        // window using the neighbour's bounds and sustain that overlap.
+        if self.output.as_ref().is_some_and(|output| self.entered.contains(output)) {
+            return;
+        }
+        self.observe(self.entered.first().cloned(), queue);
+    }
+    fn observe(&mut self, output: Option<wl_output::WlOutput>, queue: &QueueHandle<Worker>) {
+        if self.output == output && self.xdg.is_some() {
             return;
         }
         if let Some(xdg) = self.xdg.take() {
@@ -181,9 +195,12 @@ impl State {
         }
         self.generation = self.generation.wrapping_add(1);
         self.pending = None;
-        self.output = Some(output.clone());
-        if let Some((_, manager)) = &self.manager {
-            self.xdg = Some(manager.get_xdg_output(&output, queue, self.generation));
+        self.output = output;
+        if let (Some((_, manager)), Some(output)) = (&self.manager, &self.output) {
+            self.xdg = Some(manager.get_xdg_output(output, queue, self.generation));
+        }
+        if self.output.is_none() {
+            self.notify(None);
         }
     }
     fn notify(&mut self, bounds: Option<(u32, u32)>) {
@@ -207,8 +224,18 @@ impl Dispatch<wl_surface::WlSurface, ()> for Worker {
         if !inner.probe.as_ref().is_some_and(|probe| probe.surface == *surface) {
             return;
         }
-        if let wl_surface::Event::Enter { output } = event {
-            inner.observe(output, queue);
+        match event {
+            wl_surface::Event::Enter { output } => {
+                if !inner.entered.contains(&output) {
+                    inner.entered.push(output);
+                }
+                inner.update_output(queue);
+            }
+            wl_surface::Event::Leave { output } => {
+                inner.entered.retain(|member| member != &output);
+                inner.update_output(queue);
+            }
+            _ => {}
         }
     }
 }
