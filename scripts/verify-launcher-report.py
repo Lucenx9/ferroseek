@@ -92,6 +92,8 @@ def main():
             expanded = widths.index(980)
             assert 720 in widths[expanded + 1:], "preview surface did not restore its logical width"
     readiness_path = args.directory / "input-readiness.json"
+    if report.get("input_burst_checks"):
+        assert readiness_path.exists(), "input burst evidence is missing"
     if readiness_path.exists():
         readiness = json.loads(readiness_path.read_text())
         assert readiness["schema"] == 1 and readiness["validation"] == "passed"

@@ -349,7 +349,7 @@ def main():
                      for key, group in grouped.items()}
         with binary.open("rb") as executable:
             launcher_sha256 = hashlib.file_digest(executable, "sha256").hexdigest()
-        report = {"schema": 3, "validation": "incomplete", "environment": {"platform": platform.platform(),
+        report = {"schema": 3, "validation": "incomplete", "input_burst_checks": True, "environment": {"platform": platform.platform(),
                   "cpu": subprocess.check_output(["lscpu"], text=True),
                   "kwin": subprocess.check_output(["kwin_wayland", "--version"], text=True).strip(),
                   "launcher_sha256": launcher_sha256,

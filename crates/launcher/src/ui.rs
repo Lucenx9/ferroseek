@@ -2380,6 +2380,16 @@ mod tests {
         events: &[Event],
         initial: bool,
     ) {
+        widget_batch_at(s, cache, events, initial, mouse::Cursor::Unavailable);
+    }
+
+    fn widget_batch_at(
+        s: &mut Launcher,
+        cache: &mut iced_runtime::user_interface::Cache,
+        events: &[Event],
+        initial: bool,
+        cursor: mouse::Cursor,
+    ) {
         let mut renderer =
             iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
         let (messages, next_cache) = {
@@ -2393,13 +2403,8 @@ mod tests {
                 ui.operate(&renderer, &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()));
             }
             let mut messages = Vec::new();
-            let (_, statuses) = ui.update(
-                events,
-                mouse::Cursor::Unavailable,
-                &mut renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut messages,
-            );
+            let (_, statuses) =
+                ui.update(events, cursor, &mut renderer, &mut iced::advanced::clipboard::Null, &mut messages);
             for (event, status) in events.iter().cloned().zip(statuses) {
                 if let Some(message) = on_event(event, status, iced::window::Id::unique()) {
                     messages.push(message);
@@ -2511,6 +2516,59 @@ mod tests {
         let mut cache = iced_runtime::user_interface::Cache::default();
         widget_batch(&mut s, &mut cache, &[typed("x", Modifiers::empty())], false);
         assert_eq!(s.query, "reportx");
+    }
+
+    #[test]
+    fn context_click_and_immediate_typing_share_one_ordered_widget_batch() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch_at(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+                typed("p", Modifiers::empty()),
+            ],
+            true,
+            mouse::Cursor::Available(iced::Point::new(200.0, 90.0)),
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "p");
+    }
+
+    #[test]
+    fn focus_loss_discards_deferred_keys_before_the_next_activation() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        s.clipboard_owner = true; // A clipboard-serving instance may remain open.
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                typed("k", Modifiers::CTRL),
+                typed("p", Modifiers::empty()),
+                Event::Window(iced::window::Event::Unfocused),
+            ],
+            true,
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert!(s.panel.as_ref().unwrap().query.is_empty());
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Window(iced::window::Event::Focused),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+                typed("x", Modifiers::empty()),
+            ],
+            false,
+        );
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "x");
     }
 
     #[test]
