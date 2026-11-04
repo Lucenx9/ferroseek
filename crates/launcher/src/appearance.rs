@@ -69,11 +69,11 @@ pub mod palette {
                 Self::Selected => alpha(p.primary, 0.18),
                 Self::Error => p.danger,
                 Self::Raised => {
-                    let mix = |a, b| a * 0.94 + b * 0.06;
+                    let shift = |value: f32, amount: f32| (value + amount / 255.0).clamp(0.0, 1.0);
                     Color::from_rgb(
-                        mix(p.background.r, p.text.r),
-                        mix(p.background.g, p.text.g),
-                        mix(p.background.b, p.text.b),
+                        shift(p.background.r, if dark { 11.0 } else { -8.0 }),
+                        shift(p.background.g, if dark { 11.0 } else { -8.0 }),
+                        shift(p.background.b, if dark { 13.0 } else { -8.0 }),
                     )
                 }
             }

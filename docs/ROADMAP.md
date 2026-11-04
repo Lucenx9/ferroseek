@@ -40,8 +40,10 @@ published release or verified compatibility with every Linux desktop.
   search scopes and selections when returning.
 - [x] Browse bounded indexed direct folder contents, preserving return state and
   selection, with recursive search available by typing.
-- [ ] Add configuration for keyboard shortcuts, appearance, light/dark themes,
-  size and position. Keep focus, navigation and feedback consistent across views.
+- [x] Appearance preferences with System/Light/Dark mode, paired palettes,
+  immediate preview, explicit save/discard and independent Glass/Solid material.
+- [ ] Add configurable keyboard shortcuts, window size and position. Keep focus,
+  navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon

@@ -28,11 +28,12 @@ global shortcuts or changes desktop settings. Running it while it is open
 closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
-while the folder settings screen is shown, or after a copy in this session: the
+while the folder or appearance settings screen is shown, or after a copy in this session: the
 launcher serves the copied value, so it stays until Esc or the toggle closes it.
 
 | Option | Effect |
 |---|---|
+| Ctrl+Shift+Comma | appearance preferences |
 | `--query TEXT` | start with `TEXT` already typed |
 | `--private` | do not record anything opened in this session |
 | `--opaque` | use a solid surface without background blur |
@@ -45,15 +46,44 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 ## Appearance
 
-The dark surface becomes translucent when the compositor advertises background
-blur and the active renderer supports transparency. Rounded blur regions follow
-the normal, compact and preview layouts.
-The action panel remains solid so result text does not show through its commands;
-the footer has a subtle inset surface. Selection retains the iron accent.
+Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
+**System**, **Light** and **Dark** control the color mode. Choose an independent
+**Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures
+show search, selection and secondary text with the same semantic colors as the
+launcher. A check marks the selected choice; an accent outline marks keyboard
+focus. Up/Down or Tab/Shift+Tab move between choices, and Enter selects one.
+Lower choices scroll into view. Ctrl+S saves; Esc returns to search. Unsaved
+changes require explicit discard (Ctrl+D); Esc keeps editing at that prompt.
+Ctrl+R reloads saved preferences when there are no unsaved edits. Search state
+and in-flight results are retained while editing.
 
-If blur is unavailable or its capability is withdrawn, the surface is opaque.
-Use `ferroseek-launcher --opaque` in your shortcut for a solid appearance even
-when blur is supported. No desktop effects or settings are changed.
+Changes preview immediately. **Save** writes only `[appearance]` in the existing
+configuration, preserving other settings and comments. Atomic private writes
+refuse a stale snapshot or symbolic-link file. Errors retain the draft. These
+launcher preferences need no service restart and are saved in private mode too;
+private mode only disables history and favorites. Older FerroSeek versions
+reject this new section; remove `[appearance]` before downgrading.
+
+```toml
+[appearance]
+mode = "system"       # system, light, dark
+material = "glass"    # glass, solid
+light_theme = "iron"  # iron, slate, forest
+dark_theme = "iron"
+```
+
+System follows the read-only XDG Settings portal's color preference and change
+notifications, including service replacement. No preference, unknown values or
+an unavailable portal use Dark. Reads do not block the first frame. Explicit
+Light/Dark ignores the desktop preference. The portal API is documented in the
+[official Settings specification](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Settings.html).
+
+**Solid** and **Glass** are independent of the color theme. Glass becomes
+translucent when the compositor advertises background blur and the renderer
+supports transparency. Rounded blur regions follow normal, compact and preview
+layouts; action menus stay solid. If blur is unavailable or withdrawn, the
+surface is opaque. `--opaque` overrides the saved material for that session;
+it does not change the preference. No desktop effects or settings are changed.
 
 The launcher uses `ext-background-effect-v1`, or the older KDE blur extension
 when the standard manager is absent. The compositor controls the blur algorithm;
@@ -438,7 +468,7 @@ results were reordered.
 **Hide** or Esc closes the sidebar before clearing the search; it preserves the
 current query, filter and selection and stops reads on subsequent navigation.
 Preview stays enabled only for the current launcher session. Modal screens such as
-index status, folder settings, File details and Open with hide the sidebar and
+index status, folder and appearance settings, File details and Open with hide the sidebar and
 pause new preview reads. Returning resumes it for the current selected file.
 Opening, refreshing or copying a preview does not record launch history.
 
@@ -625,6 +655,11 @@ waits. They run in auto, opaque and software modes. `input-readiness.json` recor
 their focus observations and edit counts; the report verifier checks these against
 the original `input-burst-*.jsonl` logs. Physical shortcuts and input sent before
 compositor keyboard focus remain unverified.
+
+Appearance cases also navigate mode, material and palette choices using real
+keys, save and reopen the process, inspect actual light/dark pixels and verify
+the live Solid-to-Glass transition and `--opaque` precedence in all modes.
+`appearance.json`, per-process logs and captures remain with the other evidence.
 
 The material check places fine stripes behind the launcher and compares actual
 output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback.
