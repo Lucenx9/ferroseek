@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "validation": "passed",
+  "profile": "us-1x",
+  "cases": [
+    {
+      "mode": "auto",
+      "renderer": "wgpu",
+      "keyboard_focus_us": 715949,
+      "search_widget_focus_us": 675242,
+      "query_edits": 10,
+      "action_edits": 13,
+      "action_filter_clears": 1,
+      "action_closes": 2
+    },
+    {
+      "mode": "opaque",
+      "renderer": "wgpu",
+      "keyboard_focus_us": 722174,
+      "search_widget_focus_us": 680502,
+      "query_edits": 10,
+      "action_edits": 13,
+      "action_filter_clears": 1,
+      "action_closes": 2
+    },
+    {
+      "mode": "software",
+      "renderer": "tiny_skia",
+      "keyboard_focus_us": 307693,
+      "search_widget_focus_us": 301401,
+      "query_edits": 10,
+      "action_edits": 13,
+      "action_filter_clears": 1,
+      "action_closes": 2
+    }
+  ],
+  "limits": "Input is injected only after compositor keyboard Enter. Widget focus is not presentation. No physical shortcut, IME or pre-focus capture claim."
+}

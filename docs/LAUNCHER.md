@@ -122,6 +122,16 @@ the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
 
+Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
+applies the command and focuses the current field before delivering later input
+from the same event batch. Native text editing, selection and clipboard handling
+stay in the text widget. A delayed focus request for a departed field is ignored;
+focus loss discards deferred input before the next activation. `--query` is
+applied before the first input field is built.
+
+This applies to input received by the launcher. Before the compositor gives it
+keyboard focus, keystrokes still belong to the previously focused application.
+
 Click a result once to select it; double-click or press Enter to open it.
 Right-click a result to select it and open its actions, or click **Actions**
 in the footer. A click on a result that disappears while results update is
@@ -597,7 +607,7 @@ Measured opens wait for the first redraw and actual Wayland keyboard Enter
 before typing, without clicking or an arbitrary delay. They verify editing after
 asynchronous results, action-filter focus and return to the main input,
 Escape/toggle, a click on another window, and input returning to a background test application. PNGs, diagnostic logs and
-`latency.json` remain in the output directory. It also opens a synthetic
+`latency.json` and `input-readiness.json` remain in the output directory. It also opens a synthetic
 single-instance application, moves input to another test app, and reactivates
 the existing target through both Enter and a result-row double click. A persistent
 synthetic input device keeps the isolated seat capabilities present. Token presence
@@ -607,9 +617,14 @@ handlers, the application chooser, double click and FileManager1 reveal, includi
 a long filename. An owned `xdg-open` stand-in routes default opens to the synthetic
 handler; these checks do not validate real desktop associations or file managers.
 Physical Ctrl+Digit1 also selects an application and a filtered declared action
-while their input fields have focus, preserving both query strings. Action-filter
-text waits for a widget focus query to return true. The suite does not establish
-typeahead handling between an opening shortcut and the asynchronous focus change.
+while their input fields have focus, preserving both query strings. Separate
+burst cases start typing after compositor keyboard Enter, without a first-redraw
+or widget-focus gate. They send Ctrl+K and filter text, close/reopen/edit sequences,
+and a context click followed by text without per-key server roundtrips or focus
+waits. They run in auto, opaque and software modes. `input-readiness.json` records
+their focus observations and edit counts; the report verifier checks these against
+the original `input-burst-*.jsonl` logs. Physical shortcuts and input sent before
+compositor keyboard focus remain unverified.
 
 The material check places fine stripes behind the launcher and compares actual
 output pixels with blur enabled, with `--opaque` and with the tiny-skia fallback.
@@ -651,7 +666,10 @@ to retain a diagnostic session.
 ends at a subsequent redraw event. Superseded, hidden and failed queries have separate
 events and do not become successful frame samples. `keyboard_focus_enter` and
 `keyboard_focus_leave` report actual compositor keyboard focus without key contents;
-`actions_focused` reports a successful widget focus query in diagnostic mode.
+`actions_focused` and `search_focused` report in-tree confirmation of the current
+field's focus, timestamped before forwarding input. They identify widget focus,
+not compositor keyboard ownership or completed drawing. A repeated confirmation
+can follow a command; the first search confirmation is retained by the burst report.
 `material_blur_requested` reports a protocol request, not proof of rendered blur;
 `material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
 identify accepted preview replies and closing the sidebar.
