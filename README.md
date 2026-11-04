@@ -8,7 +8,7 @@ Type an application name, find a file in your indexed folders, or calculate a
 result. Open it with Enter. FerroSeek combines a Wayland launcher with its own
 Rust file search engine and keeps launch history locally.
 
-![FerroSeek showing application, file and folder results](docs/assets/launcher.png)
+![FerroSeek showing application and indexed file results](docs/assets/launcher.png)
 
 Screenshot from a nested test session with sample files.
 
@@ -64,9 +64,9 @@ Running the command again closes the open launcher. Clicking another window also
 compositor moves keyboard focus away; the [launcher guide](docs/LAUNCHER.md) lists exceptions. The installer does not
 register a global shortcut or change desktop settings.
 
-The launcher uses a dark glass surface when background blur is available, with
-a solid fallback. Bind `ferroseek-launcher --opaque` if you prefer an opaque
-appearance. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).
+Choose **Appearance** for System/Light/Dark mode, paired color themes and a
+saved Glass/Solid preference. Glass has a solid fallback;
+`ferroseek-launcher --opaque` forces Solid for the session. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).
 
 Use `./scripts/install.sh` for guided setup, or `--dry-run` to inspect its plan.
 See [installation and upgrades](docs/INSTALLATION.md) for XDG paths, indexing
@@ -81,6 +81,7 @@ configuration, optional service enablement, archives and uninstall.
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
 | Ctrl+I | Show file search status; Esc returns to search |
+| Ctrl+Shift+Comma | Appearance preferences |
 | Ctrl+, | Choose search folders; Ctrl+S saves and applies |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
@@ -93,8 +94,8 @@ More navigation keys and history settings are in the [launcher guide](docs/LAUNC
 
 ## Current limits and next steps
 
-The window currently has a fixed size and position and one dark appearance.
-Themes and layout configuration are planned. Application focus depends on the
+The window currently has a fixed size and position. Appearance preferences are
+available; layout configuration is planned. Application focus depends on the
 receiving app and compositor; application launches, file opens and reveal actions
 supply fresh Wayland activation context when available. See [activation behavior](docs/LAUNCHER.md#application-activation)
 and the [desktop validation matrix](docs/LAUNCHER.md#desktop-validation).

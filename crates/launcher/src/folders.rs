@@ -385,7 +385,9 @@ impl Panel {
                 body = body.push(text("Review your folders, then save to start file search.").size(14));
             }
             if let Some((message, error)) = &self.message {
-                body = body.push(text(message).size(13).color(if *error { palette::ERROR } else { palette::ACCENT }));
+                body = body.push(text(message).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(if *error { palette::ERROR.resolve(theme) } else { palette::ACCENT.resolve(theme) }),
+                }));
             }
             if self.busy() {
                 body = body.push(
@@ -395,7 +397,9 @@ impl Panel {
                         _ => "Checking folder…",
                     })
                     .size(13)
-                    .color(palette::ACCENT),
+                    .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(palette::ACCENT.resolve(theme)),
+                    }),
                 );
             }
             let mut input = text_input("Absolute path or ~/Documents", &self.input)
@@ -410,9 +414,9 @@ impl Panel {
             }
             body = body.push(row![input, add].spacing(8).align_y(Vertical::Center));
             if self.roots.is_empty() {
-                body = body.push(
-                    text("No folders selected. File search will have no indexed files.").size(13).color(palette::DIM),
-                );
+                body = body.push(text("No folders selected. File search will have no indexed files.").size(13).style(
+                    move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+                ));
             }
             for i in self.cursor.window(self.roots.len()) {
                 let path = &self.roots[i];
@@ -426,29 +430,47 @@ impl Panel {
                         .align_y(Vertical::Center),
                 )
                 .padding([4, 8])
-                .style(move |_| container::Style {
-                    background: selected.then_some(iced::Background::Color(palette::SELECTED)),
+                .style(move |theme| container::Style {
+                    background: selected.then_some(iced::Background::Color(palette::SELECTED.resolve(theme))),
                     border: iced::Border { radius: 5.0.into(), ..Default::default() },
                     ..Default::default()
                 });
                 body = body.push(mouse_area(content).on_press(Event::Select(path.clone())));
             }
             if let Some(path) = self.roots.get(self.cursor.selected).filter(|path| path.chars().count() > ROW_PATH) {
-                body = body.push(text(path).size(12).color(palette::DIM).wrapping(text::Wrapping::WordOrGlyph));
+                body = body.push(
+                    text(path)
+                        .size(12)
+                        .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(palette::DIM.resolve(theme)),
+                        })
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                );
             }
             if self.roots.len() > 4 {
                 let window = self.cursor.window(self.roots.len());
                 body = body.push(
-                    text(format!("{}–{} / {} folders", window.start + 1, window.end, self.roots.len()))
-                        .size(12)
-                        .color(palette::DIM),
+                    text(format!("{}–{} / {} folders", window.start + 1, window.end, self.roots.len())).size(12).style(
+                        move |theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(palette::DIM.resolve(theme)),
+                        },
+                    ),
                 );
             }
             if !self.roots.is_empty() {
-                body = body.push(text("↑↓ select · Ctrl+D remove").size(12).color(palette::DIM));
+                body = body.push(text("↑↓ select · Ctrl+D remove").size(12).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }));
             }
             if let Some(warning) = &self.policy_warning {
-                body = body.push(text(warning).size(12).color(palette::ERROR).wrapping(text::Wrapping::WordOrGlyph));
+                body = body.push(
+                    text(warning)
+                        .size(12)
+                        .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(palette::ERROR.resolve(theme)),
+                        })
+                        .wrapping(text::Wrapping::WordOrGlyph),
+                );
             }
             let config = self.policy.as_ref().or_else(|| self.document.as_ref().map(|doc| &doc.config));
             if let Some(config) = config {
@@ -456,13 +478,17 @@ impl Panel {
                 body = body.push(
                     text(format!("{} Edit {file} to change this.", exclusion_summary(config)))
                         .size(12)
-                        .color(palette::DIM)
+                        .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(palette::DIM.resolve(theme)),
+                        })
                         .wrapping(text::Wrapping::WordOrGlyph),
                 );
             }
         }
         if self.pending.is_some() {
-            body = body.push(text("Discard unsaved folder changes?").size(14).color(palette::ACCENT));
+            body = body.push(text("Discard unsaved folder changes?").size(14).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::ACCENT.resolve(theme)) }
+            }));
             body = body.push(
                 row![
                     button(text("Keep editing").size(13)).on_press(Event::KeepEditing).style(ui::status_button_style),

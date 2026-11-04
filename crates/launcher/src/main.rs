@@ -6,9 +6,11 @@
 //! closes it, so a single desktop shortcut toggles the launcher.
 
 mod activation;
+mod appearance;
 mod apps;
 mod backend;
 mod calc;
+mod desktop_settings;
 mod details;
 mod favorites;
 mod folders;
@@ -106,9 +108,12 @@ fn main() -> ExitCode {
     } else {
         favorites::Favorites::load(favorites::Favorites::default_path())
     };
+    let settings_path = ferroseek_config::Paths::from_env().config_file;
+    let appearance = ferroseek_config::Config::load(&settings_path).map(|c| c.appearance).unwrap_or_default();
     timing::event("ui_starting");
     match ui::run(
         ui::Boot {
+            appearance,
             activation,
             opaque,
             backend,
@@ -116,7 +121,7 @@ fn main() -> ExitCode {
             usage: history,
             favorites,
             initial_query,
-            settings_path: ferroseek_config::Paths::from_env().config_file,
+            settings_path,
         },
         events,
     ) {

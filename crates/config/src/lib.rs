@@ -65,6 +65,8 @@ impl Paths {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Launcher-only appearance; does not affect indexing.
+    pub appearance: appearance::Preferences,
     /// Directories to index. `~` expands to `$HOME`.
     pub roots: Vec<String>,
     /// Index dotfiles and dot-directories.
@@ -95,6 +97,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            appearance: appearance::Preferences::default(),
             roots: vec!["~".into()],
             index_hidden: false,
             exclude_names: DEFAULT_EXCLUDE_NAMES.iter().map(|s| s.to_string()).collect(),
@@ -276,11 +279,19 @@ pub fn normalize(p: &Path) -> PathBuf {
     out
 }
 
+pub mod appearance;
 pub mod folders;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_preferences_are_accepted_without_changing_index_configuration() {
+        let config = Config::parse("roots = []\nmax_cpu_percent = 17\n[appearance]\nmode = 'light'\nmaterial = 'solid'\nlight_theme = 'iron'\ndark_theme = 'forest'\n").expect("appearance preferences should coexist with indexing settings");
+        assert!(config.roots.is_empty());
+        assert_eq!(config.max_cpu_percent, 17);
+    }
 
     #[test]
     fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {

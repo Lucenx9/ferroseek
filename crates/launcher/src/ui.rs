@@ -18,6 +18,7 @@ use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
 use crate::activation::Activation;
+use crate::appearance;
 use crate::apps::App;
 use crate::backend::{ACTION_OPEN_PARENT, Backend, FileHit, RunError, SearchStatus, UiEvent};
 use crate::calc;
@@ -31,6 +32,7 @@ use crate::open_with;
 use crate::preview;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
+use ferroseek_config::appearance::Preferences;
 
 pub const WIDTH: u32 = 720;
 const PREVIEW_WIDTH: u32 = 980;
@@ -52,21 +54,7 @@ fn full_height() -> u32 {
     compact_height() + (ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD) as u32
 }
 
-pub(crate) mod palette {
-    use iced::Color;
-    pub const SURFACE: Color = Color::from_rgb8(0x17, 0x18, 0x1c);
-    pub const GLASS: Color = Color::from_rgba8(0x17, 0x18, 0x1c, 0.88);
-    pub const BORDER: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.10);
-    pub const TEXT: Color = Color::from_rgb8(0xec, 0xea, 0xe6);
-    pub const DIM: Color = Color::from_rgb8(0xb0, 0xb2, 0xbc);
-    pub const FAINT: Color = Color::from_rgba8(0xff, 0xff, 0xff, 0.06);
-    /// Oxidised iron.
-    pub const ACCENT: Color = Color::from_rgb8(0xe0, 0x70, 0x3a);
-    pub const SELECTED: Color = Color::from_rgba8(0xe0, 0x70, 0x3a, 0.18);
-    pub const ERROR: Color = Color::from_rgb8(0xe8, 0x6a, 0x6a);
-    /// Floating layers above the surface, such as the action panel.
-    pub const RAISED: Color = Color::from_rgb8(0x22, 0x23, 0x29);
-}
+pub(crate) use crate::appearance::palette;
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
 static BOOT: Mutex<Option<(Boot, Material)>> = Mutex::new(None);
@@ -74,6 +62,7 @@ static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None
 
 /// What the launcher starts with.
 pub struct Boot {
+    pub appearance: Preferences,
     pub opaque: bool,
     pub activation: Activation,
     pub backend: Backend,
@@ -183,6 +172,11 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    preferences: Preferences,
+    system_dark: Option<bool>,
+    opaque: bool,
+    appearance: Option<appearance::Panel>,
+    appearance_generation: u64,
     input_epoch: u64,
     material: Material,
     glass: bool,
@@ -258,6 +252,8 @@ pub enum Message {
     OpenWith { generation: u64, event: open_with::Event },
     ShowSearchStatus,
     ShowFolders,
+    ShowAppearance,
+    Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
     Folder { generation: u64, event: folders::Event },
     RefreshSearchStatus,
@@ -292,14 +288,20 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
-    let (material, material_events) = Material::new(!boot_data.opaque, (WIDTH, compact_height()));
+    let (material, material_events) = Material::new(
+        !boot_data.opaque && boot_data.appearance.material == ferroseek_config::appearance::Material::Glass,
+        (WIDTH, compact_height()),
+    );
     let shared_material = material.clone();
     *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
     *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material));
     iced_layershell::application(boot, namespace, update, view)
-        .style(|_, _| iced::theme::Style { background_color: Color::TRANSPARENT, text_color: palette::TEXT })
-        .theme(|state: &Launcher| material_theme(state.glass))
+        .style(|_, theme| iced::theme::Style {
+            background_color: Color::TRANSPARENT,
+            text_color: palette::TEXT.resolve(theme),
+        })
+        .theme(|state: &Launcher| state.appearance_theme(state.glass))
         .subscription(subscription)
         .settings(Settings {
             with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
@@ -336,9 +338,24 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. } = data;
+    let Boot {
+        activation,
+        backend,
+        apps,
+        usage,
+        favorites,
+        initial_query,
+        settings_path,
+        appearance: preferences,
+        opaque,
+    } = data;
     let first_run = !settings_path.exists();
     let mut state = Launcher {
+        preferences,
+        system_dark: None,
+        opaque,
+        appearance: None,
+        appearance_generation: 0,
         input_epoch: 0,
         material,
         glass: false,
@@ -426,6 +443,11 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
         return (dy != 0.0).then_some(Message::Wheel(dy));
     }
     let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
+    if *modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
+        && *physical_key == keyboard::key::Physical::Code(keyboard::key::Code::Comma)
+    {
+        return Some(Message::ShowAppearance);
+    }
     let command = key_message(key, *modifiers);
     if status == event::Status::Captured
         && modifiers.command()
@@ -438,6 +460,9 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
+    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Character(",") {
+        return Some(Message::ShowAppearance);
+    }
     if mods == Modifiers::CTRL {
         match key.as_ref() {
             Key::Character(",") => return Some(Message::ShowFolders),
@@ -466,6 +491,39 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
+    fn appearance_theme(&self, glass: bool) -> Theme {
+        appearance::theme(self.preferences, self.system_dark, glass)
+    }
+    fn appearance_event(&mut self, event: appearance::Event) -> Task<Message> {
+        let ready = matches!(&event, appearance::Event::Loaded(Ok(_)));
+        let saved = matches!(&event, appearance::Event::Saved(Ok(_)));
+        let (task, close) = self.appearance.as_mut().unwrap().update(event);
+        if ready {
+            timing::event("appearance_ready");
+        }
+        if saved {
+            timing::event("appearance_saved");
+        }
+        self.finish_appearance(task, close)
+    }
+    fn finish_appearance(&mut self, task: Task<appearance::Event>, close: Option<Preferences>) -> Task<Message> {
+        let generation = self.appearance_generation;
+        timing::appearance_changed(close.is_none());
+        self.preferences = close.unwrap_or_else(|| self.appearance.as_ref().unwrap().draft);
+        timing::event(if self.preferences.dark(self.system_dark) { "appearance_dark" } else { "appearance_light" });
+        self.material
+            .set_allowed(!self.opaque && self.preferences.material == ferroseek_config::appearance::Material::Glass);
+        let task = task.map(move |event| Message::Appearance { generation, event });
+        if close.is_some() {
+            self.appearance = None;
+            timing::event("appearance_closed");
+            self.appearance_generation += 1;
+            Task::batch([task, self.resize(), crate::input::focus(search_id())])
+        } else {
+            task
+        }
+    }
+
     /// Recomputes the rows. With `keep_selection` (more results for the
     /// same query), the selected target and its action panel stay put
     /// instead of jumping to the first row.
@@ -537,6 +595,7 @@ impl Launcher {
             && self.items.is_empty()
             && self.search_status.is_none()
             && self.folder_settings.is_none()
+            && self.appearance.is_none()
             && self.application_picker.is_none()
             && self.file_details.is_none()
             && !self.preview_enabled
@@ -871,6 +930,7 @@ impl Launcher {
             && self.file_details.is_none()
             && self.application_picker.is_none()
             && self.folder_settings.is_none()
+            && self.appearance.is_none()
             && self.search_status.is_none()
     }
 
@@ -1142,13 +1202,43 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     if let Message::TimingFrame(at) = message {
+        timing::appearance_frame(at);
         let visible = s.panel.is_none()
             && s.file_details.is_none()
             && s.application_picker.is_none()
             && s.folder_settings.is_none()
+            && s.appearance.is_none()
             && s.search_status.is_none();
         timing::frame(at, s.generation, visible);
         return Task::none();
+    }
+    if s.appearance.is_some() {
+        match message {
+            Message::Appearance { generation, event } if generation == s.appearance_generation => {
+                return s.appearance_event(event);
+            }
+            Message::Cmd(command) => {
+                let (task, close) = s.appearance.as_mut().unwrap().command(command);
+                return s.finish_appearance(task, close);
+            }
+            Message::FolderShortcut(folders::Shortcut::Save) => return s.appearance_event(appearance::Event::Save),
+            Message::FolderShortcut(folders::Shortcut::Remove) => {
+                return s.appearance_event(appearance::Event::Discard);
+            }
+            Message::RefreshSearchStatus => return s.appearance_event(appearance::Event::Reload),
+            Message::ShowAppearance => return s.appearance_event(appearance::Event::Back),
+            Message::Ui(_)
+            | Message::FocusLost
+            | Message::Files { .. }
+            | Message::FolderListed { .. }
+            | Message::PreviewLoaded { .. }
+            | Message::DetailsLoaded { .. }
+            | Message::ApplicationsLoaded { .. }
+            | Message::SearchStatusLoaded { .. }
+            | Message::Opened(_)
+            | Message::ApplicationOpened { .. } => {}
+            _ => return Task::none(),
+        }
     }
     if (s.application_picker.is_some() || s.file_details.is_some())
         && matches!(
@@ -1233,6 +1323,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 && s.file_details.is_none()
                 && s.application_picker.is_none()
                 && s.folder_settings.is_none()
+                && s.appearance.is_none()
                 && s.search_status.is_none() =>
         {
             s.refresh_folder()
@@ -1298,6 +1389,27 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         Message::RefreshSearchStatus if s.application_picker.is_some() => {
             s.application_effect(open_with::Effect::Reload)
+        }
+        Message::ShowAppearance
+            if s.opening.is_none()
+                && s.folder_settings.is_none()
+                && s.file_details.is_none()
+                && s.application_picker.is_none() =>
+        {
+            s.panel = None;
+            s.search_status = None;
+            s.clicks = ClickTracker::default();
+            s.appearance_generation += 1;
+            let generation = s.appearance_generation;
+            let panel = appearance::Panel::new(s.settings_path.clone(), s.preferences);
+            let load = panel.load().map(move |event| Message::Appearance { generation, event });
+            s.appearance = Some(panel);
+            timing::event("appearance_opened");
+            Task::batch([load, s.resize()])
+        }
+        Message::Ui(UiEvent::DesktopAppearance(dark)) => {
+            s.system_dark = dark;
+            Task::none()
         }
         Message::ShowFolders => {
             if let Some(panel) = &mut s.folder_settings {
@@ -1561,7 +1673,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         // An open in flight finishes and exits on its own (or shows its error);
         // folder settings may hold unsaved edits or be saving; a copy is pasted
         // from the launcher after the click into the destination window.
-        Message::FocusLost if s.opening.is_none() && s.folder_settings.is_none() && !s.clipboard_owner => {
+        Message::FocusLost
+            if s.opening.is_none() && s.folder_settings.is_none() && s.appearance.is_none() && !s.clipboard_owner =>
+        {
             s.launch_task = None;
             iced::exit()
         }
@@ -1739,7 +1853,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
-    let focus = if s.file_details.is_some() || s.search_status.is_some() {
+    let focus = if s.file_details.is_some() || s.search_status.is_some() || s.appearance.is_some() {
         None
     } else if s.folder_settings.is_some() {
         Some(folders::input_id())
@@ -1751,13 +1865,20 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         Some(search_id())
     };
     crate::input::capture(
-        crate::material::renderer::opaque_fallback(view_content(s), material_theme(false)),
+        crate::material::renderer::opaque_fallback(view_content(s), s.appearance_theme(false)),
         s.input_epoch,
         focus,
     )
 }
 
 fn view_content(s: &Launcher) -> Element<'_, Message> {
+    if let Some(panel) = &s.appearance {
+        let generation = s.appearance_generation;
+        return panel
+            .view(s.system_dark, s.opaque, s.glass)
+            .map(move |event| Message::Appearance { generation, event });
+    }
+
     if let Some(panel) = &s.file_details {
         let generation = s.details_generation;
         return panel.view().map(move |event| Message::Details { generation, event });
@@ -1790,26 +1911,26 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .on_input(move |query| Message::ContextQuery { generation: scope_generation, query })
         .size(if s.search_folder.is_some() { 16 } else { 20 })
         .padding(if s.search_folder.is_some() { [3, 8] } else { [14, 8] })
-        .style(|_, _| text_input::Style {
+        .style(|theme, _| text_input::Style {
             background: Background::Color(Color::TRANSPARENT),
             border: Border::default(),
-            icon: palette::DIM,
-            placeholder: palette::DIM,
-            value: palette::TEXT,
-            selection: palette::SELECTED,
+            icon: palette::DIM.resolve(theme),
+            placeholder: palette::DIM.resolve(theme),
+            value: palette::TEXT.resolve(theme),
+            selection: palette::SELECTED.resolve(theme),
         });
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
         let selected = s.scope == scope;
         choices.push(button(text(scope.to_string()).size(11)).on_press(Message::Scope(scope)).padding([6, 8]).style(
-            move |_, status| button::Style {
+            move |theme, status| button::Style {
                 background: if selected {
-                    Some(Background::Color(palette::SELECTED))
+                    Some(Background::Color(palette::SELECTED.resolve(theme)))
                 } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                    Some(Background::Color(palette::FAINT))
+                    Some(Background::Color(palette::FAINT.resolve(theme)))
                 } else {
                     None
                 },
-                text_color: if selected { palette::TEXT } else { palette::DIM },
+                text_color: if selected { palette::TEXT.resolve(theme) } else { palette::DIM.resolve(theme) },
                 border: Border { radius: 5.0.into(), ..Default::default() },
                 ..Default::default()
             },
@@ -1821,16 +1942,22 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .style(status_button_style);
     let folders =
         button(text("Folders").size(11)).on_press(Message::ShowFolders).padding([6, 8]).style(status_button_style);
+    let appearance = button(text("Appearance").size(11))
+        .on_press(Message::ShowAppearance)
+        .padding([6, 8])
+        .style(status_button_style);
     // A hairline separates the result filter from the two screens it does not affect.
-    let separator = container(space())
-        .width(1)
-        .height(16)
-        .style(|_| container::Style { background: Some(Background::Color(palette::BORDER)), ..Default::default() });
+    let separator = container(space()).width(1).height(16).style(|theme| container::Style {
+        background: Some(Background::Color(palette::BORDER.resolve(theme))),
+        ..Default::default()
+    });
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
         let path = folder.path.as_deref().and_then(|path| path.to_str()).unwrap_or(&folder.id);
         let location = widget::tooltip(
-            text(ellipsize_middle(path, 62)).size(11).color(palette::DIM),
+            text(ellipsize_middle(path, 62)).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }),
             container(text(path).size(12).wrapping(text::Wrapping::WordOrGlyph))
                 .padding(8)
                 .max_width(600)
@@ -1851,7 +1978,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(2)
         .into()
     } else {
-        row![input, scopes, separator, index_status, folders].spacing(4).align_y(Vertical::Center).into()
+        row![input, scopes, separator, index_status, folders, appearance].spacing(4).align_y(Vertical::Center).into()
     };
     let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
@@ -1873,8 +2000,8 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
             .map(move |event| Message::Preview { generation, event });
             row![
                 container(list).width(Length::FillPortion(2)),
-                container(space()).width(1).height(Length::Fill).style(|_| container::Style {
-                    background: Some(Background::Color(palette::FAINT)),
+                container(space()).width(1).height(Length::Fill).style(|theme| container::Style {
+                    background: Some(Background::Color(palette::FAINT.resolve(theme))),
                     ..Default::default()
                 }),
                 container(preview).width(Length::FillPortion(3))
@@ -1896,17 +2023,20 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     })
 }
 
+#[cfg(test)]
 fn material_theme(glass: bool) -> Theme {
-    let mut colors = Theme::Dark.palette();
-    colors.background = if glass { palette::GLASS } else { palette::SURFACE };
-    Theme::custom("FerroSeek", colors)
+    appearance::theme(Preferences::default(), None, glass)
 }
 
 pub(crate) fn surface_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(theme.palette().background)),
-        border: Border { color: palette::BORDER, width: 1.0, radius: (crate::material::RADIUS as f32).into() },
-        text_color: Some(palette::TEXT),
+        border: Border {
+            color: palette::BORDER.resolve(theme),
+            width: 1.0,
+            radius: (crate::material::RADIUS as f32).into(),
+        },
+        text_color: Some(palette::TEXT.resolve(theme)),
         ..Default::default()
     }
 }
@@ -1915,7 +2045,10 @@ pub(crate) fn divider<'a, M: 'a>() -> Element<'a, M> {
     container(space::horizontal())
         .height(1)
         .width(Length::Fill)
-        .style(|_| container::Style { background: Some(Background::Color(palette::FAINT)), ..Default::default() })
+        .style(|theme| container::Style {
+            background: Some(Background::Color(palette::FAINT.resolve(theme))),
+            ..Default::default()
+        })
         .into()
 }
 
@@ -1931,44 +2064,52 @@ fn index_summary(status: &SearchStatus) -> (&'static str, &'static str) {
 }
 
 /// Editable fields: quiet until focused, then outlined in the accent.
-pub(crate) fn field_style(_: &Theme, status: text_input::Status) -> text_input::Style {
+pub(crate) fn field_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     text_input::Style {
-        background: Background::Color(palette::FAINT),
+        background: Background::Color(palette::FAINT.resolve(theme)),
         border: Border {
             color: match status {
-                text_input::Status::Focused { .. } => palette::ACCENT,
-                _ => palette::BORDER,
+                text_input::Status::Focused { .. } => palette::ACCENT.resolve(theme),
+                _ => palette::BORDER.resolve(theme),
             },
             width: 1.0,
             radius: 6.0.into(),
         },
-        icon: palette::DIM,
-        placeholder: palette::DIM,
-        value: palette::TEXT,
-        selection: palette::SELECTED,
+        icon: palette::DIM.resolve(theme),
+        placeholder: palette::DIM.resolve(theme),
+        value: palette::TEXT.resolve(theme),
+        selection: palette::SELECTED.resolve(theme),
     }
 }
 
-pub(crate) fn status_button_style(_: &Theme, status: button::Status) -> button::Style {
+pub(crate) fn status_button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-            .then_some(Background::Color(palette::FAINT)),
-        text_color: palette::DIM,
+            .then_some(Background::Color(palette::FAINT.resolve(theme))),
+        text_color: palette::DIM.resolve(theme),
         border: Border { radius: 5.0.into(), ..Default::default() },
         ..Default::default()
     }
 }
 
 fn status_metric(value: u64, label: &'static str) -> Element<'static, Message> {
-    container(column![text(value.to_string()).size(22), text(label).size(12).color(palette::DIM)].spacing(3))
-        .padding(12)
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(palette::FAINT)),
-            border: Border { radius: 8.0.into(), ..Default::default() },
-            ..Default::default()
-        })
-        .into()
+    container(
+        column![
+            text(value.to_string()).size(22),
+            text(label).size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            })
+        ]
+        .spacing(3),
+    )
+    .padding(12)
+    .width(Length::Fill)
+    .style(|theme| container::Style {
+        background: Some(Background::Color(palette::FAINT.resolve(theme))),
+        border: Border { radius: 8.0.into(), ..Default::default() },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
@@ -1986,20 +2127,29 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     match status {
         SearchStatusPanel::Loading => {
             content = content.push(text("Checking file search…").size(18));
-            content = content.push(text("Connecting to the search service.").size(13).color(palette::DIM));
+            content =
+                content.push(text("Connecting to the search service.").size(13).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }));
         }
         SearchStatusPanel::Error(error) => {
-            content = content.push(text("Search status unavailable").size(18).color(palette::ERROR));
+            content = content.push(text("Search status unavailable").size(18).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+            }));
             content = content.push(
                 text("Refresh to try again. If this persists, update the launcher and search service together.")
                     .size(13),
             );
-            content = content.push(text(error).size(12).color(palette::DIM));
+            content = content.push(text(error).size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }));
         }
         SearchStatusPanel::Ready(info) => {
             let (title, help) = index_summary(info);
             content = content.push(text(title).size(18));
-            content = content.push(text(help).size(13).color(palette::DIM));
+            content = content.push(text(help).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }));
             content = content.push(
                 row![
                     status_metric(info.files, "Indexed files"),
@@ -2010,17 +2160,19 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
             );
             if info.watch_limit_hit {
                 content = content.push(
-                    text("Folder watch limit reached. Some changes may not be detected promptly.")
-                        .size(13)
-                        .color(palette::ERROR),
+                    text("Folder watch limit reached. Some changes may not be detected promptly.").size(13).style(
+                        move |theme: &iced::Theme| iced::widget::text::Style {
+                            color: Some(palette::ERROR.resolve(theme)),
+                        },
+                    ),
                 );
             }
             if info.errors > 0 {
-                content = content.push(text(format!("{} indexing errors reported during this service session. Check folder access and the service log for details.", info.errors)).size(13).color(palette::ERROR));
+                content = content.push(text(format!("{} indexing errors reported during this service session. Check folder access and the service log for details.", info.errors)).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)), }));
             }
             content = content.push(text("Indexed locations").size(14));
             if info.roots.is_empty() {
-                content = content.push(text("No indexed locations yet. Check the indexing configuration; locations may also be unavailable while the first scan starts.").size(13).color(palette::DIM));
+                content = content.push(text("No indexed locations yet. Check the indexing configuration; locations may also be unavailable while the first scan starts.").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)), }));
             } else {
                 for root in &info.roots {
                     content = content.push(text(root).size(13).wrapping(text::Wrapping::WordOrGlyph));
@@ -2031,7 +2183,9 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     let detail = scrollable(content).id(status_scroll_id()).height(Length::Fill);
     let footer = container(
         row![
-            text("Snapshot · Refresh to check for changes").size(12).color(palette::DIM),
+            text("Snapshot · Refresh to check for changes").size(12).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+            }),
             space::horizontal(),
             button(hint("Esc", "Back to search"))
                 .on_press(Message::CloseSearchStatus)
@@ -2083,8 +2237,14 @@ fn results(s: &Launcher) -> Element<'_, Message> {
             }
             _ => ("No results", "Try a shorter name or a different keyword."),
         };
-        let mut empty =
-            column![text(msg).size(18), text(help).size(13).color(palette::DIM)].spacing(8).align_x(Horizontal::Center);
+        let mut empty = column![
+            text(msg).size(18),
+            text(help).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            })
+        ]
+        .spacing(8)
+        .align_x(Horizontal::Center);
         if s.scope.file_query(&s.query) && !matches!(s.status, Status::Searching) {
             empty = empty.push(
                 row![
@@ -2116,17 +2276,30 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     let mut labels = column![text(ellipsize_end(&item.title, 60)).size(15).wrapping(text::Wrapping::None)].spacing(1);
     if !item.subtitle.is_empty() {
         labels = labels.push(
-            text(ellipsize_middle(&item.subtitle, 80)).size(12).color(palette::DIM).wrapping(text::Wrapping::None),
+            text(ellipsize_middle(&item.subtitle, 80))
+                .size(12)
+                .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(palette::DIM.resolve(theme)),
+                })
+                .wrapping(text::Wrapping::None),
         );
     }
-    let tag = container(text(item.tag).size(11).color(palette::DIM)).padding([2, 8]).style(|_| container::Style {
-        background: Some(Background::Color(palette::FAINT)),
+    let tag = container(
+        text(item.tag)
+            .size(11)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
+    )
+    .padding([2, 8])
+    .style(|theme| container::Style {
+        background: Some(Background::Color(palette::FAINT.resolve(theme))),
         border: Border { radius: 6.0.into(), ..Default::default() },
         ..Default::default()
     });
     let mut content = row![icon, container(labels).width(Length::Fill).clip(true)];
     if s.is_favorite(&item.target) {
-        content = content.push(text("★").size(13).color(palette::ACCENT));
+        content = content.push(text("★").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+            color: Some(palette::ACCENT.resolve(theme)),
+        }));
     }
     let mut content = content.push(tag);
     if s.panel.is_none() {
@@ -2134,8 +2307,8 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     }
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
     // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
-    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT / 2.0).style(move |_| container::Style {
-        background: selected.then_some(Background::Color(palette::ACCENT)),
+    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT / 2.0).style(move |theme| container::Style {
+        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
         border: Border { radius: 1.5.into(), ..Default::default() },
         ..Default::default()
     });
@@ -2144,8 +2317,8 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         .height(ROW_HEIGHT)
         .width(Length::Fill)
         .align_y(Vertical::Center)
-        .style(move |_| container::Style {
-            background: selected.then_some(Background::Color(palette::SELECTED)),
+        .style(move |theme| container::Style {
+            background: selected.then_some(Background::Color(palette::SELECTED.resolve(theme))),
             border: Border { radius: 9.0.into(), ..Default::default() },
             ..Default::default()
         });
@@ -2158,38 +2331,43 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
+    let theme = &s.appearance_theme(false);
     if s.unconfirmed_open {
-        return container(text(UNCONFIRMED_OPEN).size(12).color(palette::ERROR))
-            .width(Length::Fill)
-            .height(FOOTER_HEIGHT)
-            .padding([0, 16])
-            .align_y(Vertical::Center)
-            .into();
+        return container(text(UNCONFIRMED_OPEN).size(12).style(move |theme: &iced::Theme| {
+            iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+        }))
+        .width(Length::Fill)
+        .height(FOOTER_HEIGHT)
+        .padding([0, 16])
+        .align_y(Vertical::Center)
+        .into();
     }
     let (msg, color) = match &s.status {
-        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
-        Status::Notice(n) => (n.clone(), palette::ACCENT),
+        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR.resolve(theme)),
+        Status::Notice(n) => (n.clone(), palette::ACCENT.resolve(theme)),
         Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
-            ("Loading folder…".into(), palette::DIM)
+            ("Loading folder…".into(), palette::DIM.resolve(theme))
         }
-        Status::Searching => ("Searching…".to_string(), palette::DIM),
+        Status::Searching => ("Searching…".to_string(), palette::DIM.resolve(theme)),
         Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
             if s.folder_more {
                 format!("First {} indexed items · Type to search", s.items.len())
             } else {
                 format!("{} indexed items", s.items.len())
             },
-            palette::DIM,
+            palette::DIM.resolve(theme),
         ),
         Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
-            ("Calculator".to_string(), palette::DIM)
+            ("Calculator".to_string(), palette::DIM.resolve(theme))
         }
-        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
-        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
-        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
+        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => {
+            ("No results".to_string(), palette::DIM.resolve(theme))
+        }
+        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM.resolve(theme)),
+        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM.resolve(theme)),
         Status::Idle => match s.items.len() {
-            1 => ("1 result".to_string(), palette::DIM),
-            n => (format!("{n} results"), palette::DIM),
+            1 => ("1 result".to_string(), palette::DIM.resolve(theme)),
+            n => (format!("{n} results"), palette::DIM.resolve(theme)),
         },
     };
     let mut hints = row![].spacing(14).align_y(Vertical::Center);
@@ -2204,10 +2382,10 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         }
         hints = hints.push(
             button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
-                |_, status| button::Style {
+                |theme, status| button::Style {
                     background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-                        .then_some(Background::Color(palette::FAINT)),
-                    text_color: palette::TEXT,
+                        .then_some(Background::Color(palette::FAINT.resolve(theme))),
+                    text_color: palette::TEXT.resolve(theme),
                     ..Default::default()
                 },
             ),
@@ -2237,8 +2415,8 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
-    .style(|_| container::Style {
-        background: Some(Background::Color(palette::FAINT)),
+    .style(|theme| container::Style {
+        background: Some(Background::Color(palette::FAINT.resolve(theme))),
         border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
     })
@@ -2247,12 +2425,20 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
 
 pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     row![
-        container(text(key).size(11).color(palette::TEXT)).padding([1, 6]).style(|_| container::Style {
-            background: Some(Background::Color(palette::FAINT)),
-            border: Border { radius: 4.0.into(), color: palette::BORDER, width: 1.0 },
+        container(
+            text(key).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::TEXT.resolve(theme)),
+            })
+        )
+        .padding([1, 6])
+        .style(|theme| container::Style {
+            background: Some(Background::Color(palette::FAINT.resolve(theme))),
+            border: Border { radius: 4.0.into(), color: palette::BORDER.resolve(theme), width: 1.0 },
             ..Default::default()
         }),
-        text(label).size(12).color(palette::DIM),
+        text(label)
+            .size(12)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
     ]
     .spacing(6)
     .align_y(Vertical::Center)
@@ -2261,7 +2447,10 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
 
 fn numbered_hint(slot: usize) -> Element<'static, Message> {
     let label = if slot < model::NUMBERED_SLOTS { format!("Ctrl+{}", slot + 1) } else { String::new() };
-    text(label).size(11).color(palette::DIM).into()
+    text(label)
+        .size(11)
+        .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) })
+        .into()
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
@@ -2272,11 +2461,21 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .padding([8, 10])
         .style(field_style);
     // Title, field, rows and footer share the rows' 10 px text inset.
-    let title = container(text(ellipsize_end(&p.title, 32)).size(12).color(palette::DIM)).padding([0, 10]);
+    let title = container(
+        text(ellipsize_end(&p.title, 32))
+            .size(12)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
+    )
+    .padding([0, 10]);
     let mut col = column![title, input].spacing(4);
     let actions = p.filtered_actions();
     if actions.is_empty() {
-        col = col.push(container(text("No matching actions").size(13).color(palette::DIM)).padding(10));
+        col = col.push(
+            container(text("No matching actions").size(13).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+            }))
+            .padding(10),
+        );
     }
     for (slot, i) in p.cursor.window(actions.len()).enumerate() {
         let a = actions[i];
@@ -2285,7 +2484,9 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
             row![
                 text(ellipsize_end(p.label(a), 32)).size(14),
                 space::horizontal(),
-                text(a.shortcut()).size(11).color(palette::DIM),
+                text(a.shortcut()).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(palette::DIM.resolve(theme)),
+                }),
                 numbered_hint(slot),
             ]
             .spacing(10)
@@ -2295,8 +2496,8 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .height(34)
         .width(Length::Fill)
         .align_y(Vertical::Center)
-        .style(move |_| container::Style {
-            background: selected.then_some(Background::Color(palette::SELECTED)),
+        .style(move |theme| container::Style {
+            background: selected.then_some(Background::Color(palette::SELECTED.resolve(theme))),
             border: Border { radius: 7.0.into(), ..Default::default() },
             ..Default::default()
         });
@@ -2312,14 +2513,16 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     if actions.len() > VISIBLE_ROWS {
         let window = p.cursor.window(actions.len());
         footer = footer.push(space::horizontal()).push(
-            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len())).size(11).color(palette::DIM),
+            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len())).size(11).style(
+                move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+            ),
         );
     }
     col = col.push(footer);
-    let panel = container(col).width(360).padding(8).style(|_| container::Style {
-        background: Some(Background::Color(palette::RAISED)),
-        border: Border { color: palette::BORDER, width: 1.0, radius: 10.0.into() },
-        text_color: Some(palette::TEXT),
+    let panel = container(col).width(360).padding(8).style(|theme| container::Style {
+        background: Some(Background::Color(palette::RAISED.resolve(theme))),
+        border: Border { color: palette::BORDER.resolve(theme), width: 1.0, radius: 10.0.into() },
+        text_color: Some(palette::TEXT.resolve(theme)),
         // No shadow: iced_tiny_skia 0.14 paints it unclipped on partial redraws
         // (cursor blink), darkening the panel. RAISED and the border lift it.
         ..Default::default()
@@ -2500,6 +2703,7 @@ mod tests {
         std::fs::write(&config, "roots = []\n").unwrap();
         let (mut s, _pending_tasks) = boot_from(
             Boot {
+                appearance: Preferences::default(),
                 opaque: true,
                 activation: Activation::default(),
                 backend: Backend::disconnected(),
@@ -2615,6 +2819,70 @@ mod tests {
     }
 
     #[test]
+    fn appearance_shortcut_does_not_insert_its_printable_key() {
+        let mut state = search_state();
+        let _ = update(&mut state, Message::Query("report".into()));
+        let mut shortcut = typed("<", Modifiers::CTRL | Modifiers::SHIFT);
+        if let Event::Keyboard(keyboard::Event::KeyPressed { physical_key, text, .. }) = &mut shortcut {
+            *physical_key = keyboard::key::Physical::Code(keyboard::key::Code::Comma);
+            *text = Some("<".into());
+        }
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut state, &mut cache, &[shortcut], false);
+        assert_eq!(state.query, "report");
+        assert!(state.appearance.is_some());
+    }
+
+    #[test]
+    fn pending_search_completes_while_appearance_is_open() {
+        let mut state = search_state();
+        let _ = update(&mut state, Message::Query("report".into()));
+        let generation = state.generation;
+        let _ = update(&mut state, Message::ShowAppearance);
+        let _ = update(&mut state, Message::Files { generation, result: Ok(Some(file_hits())) });
+        assert_eq!(state.status, Status::Idle);
+        assert_eq!(state.files.len(), file_hits().len());
+        assert!(state.appearance.is_some());
+        assert_eq!(state.query, "report");
+    }
+
+    #[test]
+    fn appearance_preview_cancel_and_system_changes_preserve_search() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "roots = []").unwrap();
+        let mut state = search_state();
+        state.settings_path = path.clone();
+        state.query = "report".into();
+        let _ = update(&mut state, Message::ShowAppearance);
+        let generation = state.appearance_generation;
+        let _ = update(
+            &mut state,
+            Message::Appearance {
+                generation,
+                event: appearance::Event::Loaded(Ok(ferroseek_config::folders::Document::load(path).unwrap())),
+            },
+        );
+        let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Choose(1) });
+        assert_eq!(state.preferences.mode, ferroseek_config::appearance::Mode::Light);
+        assert!(state.appearance_theme(false).palette().background.r > 0.9);
+        let _ = update(&mut state, Message::Query("stale".into()));
+        let _ = update(&mut state, Message::Ui(UiEvent::DesktopAppearance(Some(true))));
+        assert_eq!(state.query, "report");
+        assert!(state.appearance_theme(false).palette().background.r > 0.9, "explicit Light ignores desktop changes");
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+        assert!(state.appearance.is_some(), "unsaved changes need explicit discard");
+        let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Discard });
+        assert!(state.appearance.is_none());
+        assert_eq!(state.preferences, Preferences::default());
+        assert_eq!(state.query, "report");
+        let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Choose(1) });
+        assert_eq!(state.preferences, Preferences::default(), "late page events are ignored");
+        let _ = update(&mut state, Message::Ui(UiEvent::DesktopAppearance(Some(false))));
+        assert!(state.appearance_theme(false).palette().background.r > 0.9, "System follows the desktop");
+    }
+
+    #[test]
     fn material_changes_preserve_the_current_search_and_actions() {
         let mut state = application_actions(&["New window"]);
         state.query = "report".into();
@@ -2641,15 +2909,33 @@ mod tests {
             let linear = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
             linear(color.r) * 0.2126 + linear(color.g) * 0.7152 + linear(color.b) * 0.0722
         }
-        for glass in [false, true] {
-            for backdrop in [Color::WHITE, Color::BLACK] {
-                let surface = over(material_theme(glass).palette().background, backdrop);
-                for background in
-                    [surface, over(palette::FAINT, surface), over(palette::SELECTED, surface), palette::RAISED]
-                {
-                    for foreground in [palette::TEXT, palette::DIM] {
-                        let ratio = (luminance(foreground) + 0.05) / (luminance(background) + 0.05);
-                        assert!(ratio >= 4.5, "small text contrast {ratio} on {background:?}");
+        for choice in [
+            ferroseek_config::appearance::Palette::Iron,
+            ferroseek_config::appearance::Palette::Slate,
+            ferroseek_config::appearance::Palette::Forest,
+        ] {
+            for mode in [ferroseek_config::appearance::Mode::Dark, ferroseek_config::appearance::Mode::Light] {
+                for glass in [false, true] {
+                    let theme = &appearance::theme(
+                        Preferences { mode, light_theme: choice, dark_theme: choice, ..Default::default() },
+                        None,
+                        glass,
+                    );
+                    for backdrop in [Color::WHITE, Color::BLACK] {
+                        let surface = over(theme.palette().background, backdrop);
+                        for background in [
+                            surface,
+                            over(palette::FAINT.resolve(theme), surface),
+                            over(palette::SELECTED.resolve(theme), surface),
+                            palette::RAISED.resolve(theme),
+                        ] {
+                            for foreground in [palette::TEXT.resolve(theme), palette::DIM.resolve(theme)] {
+                                let a = luminance(foreground);
+                                let b = luminance(background);
+                                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                                assert!(ratio >= 4.5, "small text contrast {ratio} on {background:?}");
+                            }
+                        }
                     }
                 }
             }
@@ -2666,6 +2952,11 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            preferences: Preferences::default(),
+            system_dark: None,
+            opaque: false,
+            appearance: None,
+            appearance_generation: 0,
             input_epoch: 0,
             material: Material::default(),
             glass: false,

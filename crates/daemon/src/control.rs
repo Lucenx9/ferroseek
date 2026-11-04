@@ -45,6 +45,7 @@ impl Control {
             engine.apply_roots(roots).map_err(zbus::fdo::Error::Failed)?;
             let mut active = engine.configuration();
             active.roots = config.roots.clone();
+            active.appearance = config.appearance; // Launcher-only preferences need no daemon restart.
             Ok(active != config)
         })
         .await

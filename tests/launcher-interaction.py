@@ -420,6 +420,64 @@ def main():
             "profile": profile, "cases": input_cases,
             "limits": "Input is injected only after compositor keyboard Enter. Widget focus is not presentation. No physical shortcut, IME or pre-focus capture claim."}, indent=2) + "\n")
 
+        # Real keyboard navigation, saving and reopening with synthetic settings.
+        import tomllib
+        from PyQt5.QtGui import QImage
+        configuration = Path(os.environ["FERROSEEK_CONFIG"])
+        original_configuration = configuration.read_bytes()
+        appearance_cases = []
+        for mode in mode_names:
+            for restart in (False, True):
+                log = out / f"appearance-{mode}-{int(restart)}.jsonl"
+                process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments, "--query", "report"],
+                    stdout=log.open("w"), stderr=subprocess.STDOUT, env=launcher_environment(mode))
+                processes.append(process)
+                wait_for(lambda: any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log)), "appearance search ready", process=process)
+                wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log)), "appearance keyboard focus", process=process)
+                if restart:
+                    capture(f"appearance-restored-{mode}.png")
+                    color = QImage(str(out / f"appearance-restored-{mode}.png")).pixelColor(round(640*observed_scale), round(210*observed_scale))
+                    assert max(abs(actual-expected) for actual,expected in zip((color.red(),color.green(),color.blue()),(239,243,248))) <= 2, "saved Slate Light theme did not draw on restart"
+                burst(29,42,51,-51,-42,-29)  # Ctrl+Shift+physical Comma.
+                wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded", process=process)
+                def advance(count):
+                    burst(*([108,-108] * count),28,-28)
+                if not restart:
+                    advance(1)  # Light
+                    advance(2)  # Solid
+                    advance(3)  # Slate light theme
+                else:
+                    advance(2)  # Dark
+                    advance(2)  # Glass (after starting Solid)
+                    advance(6)  # Forest dark theme
+                burst(*control_codes("s"))
+                wait_for(lambda: any(r.get("event") == "appearance_saved" for r in records(log)), "appearance saved", process=process)
+                saved_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_saved")
+                wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > saved_at for r in records(log)), "appearance redrawn", process=process)
+                name = f"appearance-{'dark' if restart else 'light'}-{mode}.png"
+                capture(name)
+                color = QImage(str(out / name)).pixelColor(round(640*observed_scale), round(210*observed_scale))
+                assert (max(color.red(),color.green(),color.blue()) < 120 if restart else min(color.red(),color.green(),color.blue()) > 220), "appearance pixels disagree with selected mode"
+                if restart and mode != "auto":
+                    assert max(abs(actual-expected) for actual,expected in zip((color.red(),color.green(),color.blue()),(24,34,30))) <= 2, "opaque/software fallback lost the Forest palette"
+                saved = tomllib.loads(configuration.read_text())["appearance"]
+                assert saved["mode"] == ("dark" if restart else "light")
+                assert saved["material"] == ("glass" if restart else "solid")
+                assert saved["light_theme"] == "slate"
+                if restart:
+                    assert saved["dark_theme"] == "forest"
+                    blur = any(r.get("event") == "material_blur_requested" for r in records(log))
+                    assert blur == (mode != "opaque"), "live Glass toggle or --opaque override failed"
+                burst(1,-1)
+                wait_for(lambda: any(r.get("event") == "appearance_closed" for r in records(log)), "appearance returned to results", process=process)
+                assert not any(r.get("event") == "query_start" and r["generation"] > 1 for r in records(log)), "settings input changed the search"
+                subprocess.run([str(binary), "--private"], check=True, timeout=5)
+                assert process.wait(timeout=5) == 0
+                wait_for(lambda: not owner(), "appearance process closed")
+            configuration.write_bytes(original_configuration)
+            appearance_cases.append({"mode": mode, "persistence": "passed", "keyboard": "passed", "renderer": observed_renderer(log)})
+        (out / "appearance.json").write_text(json.dumps({"validation": "passed", "profile": profile, "cases": appearance_cases}, indent=2) + "\n")
+
         # Launch a real single-instance target, then reactivate it from another app.
         target = Path(__file__).resolve().with_name("launcher-activation-probe.py")
         entry = Path(os.environ["XDG_DATA_HOME"]) / "applications/org.ferroseek.ActivationProbe.desktop"

@@ -113,7 +113,9 @@ impl Panel {
             field("Name", &self.file.name),
             column![
                 row![
-                    text(if url { "File URL" } else { "Location" }).size(12).color(palette::DIM),
+                    text(if url { "File URL" } else { "Location" }).size(12).style(move |theme: &iced::Theme| {
+                        iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                    }),
                     space::horizontal(),
                     button(text(copy).size(12)).on_press(Event::CopyLocation).style(ui::status_button_style)
                 ]
@@ -124,12 +126,19 @@ impl Panel {
         ]
         .spacing(16);
         match &self.state {
-            State::Loading => body = body.push(text("Loading file details…").size(15).color(palette::DIM)),
+            State::Loading => {
+                body = body.push(text("Loading file details…").size(15).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }))
+            }
             State::Error(error) => {
                 body = body.push(text("File details could not be loaded").size(16));
-                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).color(palette::ERROR));
-                body =
-                    body.push(text("Refresh to try again, or Esc to return to search.").size(12).color(palette::DIM));
+                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+                }));
+                body = body.push(text("Refresh to try again, or Esc to return to search.").size(12).style(
+                    move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+                ));
             }
             State::Ready(details) => {
                 let mime = if details.mime.is_empty() { "Unknown file type" } else { &details.mime };
@@ -143,7 +152,11 @@ impl Panel {
         }
         let mut footer = row![ui::hint("Esc", "Back to search"), space::horizontal()].align_y(Vertical::Center);
         if let Some(notice) = self.notice {
-            footer = footer.push(text(notice).size(12).color(palette::ACCENT)).push(space::horizontal());
+            footer = footer
+                .push(text(notice).size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(palette::ACCENT.resolve(theme)),
+                }))
+                .push(space::horizontal());
         }
         footer = footer.push(ui::hint("Ctrl+Shift+C", copy));
         container(
@@ -164,7 +177,9 @@ impl Panel {
 
 fn field(label: &str, value: &str) -> Element<'static, Event> {
     column![
-        text(label.to_owned()).size(12).color(palette::DIM),
+        text(label.to_owned())
+            .size(12)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
         text(value.to_owned()).size(15).wrapping(text::Wrapping::WordOrGlyph)
     ]
     .spacing(4)

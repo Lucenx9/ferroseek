@@ -16,10 +16,11 @@ pub fn init() {
 }
 
 pub fn needs_frame() -> bool {
-    TRACE
-        .get()
-        .and_then(|trace| trace.lock().ok())
-        .is_some_and(|trace| trace.first_frame || trace.query.as_ref().is_some_and(|query| query.ready.is_some()))
+    TRACE.get().and_then(|trace| trace.lock().ok()).is_some_and(|trace| {
+        trace.first_frame
+            || trace.appearance.is_some()
+            || trace.query.as_ref().is_some_and(|query| query.ready.is_some())
+    })
 }
 
 pub fn enabled() -> bool {
@@ -44,6 +45,18 @@ pub fn ready(generation: u64, rows: usize, files: usize, success: bool) {
 
 pub fn frame(at: Instant, generation: u64, visible: bool) {
     with_trace(|trace| trace.frame(at, generation, visible));
+}
+
+pub fn appearance_changed(visible: bool) {
+    with_trace(|trace| trace.appearance = visible.then(Instant::now));
+}
+pub fn appearance_frame(at: Instant) {
+    with_trace(|trace| {
+        if trace.appearance.is_some_and(|changed| at >= changed) {
+            trace.appearance = None;
+            trace.record("appearance_frame", at, 0, 0, 0, at);
+        }
+    });
 }
 
 pub fn event(event: &'static str) {
@@ -82,13 +95,14 @@ struct Trace<W> {
     start: Instant,
     output: W,
     first_frame: bool,
+    appearance: Option<Instant>,
     renderer: Option<Backend>,
     query: Option<Query>,
 }
 
 impl<W: Write> Trace<W> {
     fn new(start: Instant, output: W) -> Self {
-        Self { start, output, first_frame: true, renderer: None, query: None }
+        Self { start, output, first_frame: true, appearance: None, renderer: None, query: None }
     }
 
     fn renderer(&mut self, backend: Backend, at: Instant) {

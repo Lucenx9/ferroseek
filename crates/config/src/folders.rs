@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Folder-only edits preserve the rest of the user's configuration.
+//! Scoped edits preserve the rest of the user's configuration.
 
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -69,6 +69,43 @@ impl Document {
                 validate_directory(&path)?;
             }
         }
+        self.edit(move |document| {
+            let mut array = toml_edit::Array::new();
+            for root in &roots {
+                array.push(root.as_str());
+            }
+            let decor = document.get("roots").and_then(toml_edit::Item::as_value).map(|value| value.decor().clone());
+            document["roots"] = toml_edit::value(array);
+            if let Some(decor) = decor
+                && let Some(value) = document["roots"].as_value_mut()
+            {
+                *value.decor_mut() = decor;
+            }
+        })
+    }
+
+    /// Save launcher preferences without changing indexing or unrelated settings.
+    pub fn save_appearance(&self, preferences: crate::appearance::Preferences) -> Result<Self, String> {
+        let source = toml::to_string(&preferences).map_err(|e| e.to_string())?;
+        let appearance = source.parse::<toml_edit::DocumentMut>().map_err(|e| e.to_string())?;
+        self.edit(move |document| {
+            for (key, value) in appearance.iter() {
+                let decor = document
+                    .get("appearance")
+                    .and_then(|table| table.get(key))
+                    .and_then(toml_edit::Item::as_value)
+                    .map(|v| v.decor().clone());
+                document["appearance"][key] = value.clone();
+                if let Some(decor) = decor
+                    && let Some(value) = document["appearance"][key].as_value_mut()
+                {
+                    *value.decor_mut() = decor;
+                }
+            }
+        })
+    }
+
+    fn edit(&self, edit: impl FnOnce(&mut toml_edit::DocumentMut)) -> Result<Self, String> {
         let dir = self.path.parent().ok_or("Configuration has no parent folder")?;
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir).map_err(|e| e.to_string())?;
         let _lock = SettingsLock::acquire(&self.path)?;
@@ -80,17 +117,7 @@ impl Document {
         }
         let mut document =
             self.source.as_deref().unwrap_or("").parse::<toml_edit::DocumentMut>().map_err(|e| e.to_string())?;
-        let mut array = toml_edit::Array::new();
-        for root in &roots {
-            array.push(root.as_str());
-        }
-        let decor = document.get("roots").and_then(toml_edit::Item::as_value).map(|value| value.decor().clone());
-        document["roots"] = toml_edit::value(array);
-        if let Some(decor) = decor
-            && let Some(value) = document["roots"].as_value_mut()
-        {
-            *value.decor_mut() = decor;
-        }
+        edit(&mut document);
         let text = document.to_string();
         let config = Config::parse(&text).map_err(|e| e.to_string())?;
         let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(|e| e.to_string())?;
@@ -149,6 +176,33 @@ pub fn validate_folder(root: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+
+    #[test]
+    fn appearance_edits_preserve_folders_comments_and_refuse_stale_or_linked_files() {
+        use crate::appearance::{Material, Mode, Palette, Preferences};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "# user settings\nroots = [] # keep folders\nmax_cpu_percent = 17\n").unwrap();
+        let doc = Document::load(path.clone()).unwrap();
+        let preferences = Preferences {
+            mode: Mode::Light,
+            material: Material::Solid,
+            light_theme: Palette::Slate,
+            dark_theme: Palette::Forest,
+        };
+        let saved = doc.save_appearance(preferences).unwrap();
+        assert_eq!(Config::load(&path).unwrap().appearance, preferences);
+        assert_eq!(saved.config.max_cpu_percent, 17);
+        assert!(saved.config.roots.is_empty());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# user settings") && text.contains("# keep folders"));
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(doc.save_appearance(Preferences::default()).unwrap_err().contains("changed on disk"));
+        let link = temp.path().join("linked.toml");
+        symlink(&path, &link).unwrap();
+        assert!(Document::load(link).unwrap().save_appearance(preferences).unwrap_err().contains("symbolic link"));
+        assert_eq!(saved.save(vec![]).unwrap().config.appearance, preferences);
+    }
 
     #[test]
     fn saving_releases_the_lock_even_with_an_inherited_descriptor() {

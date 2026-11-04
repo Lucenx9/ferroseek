@@ -165,6 +165,7 @@ pub struct ApplicationChoice {
 pub enum UiEvent {
     /// Another invocation asked this instance to toggle (close).
     Toggle,
+    DesktopAppearance(Option<bool>),
 }
 
 enum Request {
@@ -222,7 +223,7 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                 let (ev_tx, ev_rx) = mpsc::unbounded();
                 // Export before owning the name, so a caller that sees the
                 // name can always reach the object.
-                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, LauncherIface { events: ev_tx }).await {
+                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, LauncherIface { events: ev_tx.clone() }).await {
                     let _ = ready_tx.send(Err(format!("cannot export {LAUNCHER_PATH}: {e}")));
                     return;
                 }
@@ -255,7 +256,11 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                 if ready_tx.send(Ok(Startup::Primary(Backend { tx }, ev_rx))).is_err() {
                     return;
                 }
-                serve(conn, rx, Timeouts::default(), activation).await;
+                iced::futures::future::select(
+                    Box::pin(serve(conn.clone(), rx, Timeouts::default(), activation)),
+                    Box::pin(crate::desktop_settings::watch(conn, ev_tx)),
+                )
+                .await;
             });
         })
         .map_err(|e| format!("cannot start bus thread: {e}"))?;
@@ -827,6 +832,90 @@ mod tests {
         assert!(!address.trim().is_empty(), "private bus did not start");
 
         (temp, bus, address)
+    }
+
+    struct AppearancePortal;
+    #[zbus::interface(name = "org.freedesktop.portal.Settings")]
+    impl AppearancePortal {
+        async fn read_one(&self, _namespace: &str, _key: &str) -> zbus::OwnedVariant {
+            1u32.into()
+        }
+    }
+    #[test]
+    fn desktop_appearance_reads_and_updates_on_a_private_bus() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let service = zbus::connection::Builder::address(address.trim())
+                .name("org.freedesktop.portal.Desktop")
+                .serve_at("/org/freedesktop/portal/desktop", AppearancePortal)
+                .build()
+                .await
+                .unwrap();
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, mut rx) = mpsc::unbounded();
+            let runtime = zruntime::SharedRuntime::current().unwrap();
+            let checks = async {
+                assert!(matches!(rx.next().await, Some(UiEvent::DesktopAppearance(Some(true)))));
+                for (raw, expected) in [(2u32, Some(false)), (99, None), (1, Some(true))] {
+                    service
+                        .emit_signal(
+                            None::<&str>,
+                            "/org/freedesktop/portal/desktop",
+                            "org.freedesktop.portal.Settings",
+                            "SettingChanged",
+                            &("org.freedesktop.appearance", "color-scheme", zbus::Variant::new(raw)),
+                        )
+                        .await
+                        .unwrap();
+                    assert!(matches!(rx.next().await,Some(UiEvent::DesktopAppearance(value)) if value==expected));
+                }
+                service.release_name("org.freedesktop.portal.Desktop").await.unwrap();
+                assert!(
+                    matches!(rx.next().await, Some(UiEvent::DesktopAppearance(None))),
+                    "owner loss resets the system preference"
+                );
+                let _replacement = zbus::connection::Builder::address(address.trim())
+                    .name("org.freedesktop.portal.Desktop")
+                    .serve_at("/org/freedesktop/portal/desktop", AppearancePortal)
+                    .build()
+                    .await
+                    .unwrap();
+                assert!(
+                    matches!(rx.next().await, Some(UiEvent::DesktopAppearance(Some(true)))),
+                    "replacement is read without waiting for a change signal"
+                );
+            };
+            match iced::futures::future::select(
+                Box::pin(crate::desktop_settings::watch(conn, tx)),
+                Box::pin(runtime.timeout(Duration::from_secs(5), checks)),
+            )
+            .await
+            {
+                iced::futures::future::Either::Right((Ok(()), _)) => {}
+                _ => panic!("desktop preference watcher stopped or timed out"),
+            }
+        });
+    }
+    #[test]
+    fn missing_desktop_portal_reports_no_preference_without_blocking() {
+        let (_temp, _bus, address) = private_bus();
+        zbus::block_on(async {
+            let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
+            let (tx, mut rx) = mpsc::unbounded();
+            let runtime = zruntime::SharedRuntime::current().unwrap();
+            let checks = async {
+                assert!(matches!(rx.next().await, Some(UiEvent::DesktopAppearance(None))));
+            };
+            match iced::futures::future::select(
+                Box::pin(crate::desktop_settings::watch(conn, tx)),
+                Box::pin(runtime.timeout(Duration::from_secs(5), checks)),
+            )
+            .await
+            {
+                iced::futures::future::Either::Right((Ok(()), _)) => {}
+                _ => panic!("missing portal blocked fallback"),
+            }
+        });
     }
 
     #[test]
