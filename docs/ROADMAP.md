@@ -42,7 +42,9 @@ published release or verified compatibility with every Linux desktop.
   selection, with recursive search available by typing.
 - [x] Appearance preferences with System/Light/Dark mode, paired palettes,
   immediate preview, explicit save/discard and independent Glass/Solid material.
-- [ ] Add configurable keyboard shortcuts, window size and position. Keep focus,
+- [x] Add width presets and upper/centered placement, with immediate preview,
+  explicit save/reset and output bounds in isolated KWin. Physical desktops remain unverified.
+- [ ] Add configurable keyboard shortcuts. Keep focus,
   navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.

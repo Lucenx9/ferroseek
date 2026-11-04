@@ -85,14 +85,21 @@ use crate::{
     model::{Command, Cursor},
     ui,
 };
-use ferroseek_config::appearance::{Material, Mode};
+use ferroseek_config::appearance::{Material, Mode, Position, Width};
 use ferroseek_config::folders::Document;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Element, Length, Task};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tab {
+    Colors,
+    Layout,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
+    Tab(Tab),
     Loaded(Result<Document, String>),
     Choose(usize),
     Save,
@@ -103,6 +110,7 @@ pub enum Event {
     Reload,
 }
 pub struct Panel {
+    tab: Tab,
     path: PathBuf,
     pub draft: Preferences,
     original: Preferences,
@@ -115,6 +123,7 @@ pub struct Panel {
 impl Panel {
     pub fn new(path: PathBuf, current: Preferences) -> Self {
         Self {
+            tab: Tab::Colors,
             path,
             draft: current,
             original: current,
@@ -135,6 +144,11 @@ impl Panel {
     /// Returns preferences to restore when leaving. Saved preferences stay live.
     pub fn update(&mut self, event: Event) -> (Task<Event>, Option<Preferences>) {
         match event {
+            Event::Tab(tab) if !self.confirm => {
+                self.tab = tab;
+                self.cursor.reset();
+            }
+
             Event::Loaded(result) => {
                 self.busy = false;
                 match result {
@@ -159,7 +173,26 @@ impl Panel {
                 }
             }
             Event::Choose(index) if !self.busy && self.document.is_some() && !self.confirm => {
-                self.cursor.select(index, 13);
+                self.cursor.select(index, self.controls());
+                if self.tab == Tab::Layout {
+                    match index {
+                        0 => self.draft.width = Width::Compact,
+                        1 => self.draft.width = Width::Standard,
+                        2 => self.draft.width = Width::Wide,
+                        3 => self.draft.position = Position::Upper,
+                        4 => self.draft.position = Position::Centered,
+                        5 => {
+                            self.draft.width = Width::Standard;
+                            self.draft.position = Position::Upper;
+                        }
+                        6 => return self.update(Event::Save),
+                        7 => return self.update(Event::Back),
+                        _ => {}
+                    }
+                    self.notice =
+                        if index == 5 { "Default layout previewed. Save to keep it.".into() } else { String::new() };
+                    return (Task::none(), None);
+                }
                 match index {
                     0 => self.draft.mode = Mode::System,
                     1 => self.draft.mode = Mode::Light,
@@ -207,6 +240,12 @@ impl Panel {
         }
         (Task::none(), None)
     }
+    fn controls(&self) -> usize {
+        if self.tab == Tab::Colors { 13 } else { 8 }
+    }
+    fn save_index(&self) -> usize {
+        self.controls() - 2
+    }
     pub fn command(&mut self, command: Command) -> (Task<Event>, Option<Preferences>) {
         if self.confirm {
             return match command {
@@ -217,11 +256,15 @@ impl Panel {
         if self.busy {
             return (Task::none(), None);
         }
+        let controls = self.controls();
         match command {
-            Command::Up => self.cursor.move_by(-1, 13),
-            Command::Down => self.cursor.move_by(1, 13),
-            Command::First => self.cursor.move_by(-13, 13),
-            Command::Last => self.cursor.move_by(13, 13),
+            Command::PreviousScope | Command::NextScope => {
+                return self.update(Event::Tab(if self.tab == Tab::Colors { Tab::Layout } else { Tab::Colors }));
+            }
+            Command::Up => self.cursor.move_by(-1, controls),
+            Command::Down => self.cursor.move_by(1, controls),
+            Command::First => self.cursor.move_by(-(controls as isize), controls),
+            Command::Last => self.cursor.move_by(controls as isize, controls),
             Command::Activate => return self.update(Event::Choose(self.cursor.selected)),
             Command::Back => return self.update(Event::Back),
             _ => {}
@@ -231,7 +274,7 @@ impl Panel {
                 iced::widget::Id::new("appearance-scroll"),
                 iced::widget::operation::RelativeOffset {
                     x: 0.0,
-                    y: if self.cursor.selected >= 8 { 1.0 } else { 0.0 },
+                    y: if self.tab == Tab::Colors && self.cursor.selected >= 8 { 1.0 } else { 0.0 },
                 },
             ),
             None,
@@ -247,60 +290,88 @@ impl Panel {
                 .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
             if enabled { b.on_press(Event::Choose(index)) } else { b }
         };
-        let mut content = column![
-            text("Color mode").size(12),
-            row![
-                choice(0, "System", self.draft.mode == Mode::System),
-                choice(1, "Light", self.draft.mode == Mode::Light),
-                choice(2, "Dark", self.draft.mode == Mode::Dark)
+        let content = if self.tab == Tab::Layout {
+            column![
+                row![text("Window width").size(12), space::horizontal(), ui::hint("Ctrl+Tab", "Colors / Layout")],
+                row![
+                    choice(0, "Compact · 640", self.draft.width == Width::Compact),
+                    choice(1, "Standard · 720", self.draft.width == Width::Standard),
+                    choice(2, "Wide · 880", self.draft.width == Width::Wide)
+                ]
+                .spacing(8),
+                text("Position").size(12),
+                row![
+                    choice(3, "Upper", self.draft.position == Position::Upper),
+                    choice(4, "Centered", self.draft.position == Position::Centered)
+                ]
+                .spacing(8),
+                text("Width is limited to the current screen. The side preview adapts to the available space.")
+                    .size(12)
+                    .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                choice(5, "Restore default layout", false),
+                text("Restores width and position. Your themes and surface preference stay the same.")
+                    .size(12)
+                    .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
             ]
-            .spacing(8),
-            row![
-                text("Surface").size(12).width(100),
-                choice(3, "Solid", self.draft.material == Material::Solid),
-                choice(4, "Glass", self.draft.material == Material::Glass)
-            ]
-            .spacing(8)
-            .align_y(iced::Center),
-        ]
-        .spacing(8);
-        let support = if opaque {
-            "Solid for this session (--opaque)"
-        } else if self.draft.material == Material::Glass && !glass {
-            "Glass uses a solid surface when blur or transparency is unavailable"
-        } else if self.draft.mode == Mode::System && system.is_none() {
-            "No system color preference · using Dark"
+            .spacing(12)
         } else {
-            "Preview changes immediately · Save to keep them"
-        };
-        content = content.push(
-            text(support).size(11).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
-        );
-        for dark in [false, true] {
-            content = content.push(text(if dark { "Dark theme" } else { "Light theme" }).size(12));
-            let mut cards = row![].spacing(8);
-            for (i, (palette, name)) in PALETTES.iter().enumerate() {
-                let index = if dark { 8 + i } else { 5 + i };
-                let selected = if dark { self.draft.dark_theme } else { self.draft.light_theme } == *palette;
-                let focused = self.cursor.selected == index;
-                let mut preview = self.draft;
-                preview.mode = if dark { Mode::Dark } else { Mode::Light };
-                preview.light_theme = *palette;
-                preview.dark_theme = *palette;
-                let color_theme = theme(preview, system, false);
-                let label = if selected { format!("✓ {name}") } else { name.to_string() };
-                let b = button(column![miniature(&color_theme), text(label).size(12)].spacing(4))
-                    .padding(5)
-                    .width(Length::Fill)
-                    .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
-                cards = cards.push(if enabled { b.on_press(Event::Choose(index)) } else { b });
+            let mut content = column![
+                text("Color mode").size(12),
+                row![
+                    choice(0, "System", self.draft.mode == Mode::System),
+                    choice(1, "Light", self.draft.mode == Mode::Light),
+                    choice(2, "Dark", self.draft.mode == Mode::Dark)
+                ]
+                .spacing(8),
+                row![
+                    text("Surface").size(12).width(100),
+                    choice(3, "Solid", self.draft.material == Material::Solid),
+                    choice(4, "Glass", self.draft.material == Material::Glass)
+                ]
+                .spacing(8)
+                .align_y(iced::Center),
+            ]
+            .spacing(8);
+            let support = if opaque {
+                "Solid for this session (--opaque)"
+            } else if self.draft.material == Material::Glass && !glass {
+                "Glass uses a solid surface when blur or transparency is unavailable"
+            } else if self.draft.mode == Mode::System && system.is_none() {
+                "No system color preference · using Dark"
+            } else {
+                "Preview changes immediately · Save to keep them"
+            };
+            content = content.push(
+                text(support).size(11).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+            );
+            for dark in [false, true] {
+                content = content.push(text(if dark { "Dark theme" } else { "Light theme" }).size(12));
+                let mut cards = row![].spacing(8);
+                for (i, (palette, name)) in PALETTES.iter().enumerate() {
+                    let index = if dark { 8 + i } else { 5 + i };
+                    let selected = if dark { self.draft.dark_theme } else { self.draft.light_theme } == *palette;
+                    let focused = self.cursor.selected == index;
+                    let mut preview = self.draft;
+                    preview.mode = if dark { Mode::Dark } else { Mode::Light };
+                    preview.light_theme = *palette;
+                    preview.dark_theme = *palette;
+                    let color_theme = theme(preview, system, false);
+                    let label = if selected { format!("✓ {name}") } else { name.to_string() };
+                    let b = button(column![miniature(&color_theme), text(label).size(12)].spacing(4))
+                        .padding(5)
+                        .width(Length::Fill)
+                        .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
+                    cards = cards.push(if enabled { b.on_press(Event::Choose(index)) } else { b });
+                }
+                content = content.push(cards);
             }
-            content = content.push(cards);
-        }
+            content
+        };
         let save = button(ui::hint("Ctrl+S", "Save"))
-            .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == 11));
-        let back = button(ui::hint("Esc", "Back"))
-            .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == 12));
+            .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == self.save_index()));
+        let back = button(ui::hint("Esc", "Back")).style(move |theme, status| {
+            choice_style(theme, status, false, self.cursor.selected == self.save_index() + 1)
+        });
         let footer = if self.confirm {
             row![
                 text("Discard changes?").size(13),
@@ -312,7 +383,14 @@ impl Panel {
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() { "Unsaved changes" } else { "Appearance" }).size(12),
+                text(if self.dirty() {
+                    "Unsaved changes"
+                } else if self.tab == Tab::Layout {
+                    "Layout"
+                } else {
+                    "Appearance"
+                })
+                .size(12),
                 space::horizontal(),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
@@ -328,9 +406,16 @@ impl Panel {
         container(column![
             row![
                 text("Appearance").size(20),
+                button(text("Colors").size(12))
+                    .on_press(Event::Tab(Tab::Colors))
+                    .style(move |theme, status| choice_style(theme, status, self.tab == Tab::Colors, false)),
+                button(text("Layout").size(12))
+                    .on_press(Event::Tab(Tab::Layout))
+                    .style(move |theme, status| choice_style(theme, status, self.tab == Tab::Layout, false)),
                 space::horizontal(),
                 button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
             ]
+            .spacing(8)
             .padding([8, 16])
             .align_y(iced::Center),
             ui::divider(),

@@ -189,6 +189,8 @@ mod tests {
             material: Material::Solid,
             light_theme: Palette::Slate,
             dark_theme: Palette::Forest,
+            width: crate::appearance::Width::Wide,
+            position: crate::appearance::Position::Centered,
         };
         let saved = doc.save_appearance(preferences).unwrap();
         assert_eq!(Config::load(&path).unwrap().appearance, preferences);

@@ -148,9 +148,10 @@ def main():
     samples = []
     activation_log = out / "activation-target.jsonl"
     profile = os.environ.get("FERROSEEK_SMOKE_PROFILE", "us-1x")
-    assert profile in ["us-1x", "fr-1x", "us-1.5x"], "unknown launcher profile"
+    layout_only = profile in ("us-layout-1x", "us-layout-1.5x", "us-short-1x")
+    assert layout_only or profile in ["us-1x", "fr-1x", "us-1.5x"], "unknown launcher profile"
     layout = "fr" if profile == "fr-1x" else "us"
-    requested_scale = 1.5 if profile == "us-1.5x" else 1.0
+    requested_scale = 1.5 if profile.endswith("1.5x") else 1.0
     support = ast.literal_eval(subprocess.check_output([
         "gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/KWin",
         "--method", "org.kde.KWin.supportInformation"], text=True, timeout=5))[0]
@@ -164,7 +165,10 @@ def main():
     assert screen_count == ["1"] and len(geometries) == len(scales) == 1, "expected exactly one observed output"
     geometry = [int(value) for value in geometries[0]]
     observed_scale = float(scales[0])
-    assert geometry == [0, 0, 1280, 800], "unexpected logical output geometry"
+    expected_geometry = ([0, 0, 640, 360] if profile == "us-short-1x" else
+                         [0, 0, 640, 480] if profile == "us-layout-1x" else
+                         [0, 0, 960, 640] if profile == "us-layout-1.5x" else [0, 0, 1280, 800])
+    assert geometry == expected_geometry, "unexpected logical output geometry"
     assert observed_scale == requested_scale, "requested scale differs from actual compositor scale"
     character_keys = dict(zip("abcdefghijklmnopqrstuvwxyz", [
         30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50,
@@ -207,7 +211,7 @@ def main():
         assert (out / name).is_file(), "capture tool returned without an image; inspect its companion log"
         png = (out / name).read_bytes()
         assert png[:8] == b"\x89PNG\r\n\x1a\n"
-        assert struct.unpack(">II", png[16:24]) == (int(1280 * observed_scale), int(800 * observed_scale)), \
+        assert struct.unpack(">II", png[16:24]) == (int(geometry[2] * observed_scale), int(geometry[3] * observed_scale)), \
             "screenshot must capture the configured output at native resolution"
 
     def owner(name="io.github.ferroseek.Launcher"):
@@ -241,6 +245,186 @@ def main():
         chord(29, character_keys["a"])  # Logical Ctrl+A in the active layout
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
+
+        if layout_only:
+            import tomllib
+            from PyQt5.QtGui import QImage
+            configuration = Path(os.environ["FERROSEEK_CONFIG"])
+            original = configuration.read_bytes()
+            cases = []
+            selected_handler = out / "selected-handler.txt"
+            handler = out / "layout-handler"
+            handler.write_text("#!/usr/bin/python3\nfrom pathlib import Path\nimport sys\n"
+                               + f"Path({str(selected_handler)!r}).write_text(sys.argv[1])\n")
+            handler.chmod(0o755)
+            applications = Path(os.environ["XDG_DATA_HOME"]) / "applications"
+            for index in range(7):
+                (applications / f"layout-handler-{index}.desktop").write_text(
+                    f"[Desktop Entry]\nType=Application\nName=Layout Handler {index} with a deliberately long name for readability\n"
+                    f"MimeType=text/plain;\nExec={handler} {index} %f\n")
+            # Worked examples in logical pixels, independent of the production calculator.
+            small = geometry[2] == 640
+            height, upper, centered = (435, 29, 22.5) if small else (501, 123, 69.5)
+            widths = [608, 608, 608] if small else [640, 720, 880]
+
+            def rectangle(name, width, top):
+                capture(name)
+                image = QImage(str(out / name))
+                def dark(x, y):
+                    color = image.pixelColor(round(x * observed_scale), round(y * observed_scale))
+                    return max(color.red(), color.green(), color.blue()) < 150
+                # The maximized input probe is light; the launcher is dark. Ignore
+                # text and rounded corners by requiring most of a scanline to agree.
+                ys = [y for y in range(geometry[3])
+                      if sum(dark(x, y) for x in range(0, geometry[2], 4)) > width * 0.75 / 4]
+                assert ys, "no dark launcher rectangle in native capture"
+                xs = [x for x in range(geometry[2])
+                      if sum(dark(x, y) for y in range(round(top + 40), round(top + height - 40), 8))
+                      > (height - 80) / 8 * 0.7]
+                actual = [min(xs), min(ys), max(xs) + 1, max(ys) + 1]
+                expected = [(geometry[2] - width) / 2, top, (geometry[2] + width) / 2, top + height]
+                assert all(abs(a - e) <= 3 for a, e in zip(actual, expected)), (name, actual, expected)
+                return actual
+
+            for mode in mode_names:
+                configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\nmaterial="glass"\ndark_theme="slate"\n')
+                if profile == "us-short-1x":
+                    log = out / f"chooser-one-row-{mode}.jsonl"
+                    with log.open("w") as stream:
+                        process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments,
+                                                    "--query", "report"], stdout=stream, stderr=stream,
+                                                   env=launcher_environment(mode))
+                    processes.append(process)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log))
+                             and any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
+                             "short-output search ready", process=process)
+                    chord(29, 15)
+                    chord(29, 15)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 3 for r in records(log)),
+                             "short-output Files scope ready", process=process)
+                    chord(29, character_keys["k"])
+                    wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "short-output actions focused")
+                    type_text("with")
+                    tap(28)
+                    wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
+                             "one-row chooser loaded", process=process)
+                    burst(29, 102, -102, -29, 109, -109, 109, -109, 104, -104)
+                    capture(f"chooser-one-row-{mode}.png")
+                    selected_handler.unlink(missing_ok=True)
+                    chord(29, 2)
+                    selected = wait_for(lambda: selected_handler.read_text() if selected_handler.exists() else None,
+                                        "paged application dispatched")
+                    assert selected == "1", "Page Down twice then Page Up must reach the second app when one row fits"
+                    assert process.wait(timeout=5) == 0
+                    wait_for(lambda: not owner(), "one-row chooser closed")
+                    cases.append({"mode": mode, "one_row_paging": "passed"})
+                    continue
+                for restart in (False, True):
+                    log = out / f"layout-{mode}-{int(restart)}.jsonl"
+                    with log.open("w") as stream:
+                        process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments,
+                                                    "--query", "report"], stdout=stream, stderr=stream,
+                                                   env=launcher_environment(mode))
+                    processes.append(process)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["files"] == 15 for r in records(log)),
+                             "layout results ready", process=process)
+                    wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
+                             "layout keyboard focus", process=process)
+                    bounds = wait_for(lambda: next((r for r in records(log) if r.get("event") == "output_geometry"), None),
+                                      "logical bounds of the entered output", process=process)
+                    assert [bounds["width"], bounds["height"]] == geometry[2:]
+                    if restart:
+                        rectangle(f"layout-restored-{mode}.png", widths[2], centered)
+                        # Search focus must survive the settings round trip and a restart.
+                        tap(14)
+                        wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 2 for r in records(log)),
+                                 "typing after layout restart", process=process)
+                        chord(29, 15)
+                        chord(29, 15)
+                        wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 4 for r in records(log)),
+                                 "chooser Files scope ready", process=process)
+                        chord(29, character_keys["k"])
+                        wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "chooser actions focused")
+                        type_text("with")
+                        tap(28)
+                        wait_for(lambda: any(r.get("event") == "applications_loaded" for r in records(log)),
+                                 "seven long application names loaded", process=process)
+                        burst(29, 107, -107, -29)  # Last application; numbers follow visible rows.
+                        capture(f"layout-chooser-last-{mode}.png")
+                        selected_handler.unlink(missing_ok=True)
+                        chord(29, 2)  # First visible numbered choice, after scrolling to the last.
+                        selected = wait_for(lambda: selected_handler.read_text() if selected_handler.exists() else None,
+                                            "visible chooser application dispatched")
+                        assert selected == ("2" if small else "1"), "chooser dispatched a row outside its constrained window"
+                        # A successful Open with closes the launcher itself.
+                        assert process.wait(timeout=5) == 0
+                        wait_for(lambda: not owner(), "layout restart closed")
+                        continue
+                    # Files scope makes a previewable text file the selected target.
+                    chord(29, 15)
+                    chord(29, 15)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 3 for r in records(log)),
+                             "Files scope ready", process=process)
+                    starts = len([r for r in records(log) if r.get("event") == "query_start"])
+                    burst(29, 42, 51, -51, -42, -29)
+                    wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)),
+                             "layout preferences loaded", process=process)
+                    ready_at = next(r["elapsed_us"] for r in records(log) if r.get("event") == "appearance_ready")
+                    wait_for(lambda: any(r.get("event") == "appearance_frame" and r["elapsed_us"] > ready_at for r in records(log)),
+                             "appearance page rendered before pointer input", process=process)
+                    # Pointer uses the same tab as Ctrl+Tab; coordinates are logical.
+                    left = (geometry[2] - widths[1]) / 2
+                    subprocess.run([str(helper), "--double-click", str(round(left + 235)), str(round(upper + 20))],
+                                   check=True, timeout=5)
+
+                    def choose(index):
+                        before = len([r for r in records(log) if r.get("event") == "appearance_frame"])
+                        burst(29, 102, -102, -29, *([108, -108] * index), 28, -28)
+                        wait_for(lambda: len([r for r in records(log) if r.get("event") == "appearance_frame"]) > before,
+                                 "layout choice redrawn", process=process)
+
+                    for index, width in enumerate(widths):
+                        choose(index)
+                        rectangle(f"layout-width-{index}-{mode}.png", width, upper)
+                    choose(4)  # Centered, live preview before saving.
+                    rectangle(f"layout-centered-{mode}.png", widths[2], centered)
+                    assert "width" not in tomllib.loads(configuration.read_text())["appearance"]
+                    chord(29, character_keys["s"])
+                    wait_for(lambda: any(r.get("event") == "appearance_saved" for r in records(log)),
+                             "layout saved", process=process)
+                    saved = tomllib.loads(configuration.read_text())
+                    assert saved["appearance"]["width"] == "wide" and saved["appearance"]["position"] == "centered"
+                    assert saved["appearance"]["dark_theme"] == "slate"
+                    assert saved["roots"] == tomllib.loads(original.decode())["roots"]
+                    choose(5)  # Reset previews only width and placement.
+                    rectangle(f"layout-reset-{mode}.png", widths[1], upper)
+                    assert tomllib.loads(configuration.read_text())["appearance"] == saved["appearance"]
+                    tap(1)  # Back asks for discard.
+                    chord(29, character_keys["d"])
+                    wait_for(lambda: any(r.get("event") == "appearance_closed" for r in records(log)),
+                             "layout reset discarded", process=process)
+                    rectangle(f"layout-discard-{mode}.png", widths[2], centered)
+                    assert len([r for r in records(log) if r.get("event") == "query_start"]) == starts
+                    chord(29, character_keys["k"])
+                    wait_for(lambda: any(r.get("event") == "actions_focused" for r in records(log)), "layout action focus")
+                    capture(f"layout-actions-{mode}.png")
+                    type_text("preview")
+                    tap(28)
+                    wait_for(lambda: any(r.get("event") == "preview_loaded" for r in records(log)),
+                             "preview after layout settings", process=process)
+                    rectangle(f"layout-preview-{mode}.png", 608 if small else 928, centered)
+                    tap(14)
+                    wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 4 for r in records(log)),
+                             "search kept focus after settings and preview", process=process)
+                    subprocess.run([str(binary)], check=True, timeout=5)
+                    assert process.wait(timeout=5) == 0
+                    wait_for(lambda: not owner(), "layout process closed")
+                cases.append({"mode": mode, "widths": widths, "height": height,
+                              "bounds": geometry[2:], "scale": observed_scale, "validation": "passed"})
+            configuration.write_bytes(original)
+            (out / "layout.json").write_text(json.dumps({"profile": profile, "cases": cases}, indent=2) + "\n")
+            print("OK: layout presets, placement, reset/discard, persistence, preview and focus")
+            return
 
         for trial, mode in enumerate(schedule):
             log = out / f"interaction-{trial + 1}.jsonl"
