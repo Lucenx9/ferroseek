@@ -107,8 +107,9 @@ fn acquire(paths: &Paths) -> Result<InstanceLock, EngineError> {
     InstanceLock::try_acquire(&paths.lock_file())?.ok_or(EngineError::Busy)
 }
 
-fn rules(cfg: &Config, paths: &Paths) -> Rules {
-    Rules::new(cfg, std::slice::from_ref(&paths.data_dir))
+fn rules(cfg: &Config, paths: &Paths) -> Result<Rules, EngineError> {
+    let data_dir = std::fs::canonicalize(&paths.data_dir)?;
+    Ok(Rules::new(cfg, &[data_dir]))
 }
 
 fn refresh_counts(ix: &Indexer, status: &Status) {
@@ -125,7 +126,7 @@ fn refresh_counts(ix: &Indexer, status: &Status) {
 pub fn index_once(cfg: &Config, paths: &Paths, full: bool, rebuild: bool) -> Result<Snapshot, EngineError> {
     let _lock = acquire(paths)?;
     let status = Arc::new(Status::default());
-    let mut ix = Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), None, status.clone());
+    let mut ix = Indexer::new(open_writer(paths)?, rules(cfg, paths)?, cfg.root_paths(), None, status.clone());
     status.set_state(State::Scanning);
     if rebuild {
         ix.rebuild()?;
@@ -150,7 +151,7 @@ impl Engine {
         let status = Arc::new(Status::default());
         let ino = Inotify::new()?;
         let ix =
-            Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), Some(ino.clone()), status.clone());
+            Indexer::new(open_writer(paths)?, rules(cfg, paths)?, cfg.root_paths(), Some(ino.clone()), status.clone());
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_BATCHES);
 
         let wake = Arc::new(WakePipe::new()?);
@@ -508,7 +509,7 @@ mod tests {
         let status = Arc::new(Status::default());
         let ix = Indexer::new(
             open_writer(&paths).unwrap(),
-            rules(&cfg, &paths),
+            rules(&cfg, &paths).unwrap(),
             cfg.root_paths(),
             Some(ino.clone()),
             status.clone(),

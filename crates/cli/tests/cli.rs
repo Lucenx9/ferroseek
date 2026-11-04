@@ -95,6 +95,53 @@ fn helpful_errors() {
 }
 
 #[test]
+fn data_directory_is_excluded_with_relative_and_non_normalized_paths() {
+    for spelling in ["absolute", "relative", "parent", "symlink-parent"] {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("report.txt"), "synthetic").unwrap();
+        fs::write(t.path().join("config.toml"), format!("roots = [{:?}]\n", t.path().to_str().unwrap())).unwrap();
+        let state = if spelling == "symlink-parent" { t.path().join("nested/state") } else { t.path().join("state") };
+        fs::create_dir_all(&state).unwrap();
+        fs::write(state.join("internal-note.txt"), "private state").unwrap();
+        if spelling == "symlink-parent" {
+            fs::create_dir_all(t.path().join("nested/deep")).unwrap();
+            std::os::unix::fs::symlink(t.path().join("nested/deep"), t.path().join("link")).unwrap();
+            fs::create_dir(t.path().join("state")).unwrap();
+            fs::write(t.path().join("state/ordinary-report.txt"), "user document").unwrap();
+        }
+        let data = match spelling {
+            "relative" => std::path::PathBuf::from("state"),
+            "parent" => t.path().join("unused/../state"),
+            "symlink-parent" => t.path().join("link/../state"),
+            _ => t.path().join("state"),
+        };
+        let invoke = |args: &[&str]| {
+            Command::new(env!("CARGO_BIN_EXE_ferroseek"))
+                .args(args)
+                .current_dir(t.path())
+                .env("FERROSEEK_CONFIG", t.path().join("config.toml"))
+                .env("FERROSEEK_DATA_DIR", &data)
+                .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}/no-bus", t.path().display()))
+                .output()
+                .unwrap()
+        };
+        let indexed = invoke(&["index"]);
+        assert!(indexed.status.success(), "{}", String::from_utf8_lossy(&indexed.stderr));
+        assert!(invoke(&["search", "report"]).status.success());
+        if spelling == "symlink-parent" {
+            assert!(invoke(&["search", "ordinary-report"]).status.success(), "unrelated state folder was excluded");
+        } else {
+            assert_eq!(invoke(&["search", "state"]).status.code(), Some(1));
+        }
+        for query in ["sqlite", "internal-note"] {
+            let result = invoke(&["search", query]);
+            assert_eq!(result.status.code(), Some(1), "{spelling}: {query} found {}", stdout(&result));
+            assert!(result.stdout.is_empty());
+        }
+    }
+}
+
+#[test]
 fn search_reports_output_failures_in_every_format() {
     let t = tempfile::tempdir().unwrap();
     let root = t.path().join("files");
