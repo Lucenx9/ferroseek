@@ -78,7 +78,9 @@ static void applied(void *data, struct kde_output_configuration_v2 *config)
 { (void)data; (void)config; completed = 1; }
 static void failed(void *data, struct kde_output_configuration_v2 *config)
 { (void)data; (void)config; completed = -1; }
-static const struct kde_output_configuration_v2_listener configuration_listener = { applied, failed };
+static const struct kde_output_configuration_v2_listener configuration_listener = {
+    .applied = applied, .failed = failed
+};
 static int integer(const char *text, int32_t *value)
 {
     char *end; errno = 0; long v = strtol(text, &end, 10);
