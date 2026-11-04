@@ -131,6 +131,28 @@ fn changing_roots_keeps_the_physical_state_directory_excluded_through_aliases() 
 }
 
 #[test]
+fn reconciliation_refreshes_internal_exclusions_after_a_root_alias_is_retargeted() {
+    let mut f = fx();
+    let first = f.p("first/docs");
+    let second = f.p("second/docs");
+    let state = first.join("state");
+    touch(&state.join("internal-note.txt"));
+    touch(&second.join("state/ordinary-report.txt"));
+    std::os::unix::fs::symlink(f.p("first"), f.p("alias")).unwrap();
+    let root = f.p("alias/docs");
+    let writer = f.ix.into_writer();
+    f.ix =
+        Indexer::new(writer, Rules::new(&Config::default(), &[state]), vec![root], None, Arc::new(Status::default()));
+    f.scan(Mode::Quick);
+    assert!(!f.indexed("alias/docs/state/internal-note.txt"));
+    fs::remove_file(f.p("alias")).unwrap();
+    std::os::unix::fs::symlink(f.p("second"), f.p("alias")).unwrap();
+    f.ix.sync_roots(Mode::Full).unwrap();
+    f.ix.scan_to_completion().unwrap();
+    assert!(f.indexed("alias/docs/state/ordinary-report.txt"), "a retired alias must not exclude user documents");
+}
+
+#[test]
 fn initial_scan_respects_exclusions() {
     let mut f = fx();
     touch(&f.p("docs/report.txt"));

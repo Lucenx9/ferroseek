@@ -363,7 +363,7 @@ See [launcher setup](LAUNCHER.md) and [installation](INSTALLATION.md).
 - Data lives in `$XDG_DATA_HOME/ferroseek` (mode 0700, DB 0600) and config
   in `$XDG_CONFIG_HOME/ferroseek/config.toml`.
   The engine excludes its own state directory from scanning, including when
-  active roots use symbolic-link ancestors. Scope changes refresh these aliases.
+  active roots use symbolic-link ancestors. Every reconciliation refreshes these aliases.
 - Symlinks are never followed: entries are `lstat`ed, and a symlink is
   indexed as itself. Loops are therefore impossible, and the depth limit and
   ancestor check guard against bind-mount cycles.

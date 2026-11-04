@@ -121,8 +121,8 @@ impl Indexer {
         self.st.watches.len()
     }
 
-    /// Makes the stored roots equal to the configured ones (dropping
-    /// removed roots with their subtrees) and queues a reconcile pass.
+    /// Refreshes root policy and queues a reconcile pass, dropping removed
+    /// roots. A new pass supersedes pending work; `Full` wins over `Quick`.
     pub fn sync_roots(&mut self, mode: Mode) -> Result<()> {
         self.st.rules.refresh_root_aliases(&self.st.roots);
         // Opaque equality key, not a persisted format to parse. Changes to
@@ -137,28 +137,6 @@ impl Indexer {
             }
         }
         tx.commit()?;
-        self.schedule_all(mode)
-    }
-
-    /// Replace only folder scope; reconciliation uses the existing active rules.
-    pub fn replace_roots(&mut self, roots: Vec<PathBuf>) -> Result<bool> {
-        if self.st.roots == roots {
-            return Ok(false);
-        }
-        let previous = std::mem::replace(&mut self.st.roots, roots);
-        self.st.work.clear();
-        self.st.retry.clear();
-        if let Err(error) = self.sync_roots(Mode::Full) {
-            self.st.roots = previous;
-            let _ = self.sync_roots(Mode::Full);
-            return Err(error);
-        }
-        Ok(true)
-    }
-
-    /// Queues a reconcile pass over every root. A new pass supersedes
-    /// pending work (it covers everything); `Full` wins over `Quick`.
-    pub fn schedule_all(&mut self, mode: Mode) -> Result<()> {
         let pending_full = self.st.work.iter().any(|(_, m)| *m == Mode::Full);
         let mode = if pending_full { Mode::Full } else { mode };
         self.st.mounts = Mounts::load();
@@ -178,6 +156,22 @@ impl Indexer {
         tx.commit()?;
         self.st.status.queued_dirs.store(self.st.work.len() as u64, Relaxed);
         Ok(())
+    }
+
+    /// Replace only folder scope; reconciliation uses the existing active rules.
+    pub fn replace_roots(&mut self, roots: Vec<PathBuf>) -> Result<bool> {
+        if self.st.roots == roots {
+            return Ok(false);
+        }
+        let previous = std::mem::replace(&mut self.st.roots, roots);
+        self.st.work.clear();
+        self.st.retry.clear();
+        if let Err(error) = self.sync_roots(Mode::Full) {
+            self.st.roots = previous;
+            let _ = self.sync_roots(Mode::Full);
+            return Err(error);
+        }
+        Ok(true)
     }
 
     /// Reconciles queued directories until `budget` elapses or the batch is
@@ -287,7 +281,7 @@ impl Indexer {
             log::warn!("inotify queue overflowed; reconciling all roots");
         }
         if overflow || fallback {
-            self.schedule_all(Mode::Full)?;
+            self.sync_roots(Mode::Full)?;
         }
         Ok(())
     }
@@ -299,7 +293,7 @@ impl Indexer {
             return Ok(());
         }
         self.st.retry.clear();
-        self.schedule_all(Mode::Full)
+        self.sync_roots(Mode::Full)
     }
 
     /// Drops every indexed entry and watch, then queues a full scan.

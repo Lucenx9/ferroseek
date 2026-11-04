@@ -342,7 +342,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                         log::warn!("event burst exceeded {MAX_PENDING_EVENTS} pending events; reconciling instead");
                         pending.clear();
                         first_event = None;
-                        ix.schedule_all(Mode::Full)?;
+                        ix.sync_roots(Mode::Full)?;
                     } else {
                         pending.extend(evs);
                         first_event.get_or_insert_with(Instant::now);
@@ -361,12 +361,12 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                         if missed_while_paused || !pending.is_empty() || ix.has_work() {
                             pending.clear();
                             first_event = None;
-                            ix.schedule_all(Mode::Full)?;
+                            ix.sync_roots(Mode::Full)?;
                         }
                         missed_while_paused = false;
                     }
                 }
-                Some(Msg::Reindex(mode)) => ix.schedule_all(mode)?,
+                Some(Msg::Reindex(mode)) => ix.sync_roots(mode)?,
                 Some(Msg::Rebuild) => {
                     pending.clear();
                     first_event = None;
@@ -412,7 +412,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
             if let Some(p) = next_periodic
                 && now >= p
             {
-                ix.schedule_all(Mode::Quick)?;
+                ix.sync_roots(Mode::Quick)?;
                 next_periodic = periodic.and_then(|d| now.checked_add(d));
             }
             if ix.has_work() && now >= scan_not_before {
