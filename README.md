@@ -8,7 +8,7 @@ Type an application name, find a file in your indexed folders, or calculate a
 result. Open it with Enter. FerroSeek combines a Wayland launcher with its own
 Rust file search engine and keeps launch history locally.
 
-![FerroSeek showing application, file and folder results](docs/assets/launcher.png)
+![FerroSeek showing application and indexed file results](docs/assets/launcher.png)
 
 Screenshot from a nested test session with sample files.
 

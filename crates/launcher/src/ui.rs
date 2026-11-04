@@ -2823,8 +2823,9 @@ mod tests {
         let mut state = search_state();
         let _ = update(&mut state, Message::Query("report".into()));
         let mut shortcut = typed("<", Modifiers::CTRL | Modifiers::SHIFT);
-        if let Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. }) = &mut shortcut {
+        if let Event::Keyboard(keyboard::Event::KeyPressed { physical_key, text, .. }) = &mut shortcut {
             *physical_key = keyboard::key::Physical::Code(keyboard::key::Code::Comma);
+            *text = Some("<".into());
         }
         let mut cache = iced_runtime::user_interface::Cache::default();
         widget_batch(&mut state, &mut cache, &[shortcut], false);

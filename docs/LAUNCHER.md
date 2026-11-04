@@ -45,6 +45,12 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 ## Appearance
 
+![Appearance settings in light mode](assets/launcher-appearance-light.png)
+
+[Dark appearance](assets/launcher-appearance-dark.png). Native captures from the
+[isolated KWin matrix](https://github.com/Lucenx9/ferroseek/actions/runs/41831244131),
+AZERTY 1× profile, with synthetic data.
+
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
 **System**, **Light** and **Dark** control the color mode. Choose an independent
 **Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures

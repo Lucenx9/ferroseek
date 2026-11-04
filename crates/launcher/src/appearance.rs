@@ -269,7 +269,7 @@ impl Panel {
         } else if self.draft.material == Material::Glass && !glass {
             "Glass uses a solid surface when blur or transparency is unavailable"
         } else if self.draft.mode == Mode::System && system.is_none() {
-            "System appearance unavailable · using Dark"
+            "No system color preference · using Dark"
         } else {
             "Preview changes immediately · Save to keep them"
         };

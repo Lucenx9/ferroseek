@@ -437,7 +437,7 @@ def main():
                 if restart:
                     capture(f"appearance-restored-{mode}.png")
                     color = QImage(str(out / f"appearance-restored-{mode}.png")).pixelColor(round(640*observed_scale), round(210*observed_scale))
-                    assert min(color.red(), color.green(), color.blue()) > 220, "saved Light theme did not draw on restart"
+                    assert max(abs(actual-expected) for actual,expected in zip((color.red(),color.green(),color.blue()),(239,243,248))) <= 2, "saved Slate Light theme did not draw on restart"
                 burst(29,42,51,-51,-42,-29)  # Ctrl+Shift+physical Comma.
                 wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded", process=process)
                 def advance(count):
@@ -458,6 +458,8 @@ def main():
                 capture(name)
                 color = QImage(str(out / name)).pixelColor(round(640*observed_scale), round(210*observed_scale))
                 assert (max(color.red(),color.green(),color.blue()) < 120 if restart else min(color.red(),color.green(),color.blue()) > 220), "appearance pixels disagree with selected mode"
+                if restart and mode != "auto":
+                    assert max(abs(actual-expected) for actual,expected in zip((color.red(),color.green(),color.blue()),(24,34,30))) <= 2, "opaque/software fallback lost the Forest palette"
                 saved = tomllib.loads(configuration.read_text())["appearance"]
                 assert saved["mode"] == ("dark" if restart else "light")
                 assert saved["material"] == ("glass" if restart else "solid")
