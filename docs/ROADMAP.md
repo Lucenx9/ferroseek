@@ -18,8 +18,8 @@ published release or verified compatibility with every Linux desktop.
   the engine and CLI; guided setup recommends the launcher on Wayland.
 - [ ] Validate real desktop sessions and publish an explicit compositor support
   matrix, including multiple monitors, display scaling and keyboard layouts.
-  Current graphical evidence is nested virtual KWin only: US 1×, AZERTY 1× and
-  US 1.5×. See the [validation matrix](LAUNCHER.md#desktop-validation).
+  Current graphical evidence is nested virtual KWin only: US 1×, AZERTY 1×,
+  US 1.5× and two disjoint outputs with live mixed-scale changes. See the [validation matrix](LAUNCHER.md#desktop-validation).
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
   Application results/actions, file opens, selected handlers and reveal now request
@@ -44,6 +44,9 @@ published release or verified compatibility with every Linux desktop.
   immediate preview, explicit save/discard and independent Glass/Solid material.
 - [x] Add width presets and upper/centered placement, with immediate preview,
   explicit save/reset and output bounds in isolated KWin. Physical desktops remain unverified.
+- [x] Verify mixed-scale virtual multimonitor placement, query/selection
+  preservation, focus return and output disable/re-enable; physical hardware
+  validation remains open.
 - [ ] Add configurable keyboard shortcuts. Keep focus,
   navigation and feedback consistent across views.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,

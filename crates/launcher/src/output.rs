@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Observe the output containing the launcher without taking over iced's surface.
+//! Observe entered output bounds without taking over iced's surface.
 //!
 //! The backend does not expose its output events. An input-transparent 1px child
 //! receives its own output Enter, while iced retains the parent and its commits.
