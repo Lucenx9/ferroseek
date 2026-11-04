@@ -22,17 +22,11 @@ fn token_score(token: &str, label: &str) -> Option<u32> {
         // "firewall configuration".
         return Some(900 - (rest.chars().count().min(100) as u32));
     }
-    let mut best: Option<u32> = None;
-    for (i, _) in label.match_indices(token) {
-        let at_word = label[..i].chars().next_back().is_none_or(is_separator);
-        let s = if at_word { 800 } else { 600 };
-        best = Some(best.map_or(s, |b| b.max(s)));
-        if at_word {
-            break;
-        }
-    }
-    if best.is_some() {
-        return best;
+    if label.contains(token) {
+        // Inspect word starts directly: match_indices skips overlapping matches.
+        let at_word =
+            label.char_indices().any(|(i, c)| is_separator(c) && label[i + c.len_utf8()..].starts_with(token));
+        return Some(if at_word { 800 } else { 600 });
     }
     subsequence_score(token, label)
 }
@@ -113,6 +107,16 @@ mod tests {
     #[test]
     fn shorter_prefix_completion_wins() {
         assert!(s("fire", "firefox") > s("fire", "firewall configuration"));
+    }
+
+    #[test]
+    fn overlapping_occurrences_keep_the_best_word_boundary_match() {
+        for (query, overlapping, embedded) in
+            [("go-go", "logo-go-go", "xgo-go"), ("go/go", "logo/go/go", "xgo/go"), ("あ-あ", "xあ-あ-あ", "xあ-あ")]
+        {
+            assert_eq!(s(query, overlapping), s(query, &format!("word {query}")), "{overlapping}");
+            assert!(s(query, overlapping) > s(query, embedded), "{overlapping}");
+        }
     }
 
     #[test]
