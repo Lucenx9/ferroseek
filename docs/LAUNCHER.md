@@ -719,8 +719,7 @@ capability withdrawal/restoration, manager removal, rounded resize regions and
 missing/disabled blur. These tests do not use the real session or desktop.
 
 The functional `us-multi` profile uses two virtual outputs and requires
-`kscreen-doctor` (`libkf5screen-bin` on Ubuntu 24.04) and `wl-copy`/`wl-paste`
-(`wl-clipboard`) in addition to the existing graphical dependencies:
+`wl-copy`/`wl-paste` (`wl-clipboard`) in addition to the existing graphical dependencies:
 
 ```sh
 FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_PROFILE=us-multi FERROSEEK_SMOKE_MODE=all \
@@ -736,8 +735,8 @@ selected file and saved preferences preserved; preview after scaling; and
 output disable/re-enable with clean closure and reopening on a remaining output.
 An unsaved appearance draft must be rendered before its output is disabled and
 must never be saved by that closure. Clipboard freshness checks use tracked
-foreground helpers on the private Wayland socket. KScreen runs in-process on
-the disposable compositor and private bus. No real desktop output is changed.
+foreground helpers on the private Wayland socket. A test-only C helper configures virtual outputs directly through the KDE output
+protocol on the disposable compositor. It refuses other sockets and output names. No real desktop output is changed.
 `multimonitor.json`, topology snapshots, process logs and native PNGs are retained
 in the workflow artifact. Output disable/re-enable does not certify physical
 cable hotplug, GPU drivers or suspend/resume.

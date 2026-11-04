@@ -51,6 +51,11 @@ if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
     for tool in python3 wayland-scanner cc pkg-config; do
         command -v "$tool" >/dev/null || { echo "INCONCLUSIVE: $tool not installed" >&2; exit 77; }
     done
+    if [[ "$FERROSEEK_SMOKE_PROFILE" == us-multi ]]; then
+        for tool in wl-copy wl-paste; do
+            command -v "$tool" >/dev/null || { echo "INCONCLUSIVE: $tool not installed" >&2; exit 77; }
+        done
+    fi
     python3 -c 'from PyQt5.QtWidgets import QApplication; import gi; gi.require_version("Gtk", "4.0")' \
         || { echo "INCONCLUSIVE: graphical Python bindings unavailable" >&2; exit 77; }
     python3 - "$OUT" <<'PY'
@@ -200,6 +205,17 @@ if [[ "${FERROSEEK_SMOKE_INTERACTION:-}" == 1 ]]; then
     wayland-scanner private-code "$XML" "$T/fake-input-protocol.c"
     cc -std=c11 -Wall -Wextra -Werror -I"$T" tests/launcher-input.c "$T/fake-input-protocol.c" \
         $(pkg-config --cflags --libs wayland-client) -o "$T/launcher-input"
+    if [[ "$FERROSEEK_SMOKE_PROFILE" == us-multi ]]; then
+        for protocol in output-device output-management; do
+            xml="/usr/share/plasma-wayland-protocols/kde-$protocol-v2.xml"
+            [[ -f "$xml" ]] || fail "missing KDE output protocol: $xml"
+            wayland-scanner client-header "$xml" "$T/$protocol-client-protocol.h"
+            wayland-scanner private-code "$xml" "$T/$protocol-protocol.c"
+        done
+        cc -std=c11 -Wall -Wextra -Werror -I"$T" tests/launcher-output.c "$T/output-device-protocol.c" "$T/output-management-protocol.c" \
+            $(pkg-config --cflags --libs wayland-client) -o "$T/launcher-output"
+        export FERROSEEK_SMOKE_OUTPUT_HELPER="$T/launcher-output"
+    fi
     python3 tests/launcher-interaction.py "$BIN_DIR/ferroseek-launcher" "$OUT" "$T/launcher-input"
     exit
 fi

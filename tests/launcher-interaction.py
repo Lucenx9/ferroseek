@@ -141,15 +141,34 @@ def multimonitor(binary, out, helper):
     import tomllib
     assert os.environ.get("FERROSEEK_SMOKE_ISOLATED") == "1"
     assert os.environ.get("WAYLAND_DISPLAY", "").startswith("wayland-ferroseek-smoke-")
-    control_env = {**os.environ, "KSCREEN_BACKEND_INPROCESS": "1", "KSCREEN_BACKEND": "KWayland"}
+    output_helper = os.environ["FERROSEEK_SMOKE_OUTPUT_HELPER"]
     processes = []
     configuration = Path(os.environ["FERROSEEK_CONFIG"])
     original = configuration.read_bytes()
     corpus = Path(tomllib.loads(original.decode())["roots"][0])
     snapshots = []
 
-    def doctor(*args):
-        return subprocess.check_output(["kscreen-doctor", *args], env=control_env, text=True, timeout=15)
+    def output_control(*args):
+        command = [output_helper, "--list"]
+        if args == ("-j",):
+            return subprocess.check_output(command, text=True, timeout=15)
+        devices = json.loads(subprocess.check_output(command, text=True, timeout=15))["outputs"]
+        changed = {}
+        for argument in args:
+            parts = argument.split(".", 3)
+            device = next(d for d in devices if d["name"] == parts[1])
+            changed[device["name"]] = device
+            if parts[2] == "position":
+                device["pos"]["x"], device["pos"]["y"] = map(int, parts[3].split(","))
+            elif parts[2] == "scale":
+                device["scale"] = float(parts[3])
+            else:
+                assert parts[2] in ("enable", "disable")
+                device["enabled"] = parts[2] == "enable"
+        command = [output_helper]
+        for name, d in changed.items():
+            command += [name, str(d["pos"]["x"]), str(d["pos"]["y"]), str(d["scale"]), str(int(d["enabled"]))]
+        return subprocess.check_output(command, text=True, timeout=15)
 
     def topology(label, expected):
         support = ast.literal_eval(subprocess.check_output([
@@ -166,7 +185,7 @@ def multimonitor(binary, out, helper):
         return observed
 
     def apply(label, expected, *args):
-        (out / f"configure-{label}.log").write_text(doctor(*args))
+        (out / f"configure-{label}.log").write_text(output_control(*args))
         wait_for(lambda: topology(label, expected), "applied non-overlapping output geometry")
 
     def keys(*codes):
@@ -290,9 +309,9 @@ def multimonitor(binary, out, helper):
         wait_for(lambda: {"text": "pz" if index == 0 else "sz"} in records(path), "typing returned to previous app")
 
     try:
-        initial = json.loads(doctor("-j"))
+        initial = json.loads(output_control("-j"))
         (out / "initial-outputs.json").write_text(json.dumps(initial, indent=2))
-        devices = sorted(initial["outputs"], key=lambda entry: entry["id"])
+        devices = sorted(initial["outputs"], key=lambda entry: entry["name"])
         assert len(devices) == 2 and all(d["enabled"] for d in devices)
         names = [d["name"] for d in devices]
         both = [([0,0,1280,800],1.0), ([1280,0,853,533],1.5)]
