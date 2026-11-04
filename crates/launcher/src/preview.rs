@@ -101,7 +101,9 @@ impl Panel {
             refresh = refresh.on_press(Event::Refresh);
         }
         let header = row![
-            text("Preview").size(13).color(palette::DIM),
+            text("Preview").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }),
             space::horizontal(),
             refresh,
             button(ui::hint("Esc", "Hide")).on_press(Event::Back).style(ui::status_button_style)
@@ -113,7 +115,9 @@ impl Panel {
         let identity = column![
             text(ui::ellipsize_middle(&self.file.name, 65)).size(15),
             iced::widget::tooltip(
-                text(ui::ellipsize_middle(location, 75)).size(11).color(palette::DIM),
+                text(ui::ellipsize_middle(location, 75)).size(11).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }),
                 container(text(location).size(12).wrapping(text::Wrapping::WordOrGlyph))
                     .padding(8)
                     .max_width(560)
@@ -125,21 +129,35 @@ impl Panel {
         let mut body = column![].spacing(12).width(Length::Fill);
         let mut truncated = false;
         match &self.state {
-            State::Loading => body = body.push(text("Loading text preview…").size(15).color(palette::DIM)),
+            State::Loading => {
+                body = body.push(text("Loading text preview…").size(15).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }))
+            }
             State::Error(error) => {
                 body = body.push(text("Text preview could not be loaded").size(16));
-                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).color(palette::ERROR));
-                body = body.push(text("Refresh to try again, or select another file.").size(12).color(palette::DIM));
+                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+                }));
+                body = body.push(text("Refresh to try again, or select another file.").size(12).style(
+                    move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+                ));
             }
             State::Ready(TextPreview::Unsupported(reason)) => {
                 body = body.push(text("No text preview available").size(16));
-                body = body.push(text(ui::ellipsize_end(reason, 300)).size(13).color(palette::DIM));
-                body = body.push(text("Enter opens the file in its application.").size(12).color(palette::DIM));
+                body = body.push(text(ui::ellipsize_end(reason, 300)).size(13).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }));
+                body = body.push(text("Enter opens the file in its application.").size(12).style(
+                    move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+                ));
             }
             State::Ready(TextPreview::Text { text: contents, truncated: clipped }) => {
                 truncated = *clipped;
                 if contents.is_empty() {
-                    body = body.push(text("Empty text file").size(15).color(palette::DIM));
+                    body = body.push(text("Empty text file").size(15).style(move |theme: &iced::Theme| {
+                        iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                    }));
                 } else {
                     body =
                         body.push(text(contents).font(Font::MONOSPACE).size(13).wrapping(text::Wrapping::WordOrGlyph));
@@ -148,13 +166,19 @@ impl Panel {
         }
         let mut notes = row![].spacing(12).align_y(Vertical::Center);
         if let Some(notice) = self.notice {
-            notes = notes.push(text(notice).size(11).color(palette::ACCENT));
+            notes = notes.push(text(notice).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::ACCENT.resolve(theme)),
+            }));
         } else if truncated {
-            notes = notes.push(text("Beginning of file").size(11).color(palette::DIM));
+            notes = notes.push(text("Beginning of file").size(11).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+            }));
         }
         let mut metadata = column![
             row![
-                text("File details").size(12).color(palette::DIM),
+                text("File details").size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(palette::DIM.resolve(theme)),
+                }),
                 space::horizontal(),
                 button(text(copy).size(11)).on_press(Event::CopyLocation).style(ui::status_button_style)
             ]
@@ -162,8 +186,16 @@ impl Panel {
         ]
         .spacing(5);
         match &self.details {
-            None => metadata = metadata.push(text("Loading details…").size(12).color(palette::DIM)),
-            Some(Err(_)) => metadata = metadata.push(text("File details unavailable").size(12).color(palette::DIM)),
+            None => {
+                metadata = metadata.push(text("Loading details…").size(12).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }))
+            }
+            Some(Err(_)) => {
+                metadata = metadata.push(text("File details unavailable").size(12).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }))
+            }
             Some(Ok(details)) => {
                 let mime = if details.mime.is_empty() { "Unknown file type" } else { &details.mime };
                 let modified = chrono::DateTime::from_timestamp(details.modified, 0)
@@ -184,7 +216,9 @@ impl Panel {
             notes,
             ui::divider(),
             metadata,
-            text("Alt+PgUp / PgDn  Scroll text").size(10).color(palette::DIM)
+            text("Alt+PgUp / PgDn  Scroll text").size(10).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            })
         ]
         .spacing(8)
         .padding([8, 16])
@@ -196,7 +230,10 @@ impl Panel {
 
 fn metadata_row(label: &str, value: String) -> Element<'static, Event> {
     row![
-        text(label.to_owned()).size(11).color(palette::DIM).width(64),
+        text(label.to_owned())
+            .size(11)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) })
+            .width(64),
         text(value).size(12).wrapping(text::Wrapping::WordOrGlyph)
     ]
     .spacing(8)
@@ -207,13 +244,17 @@ pub fn empty_view() -> Element<'static, Event> {
     container(
         column![
             row![
-                text("Preview").size(13).color(palette::DIM),
+                text("Preview").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                    color: Some(palette::DIM.resolve(theme)),
+                }),
                 space::horizontal(),
                 button(ui::hint("Esc", "Hide")).on_press(Event::Back).style(ui::status_button_style)
             ],
             space::vertical(),
             text("Select a file to preview").size(16),
-            text("Applications and folders have no text preview.").size(12).color(palette::DIM),
+            text("Applications and folders have no text preview.").size(12).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+            }),
             space::vertical(),
         ]
         .spacing(12),

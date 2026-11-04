@@ -195,7 +195,10 @@ impl Panel {
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.file.subtext.clone());
-        let target = text(ui::ellipsize_middle(&path, 88)).size(12).color(palette::DIM).wrapping(text::Wrapping::None);
+        let target = text(ui::ellipsize_middle(&path, 88))
+            .size(12)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) })
+            .wrapping(text::Wrapping::None);
         let mut input = text_input("Search applications…", &self.query)
             .id(input_id())
             .size(15)
@@ -206,12 +209,19 @@ impl Panel {
         }
         let mut body = column![].spacing(3);
         match &self.state {
-            State::Loading => body = body.push(text("Loading applications…").size(16).color(palette::DIM)),
+            State::Loading => {
+                body = body.push(text("Loading applications…").size(16).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }))
+            }
             State::Error(error) => {
                 body = body.push(text("Applications could not be loaded").size(16));
-                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).color(palette::ERROR));
-                body = body
-                    .push(text("Use Reload to try again, or Esc to return to search.").size(12).color(palette::DIM));
+                body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+                }));
+                body = body.push(text("Use Reload to try again, or Esc to return to search.").size(12).style(
+                    move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
+                ));
             }
             State::Ready(apps) => {
                 let filtered = self.filtered();
@@ -226,7 +236,7 @@ impl Panel {
                     );
                     body = body.push(text(if apps.is_empty() {
                         "Only apps declaring support for this file type appear. Return to search to use the desktop default."
-                    } else { "Try another application name or clear the filter with Esc." }).size(13).color(palette::DIM));
+                    } else { "Try another application name or clear the filter with Esc." }).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)), }));
                 }
                 for (slot, row_index) in self.cursor.window(filtered.len()).enumerate() {
                     let i = filtered[row_index];
@@ -240,18 +250,28 @@ impl Panel {
                     let labels = column![
                         text(ui::ellipsize_end(&app.name, 52))
                             .size(15)
-                            .color(if opening { palette::DIM } else { palette::TEXT })
+                            .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(if opening {
+                                    palette::DIM.resolve(theme)
+                                } else {
+                                    palette::TEXT.resolve(theme)
+                                }),
+                            })
                             .wrapping(text::Wrapping::None),
                         text(ui::ellipsize_middle(&app.id, 72))
                             .size(11)
-                            .color(palette::DIM)
+                            .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(palette::DIM.resolve(theme)),
+                            })
                             .wrapping(text::Wrapping::None)
                     ]
                     .spacing(1);
                     let content = row![
                         icon,
                         container(labels).width(Length::Fill).clip(true),
-                        text(format!("Ctrl+{}", slot + 1)).size(11).color(palette::DIM)
+                        text(format!("Ctrl+{}", slot + 1)).size(11).style(move |theme: &iced::Theme| {
+                            iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                        })
                     ]
                     .spacing(12)
                     .align_y(Vertical::Center);
@@ -259,15 +279,15 @@ impl Panel {
                         .height(44)
                         .width(Length::Fill)
                         .padding([0, 16])
-                        .style(move |_, status| button::Style {
+                        .style(move |theme, status| button::Style {
                             background: if selected {
-                                Some(Background::Color(palette::SELECTED))
+                                Some(Background::Color(palette::SELECTED.resolve(theme)))
                             } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                                Some(Background::Color(palette::FAINT))
+                                Some(Background::Color(palette::FAINT.resolve(theme)))
                             } else {
                                 None
                             },
-                            text_color: palette::TEXT,
+                            text_color: palette::TEXT.resolve(theme),
                             border: Border { radius: 9.0.into(), ..Default::default() },
                             ..Default::default()
                         });
@@ -281,16 +301,22 @@ impl Panel {
                     body = body.push(
                         text(format!("{}–{} / {} applications", window.start + 1, window.end, filtered.len()))
                             .size(11)
-                            .color(palette::DIM),
+                            .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                                color: Some(palette::DIM.resolve(theme)),
+                            }),
                     );
                 }
             }
         }
         if let Some(error) = &self.error {
-            body = body.push(text(ui::ellipsize_end(error, 220)).size(12).color(palette::ERROR));
+            body = body.push(text(ui::ellipsize_end(error, 220)).size(12).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
+            }));
         }
         if opening {
-            body = body.push(text("Opening the selected file…").size(12).color(palette::ACCENT));
+            body = body.push(text("Opening the selected file…").size(12).style(move |theme: &iced::Theme| {
+                iced::widget::text::Style { color: Some(palette::ACCENT.resolve(theme)) }
+            }));
         }
         let back = button(ui::hint("Esc", if self.query.is_empty() { "Back to search" } else { "Clear filter" }))
             .on_press(Event::Back)

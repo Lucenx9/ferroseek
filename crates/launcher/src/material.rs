@@ -78,6 +78,12 @@ impl Material {
         (Self(Arc::new(Mutex::new(state))), events)
     }
 
+    pub fn set_allowed(&self, allowed: bool) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.allowed = allowed;
+        state.refresh();
+    }
+
     pub fn resize(&self, size: (u32, u32)) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.size != size {
@@ -116,9 +122,6 @@ impl Material {
         queue: &QueueHandle<Worker>,
     ) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if !state.allowed {
-            return;
-        }
         match event {
             wl_registry::Event::Global { name, interface, .. } if interface == "wl_compositor" => {
                 state.compositor = Some((*name, registry.bind(*name, 1, queue, ())));

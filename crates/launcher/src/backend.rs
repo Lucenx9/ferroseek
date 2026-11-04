@@ -165,6 +165,7 @@ pub struct ApplicationChoice {
 pub enum UiEvent {
     /// Another invocation asked this instance to toggle (close).
     Toggle,
+    DesktopAppearance(Option<bool>),
 }
 
 enum Request {
@@ -222,7 +223,7 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                 let (ev_tx, ev_rx) = mpsc::unbounded();
                 // Export before owning the name, so a caller that sees the
                 // name can always reach the object.
-                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, LauncherIface { events: ev_tx }).await {
+                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, LauncherIface { events: ev_tx.clone() }).await {
                     let _ = ready_tx.send(Err(format!("cannot export {LAUNCHER_PATH}: {e}")));
                     return;
                 }
@@ -255,7 +256,11 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                 if ready_tx.send(Ok(Startup::Primary(Backend { tx }, ev_rx))).is_err() {
                     return;
                 }
-                serve(conn, rx, Timeouts::default(), activation).await;
+                iced::futures::future::select(
+                    Box::pin(serve(conn.clone(), rx, Timeouts::default(), activation)),
+                    Box::pin(crate::desktop_settings::watch(conn, ev_tx)),
+                )
+                .await;
             });
         })
         .map_err(|e| format!("cannot start bus thread: {e}"))?;
