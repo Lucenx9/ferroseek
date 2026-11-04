@@ -263,7 +263,7 @@ impl Panel {
             .spacing(8)
             .align_y(iced::Center),
         ]
-        .spacing(9);
+        .spacing(8);
         let support = if opaque {
             "Solid for this session (--opaque)"
         } else if self.draft.material == Material::Glass && !glass {
@@ -289,8 +289,8 @@ impl Panel {
                 preview.dark_theme = *palette;
                 let color_theme = theme(preview, system, false);
                 let label = if selected { format!("✓ {name}") } else { name.to_string() };
-                let b = button(column![miniature(&color_theme), text(label).size(12)].spacing(5))
-                    .padding(6)
+                let b = button(column![miniature(&color_theme), text(label).size(12)].spacing(4))
+                    .padding(5)
                     .width(Length::Fill)
                     .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
                 cards = cards.push(if enabled { b.on_press(Event::Choose(index)) } else { b });
@@ -376,7 +376,7 @@ fn miniature(theme: &Theme) -> Element<'static, Event> {
     container(
         column![
             text("Search…").size(11).color(dim),
-            container(text("Files").size(11).color(foreground)).padding([3, 5]).width(Length::Fill).style(move |_| {
+            container(text("Files").size(11).color(foreground)).padding([2, 5]).width(Length::Fill).style(move |_| {
                 container::Style {
                     background: Some(selected.into()),
                     border: Border { radius: 4.0.into(), ..Default::default() },
@@ -385,9 +385,9 @@ fn miniature(theme: &Theme) -> Element<'static, Event> {
             }),
             text("~/Documents").size(10).color(dim)
         ]
-        .spacing(4),
+        .spacing(3),
     )
-    .padding(8)
+    .padding(6)
     .width(Length::Fill)
     .style(move |_| container::Style {
         background: Some(surface.into()),
