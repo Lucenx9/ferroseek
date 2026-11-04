@@ -283,6 +283,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn appearance_preferences_are_accepted_without_changing_index_configuration() {
+        let config = Config::parse("roots = []\nmax_cpu_percent = 17\n[appearance]\nmode = 'light'\nmaterial = 'solid'\nlight_theme = 'iron'\ndark_theme = 'forest'\n").expect("appearance preferences should coexist with indexing settings");
+        assert!(config.roots.is_empty());
+        assert_eq!(config.max_cpu_percent, 17);
+    }
+
+    #[test]
     fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
