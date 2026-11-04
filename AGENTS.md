@@ -79,7 +79,7 @@ Update inaccurate screenshots and affected setup/limits after code or dependency
 ```sh
 cargo fmt --all --check
 cargo test -p ferroseek-launcher --locked  # replace the package for other modules
-cargo +1.99.0 clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo +1.89.0 check --workspace --all-targets --locked
 cargo build --release --workspace --locked
@@ -89,9 +89,9 @@ tests/launcher-smoke.sh target/release target/launcher-smoke
 ```
 
 Rust minimum is declared in `Cargo.toml`; CI toolchains and checks are in
-`.github/workflows/ci.yml`. The last recorded stable CI toolchain was 1.99;
-use it for Clippy rather than only the local 1.94 default, checking current CI
-when updating toolchains.
+`.github/workflows/ci.yml`. CI runs Clippy on `stable`; use that toolchain
+locally too. If the default differs, run `cargo +stable clippy` with the flags
+above instead of pinning a historical version.
 
 ## Safety and shared invariants
 
