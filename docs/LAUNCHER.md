@@ -708,8 +708,8 @@ can follow a command; the first search confirmation is retained by the burst rep
 `appearance_opened`/`appearance_closed` mark the settings page lifetime;
 `appearance_ready` confirms an accepted configuration load and `appearance_saved`
 a successful save response. `appearance_light`/`appearance_dark` observe the
-effective mode when page events are applied. `appearance_frame` records redraw
-events while that page is open, not completed rendering or display presentation.
+effective mode when page events are applied. `appearance_frame` records the next redraw
+after an observed page update, not completed rendering or display presentation.
 `material_blur_requested` reports a protocol request, not proof of rendered blur;
 `material_opaque` reports its withdrawal. `preview_loaded` and `preview_closed`
 identify accepted preview replies and closing the sidebar.

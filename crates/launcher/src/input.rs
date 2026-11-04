@@ -179,9 +179,12 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
         let mut dispatch = |event: &Event, child: &mut Tree, shell: &mut Shell<'_, Message>, cursor: mouse::Cursor| {
             let mut messages = Vec::new();
             let mut inner = Shell::new(&mut messages);
-            self.content
-                .as_widget_mut()
-                .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
+            // A printable global shortcut must not edit the focused text field.
+            if !matches!(ui::input_event(event, iced::event::Status::Ignored), Some(Message::ShowAppearance)) {
+                self.content
+                    .as_widget_mut()
+                    .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
+            }
             let command = ui::input_event(event, inner.event_status());
             let numbered = matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. })
                 if crate::model::numbered_command(key, *physical_key, *modifiers).is_some() && inner.is_event_captured());

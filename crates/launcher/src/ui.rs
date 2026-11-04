@@ -508,6 +508,7 @@ impl Launcher {
     }
     fn finish_appearance(&mut self, task: Task<appearance::Event>, close: Option<Preferences>) -> Task<Message> {
         let generation = self.appearance_generation;
+        timing::appearance_changed(close.is_none());
         self.preferences = close.unwrap_or_else(|| self.appearance.as_ref().unwrap().draft);
         timing::event(if self.preferences.dark(self.system_dark) { "appearance_dark" } else { "appearance_light" });
         self.material
@@ -1201,9 +1202,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     if let Message::TimingFrame(at) = message {
-        if s.appearance.is_some() {
-            timing::event_at("appearance_frame", at);
-        }
+        timing::appearance_frame(at);
         let visible = s.panel.is_none()
             && s.file_details.is_none()
             && s.application_picker.is_none()
@@ -2817,6 +2816,20 @@ mod tests {
         widget_batch(&mut s, &mut cache, &[typed("é", Modifiers::empty())], false);
         assert_eq!(s.query, "report");
         assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
+    #[test]
+    fn appearance_shortcut_does_not_insert_its_printable_key() {
+        let mut state = search_state();
+        let _ = update(&mut state, Message::Query("report".into()));
+        let mut shortcut = typed("<", Modifiers::CTRL | Modifiers::SHIFT);
+        if let Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. }) = &mut shortcut {
+            *physical_key = keyboard::key::Physical::Code(keyboard::key::Code::Comma);
+        }
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut state, &mut cache, &[shortcut], false);
+        assert_eq!(state.query, "report");
+        assert!(state.appearance.is_some());
     }
 
     #[test]
