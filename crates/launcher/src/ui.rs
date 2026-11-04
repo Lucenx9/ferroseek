@@ -2335,6 +2335,122 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    fn typed(value: &str, modifiers: Modifiers) -> Event {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character(value.into()),
+            modified_key: Key::Character(value.into()),
+            physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: (!modifiers.command()).then(|| value.into()),
+            repeat: false,
+        })
+    }
+
+    fn widget_batch(
+        s: &mut Launcher,
+        cache: &mut iced_runtime::user_interface::Cache,
+        events: &[Event],
+        initial: bool,
+    ) {
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let (messages, next_cache) = {
+            let mut ui = iced_runtime::UserInterface::build(
+                view(s),
+                iced::Size::new(s.window_width as f32, full_height() as f32),
+                std::mem::take(cache),
+                &mut renderer,
+            );
+            if initial {
+                ui.operate(&renderer, &mut iced::advanced::widget::operation::focusable::focus::<()>(search_id()));
+            }
+            let mut messages = Vec::new();
+            let (_, statuses) = ui.update(
+                events,
+                mouse::Cursor::Unavailable,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+            for (event, status) in events.iter().cloned().zip(statuses) {
+                if let Some(message) = on_event(event, status, iced::window::Id::unique()) {
+                    messages.push(message);
+                }
+            }
+            (messages, ui.into_cache())
+        };
+        *cache = next_cache;
+        // Deliberately do not run asynchronous widget-focus tasks. The actual
+        // tree must keep later keys away from a field whose context just ended.
+        for message in messages {
+            let _ = update(s, message);
+        }
+    }
+
+    fn settle_widgets(s: &mut Launcher, cache: &mut iced_runtime::user_interface::Cache) {
+        for _ in 0..16 {
+            widget_batch(
+                s,
+                cache,
+                &[Event::Window(iced::window::Event::RedrawRequested(std::time::Instant::now()))],
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[], true);
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed("k", Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+                typed("p", Modifiers::empty()),
+                typed("i", Modifiers::empty()),
+                typed("n", Modifiers::empty()),
+            ],
+            false,
+        );
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "report");
+        assert_eq!(s.panel.as_ref().unwrap().query, "pin");
+    }
+
+    #[test]
+    fn repeated_menu_transitions_preserve_order_and_native_text_editing() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[], true);
+        let control = |value| {
+            [
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed(value, Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+            ]
+        };
+        let mut events = Vec::new();
+        events.extend(control("k"));
+        events.push(typed("p", Modifiers::empty()));
+        events.extend(control("k"));
+        events.push(typed("z", Modifiers::empty()));
+        events.extend(control("k"));
+        events.push(typed("x", Modifiers::empty()));
+        events.extend(control("a")); // Native select-all in the new action field.
+        events.push(typed("é", Modifiers::empty()));
+        widget_batch(&mut s, &mut cache, &events, false);
+        settle_widgets(&mut s, &mut cache);
+        assert_eq!(s.query, "reportz");
+        assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
     #[test]
     fn material_changes_preserve_the_current_search_and_actions() {
         let mut state = application_actions(&["New window"]);
