@@ -171,7 +171,7 @@ fn name_score(key: &str, name: &[u8], tokens: &[String]) -> f32 {
             covered += t.chars().count();
             s += if p == 0 {
                 30.0
-            } else if is_boundary(key, name, p) {
+            } else if key.char_indices().any(|(pos, _)| key[pos..].starts_with(t) && is_boundary(key, name, pos)) {
                 20.0
             } else {
                 8.0
