@@ -107,8 +107,9 @@ fn acquire(paths: &Paths) -> Result<InstanceLock, EngineError> {
     InstanceLock::try_acquire(&paths.lock_file())?.ok_or(EngineError::Busy)
 }
 
-fn rules(cfg: &Config, paths: &Paths) -> Rules {
-    Rules::new(cfg, std::slice::from_ref(&paths.data_dir))
+fn rules(cfg: &Config, paths: &Paths) -> Result<Rules, EngineError> {
+    let data_dir = std::fs::canonicalize(&paths.data_dir)?;
+    Ok(Rules::new(cfg, &[data_dir]))
 }
 
 fn refresh_counts(ix: &Indexer, status: &Status) {
@@ -125,7 +126,7 @@ fn refresh_counts(ix: &Indexer, status: &Status) {
 pub fn index_once(cfg: &Config, paths: &Paths, full: bool, rebuild: bool) -> Result<Snapshot, EngineError> {
     let _lock = acquire(paths)?;
     let status = Arc::new(Status::default());
-    let mut ix = Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), None, status.clone());
+    let mut ix = Indexer::new(open_writer(paths)?, rules(cfg, paths)?, cfg.root_paths(), None, status.clone());
     status.set_state(State::Scanning);
     if rebuild {
         ix.rebuild()?;
@@ -150,7 +151,7 @@ impl Engine {
         let status = Arc::new(Status::default());
         let ino = Inotify::new()?;
         let ix =
-            Indexer::new(open_writer(paths)?, rules(cfg, paths), cfg.root_paths(), Some(ino.clone()), status.clone());
+            Indexer::new(open_writer(paths)?, rules(cfg, paths)?, cfg.root_paths(), Some(ino.clone()), status.clone());
         let (tx, rx) = mpsc::sync_channel::<Msg>(CHANNEL_BATCHES);
 
         let wake = Arc::new(WakePipe::new()?);
@@ -341,7 +342,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                         log::warn!("event burst exceeded {MAX_PENDING_EVENTS} pending events; reconciling instead");
                         pending.clear();
                         first_event = None;
-                        ix.schedule_all(Mode::Full)?;
+                        ix.sync_roots(Mode::Full)?;
                     } else {
                         pending.extend(evs);
                         first_event.get_or_insert_with(Instant::now);
@@ -360,12 +361,12 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
                         if missed_while_paused || !pending.is_empty() || ix.has_work() {
                             pending.clear();
                             first_event = None;
-                            ix.schedule_all(Mode::Full)?;
+                            ix.sync_roots(Mode::Full)?;
                         }
                         missed_while_paused = false;
                     }
                 }
-                Some(Msg::Reindex(mode)) => ix.schedule_all(mode)?,
+                Some(Msg::Reindex(mode)) => ix.sync_roots(mode)?,
                 Some(Msg::Rebuild) => {
                     pending.clear();
                     first_event = None;
@@ -411,7 +412,7 @@ fn run_indexer(mut ix: Indexer, rx: mpsc::Receiver<Msg>, cfg: &Config, paths: &P
             if let Some(p) = next_periodic
                 && now >= p
             {
-                ix.schedule_all(Mode::Quick)?;
+                ix.sync_roots(Mode::Quick)?;
                 next_periodic = periodic.and_then(|d| now.checked_add(d));
             }
             if ix.has_work() && now >= scan_not_before {
@@ -508,7 +509,7 @@ mod tests {
         let status = Arc::new(Status::default());
         let ix = Indexer::new(
             open_writer(&paths).unwrap(),
-            rules(&cfg, &paths),
+            rules(&cfg, &paths).unwrap(),
             cfg.root_paths(),
             Some(ino.clone()),
             status.clone(),
