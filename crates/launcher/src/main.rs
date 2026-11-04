@@ -13,6 +13,7 @@ mod details;
 mod favorites;
 mod folders;
 mod icons;
+mod input;
 mod launch;
 mod matcher;
 mod material;
