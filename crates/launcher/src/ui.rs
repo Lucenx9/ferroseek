@@ -605,7 +605,7 @@ impl Launcher {
                 icons.get(&item.icon, fallbacks)
             })
             .collect();
-        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target == t));
+        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
         match kept {
             Some(j) => self.cursor.select(j, self.items.len()),
             None => {
@@ -1667,7 +1667,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             // Resolve the action and target identities, never an old row number.
             let a = s
                 .selected()
-                .filter(|item| item.target == target)
+                .filter(|item| item.target.same_identity(&target))
                 .and(s.panel.as_ref())
                 .filter(|p| p.filtered_actions().contains(&action))
                 .map(|_| action);
@@ -3449,6 +3449,36 @@ mod tests {
         panel.filter("copy xyz".into());
         assert!(panel.filtered_actions().is_empty());
         assert_eq!(panel.action_for_command(Command::Activate), None);
+    }
+
+    #[test]
+    fn file_metadata_updates_keep_selection_and_queued_actions() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Scope(Scope::Files));
+        let _ = update(&mut s, Message::Query("report".into()));
+        let generation = s.generation;
+        let mut files = file_hits();
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+        s.cursor.select(1, s.items.len());
+        let drawn = s.selected().unwrap().target.clone();
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("copy name".into()));
+
+        files[1].icon = "application-pdf".into();
+        let expected = Target::File(files[1].clone());
+        let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files)) });
+        assert_eq!(s.selected().unwrap().target, expected, "an icon update must not select another file");
+        assert_eq!(s.panel.as_ref().unwrap().query, "copy name");
+        let _ = update(&mut s, Message::PanelClicked { target: drawn.clone(), action: Action::CopyName });
+        assert_eq!(s.status, Status::Notice("Copied name".into()));
+        assert!(s.panel.is_none());
+
+        s.cursor.select(0, s.items.len());
+        let _ = update(&mut s, Message::Selected(drawn));
+        assert_eq!(s.selected().unwrap().target, expected, "queued result clicks retain their target");
+        let _pending = command(&mut s, Command::Activate);
+        assert_eq!(s.opening.as_ref().unwrap().0, "file:///synthetic/report.pdf");
+        assert!(s.usage.recent(usage::now(), 8).is_empty(), "submission alone does not record history");
     }
 
     #[test]
