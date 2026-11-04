@@ -190,10 +190,12 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
   `max(300, limit)` prefixes and `max(2000, 4 * limit)` FTS matches.
   Ranking is approximate when these budgets are reached.
 - Path-only queries stream entries through the path filter without inventing
-  a filename constraint. Slash-only queries return no matches. Path caches
+  a filename constraint. Multiple short name tokens also stream candidates
+  because neither a name prefix nor a trigram is required to match them.
+  Slash-only queries return no matches. Path caches
   are cleared at 8192 entries (a single ancestor chain may exceed this).
-  Selective filters and path-only queries can scan the whole candidate
-  source; memory is bounded, but latency is not constant.
+  Selective filters, path-only queries and multiple short name tokens can scan
+  the whole candidate source; memory is bounded, but latency is not constant.
 - **Score**, stage 1 (name only): exact name > exact stem > prefix >
   word-boundary match (`_ - . space`, camelCase) > inner substring, plus a
   coverage bonus and a penalty for dotfiles.

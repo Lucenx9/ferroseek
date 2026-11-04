@@ -24,8 +24,8 @@ const PREFIX_CANDIDATES: usize = 300;
 /// Whitespace separates tokens; all must match (case-insensitive):
 /// - a token containing `/` must be a substring of the full path;
 /// - any other token must be a substring of the file name. Name matching
-///   uses the trigram index for tokens of three or more characters; a query
-///   made only of shorter tokens matches name *prefixes*.
+///   uses the trigram index for tokens of three or more characters; a single
+///   shorter name token matches name *prefixes*.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Query {
     name_tokens: Vec<String>,
@@ -243,7 +243,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         false
     };
     if small_scope {
-        let prefix = if long.is_empty() {
+        let prefix = if q.name_tokens.len() == 1 && long.is_empty() {
             q.name_tokens
                 .first()
                 .map(|s| {
@@ -286,8 +286,10 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
                 &params,
                 prefix_cap,
             )?;
-        } else {
-            // No filename constraint can safely narrow a full-path substring.
+        }
+        if q.name_tokens.is_empty() || (q.name_tokens.len() > 1 && long.is_empty()) {
+            // Full-path substrings and multiple short name tokens have no
+            // mandatory name prefix or trigram to narrow the candidate source.
             // Stream rows and retain only the bounded set passing path filters.
             add_rows(
                 &mut conn
