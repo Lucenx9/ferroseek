@@ -33,7 +33,6 @@ launcher serves the copied value, so it stays until Esc or the toggle closes it.
 
 | Option | Effect |
 |---|---|
-| Ctrl+Shift+Comma | appearance preferences |
 | `--query TEXT` | start with `TEXT` already typed |
 | `--private` | do not record anything opened in this session |
 | `--opaque` | use a solid surface without background blur |
@@ -117,6 +116,7 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Ctrl+I | open/close file search status |
+| Ctrl+Shift+Comma | appearance preferences |
 | Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |
 | Ctrl+Shift+C | copy the file's path |

@@ -297,9 +297,6 @@ impl Panel {
             }
             content = content.push(cards);
         }
-        if !self.notice.is_empty() {
-            content = column![text(&self.notice).size(12), content].spacing(8);
-        }
         let save = button(ui::hint("Ctrl+S", "Save"))
             .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == 11));
         let back = button(ui::hint("Esc", "Back"))
@@ -323,6 +320,11 @@ impl Panel {
             .spacing(12)
             .align_y(iced::Center)
         };
+        let notice: Element<'_, Event> = if self.notice.is_empty() {
+            space().height(0).into()
+        } else {
+            container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 16]).into()
+        };
         container(column![
             row![
                 text("Appearance").size(20),
@@ -332,6 +334,7 @@ impl Panel {
             .padding([8, 16])
             .align_y(iced::Center),
             ui::divider(),
+            notice,
             scrollable(content.padding([12, 16])).id(iced::widget::Id::new("appearance-scroll")).height(Length::Fill),
             ui::divider(),
             container(footer).padding([8, 16])
@@ -353,7 +356,11 @@ fn choice_style(theme: &Theme, status: button::Status, selected: bool, focused: 
         })),
         text_color: palette::TEXT.resolve(theme),
         border: Border {
-            color: if focused { palette::ACCENT.resolve(theme) } else { palette::BORDER.resolve(theme) },
+            color: if focused || status == button::Status::Hovered {
+                palette::ACCENT.resolve(theme)
+            } else {
+                palette::BORDER.resolve(theme)
+            },
             width: if focused { 2.0 } else { 1.0 },
             radius: 8.0.into(),
         },
