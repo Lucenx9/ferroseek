@@ -194,7 +194,13 @@ KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
-for _ in $(seq 100); do has_owner org.kde.KWin && break; sleep 0.05; done
+# Cold Mesa initialization on hosted runners can outlast the socket becoming
+# ready. Wait for the control interface, and stop early if our compositor exits.
+for _ in $(seq 300); do
+    has_owner org.kde.KWin && break
+    kill -0 "$KPID" 2>/dev/null || break
+    sleep 0.05
+done
 has_owner org.kde.KWin || fail "nested KWin did not register its control interface"
 export WAYLAND_DISPLAY=$SOCK QT_QPA_PLATFORM=wayland
 
