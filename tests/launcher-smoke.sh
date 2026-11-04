@@ -13,8 +13,9 @@
 set -euo pipefail
 
 export FERROSEEK_SMOKE_PROFILE=${FERROSEEK_SMOKE_PROFILE:-us-1x}
-SMOKE_WIDTH=1280; SMOKE_HEIGHT=800
+SMOKE_WIDTH=1280; SMOKE_HEIGHT=800; SMOKE_OUTPUTS=1
 case "$FERROSEEK_SMOKE_PROFILE" in
+    us-multi) SMOKE_LAYOUT=us; SMOKE_SCALE=1; SMOKE_OUTPUTS=2 ;;
     us-1x) SMOKE_LAYOUT=us; SMOKE_SCALE=1 ;;
     fr-1x) SMOKE_LAYOUT=fr; SMOKE_SCALE=1 ;;
     us-1.5x) SMOKE_LAYOUT=us; SMOKE_SCALE=1.5 ;;
@@ -184,7 +185,7 @@ fi
 # the launcher and daemon retain their separate synthetic application catalog.
 XDG_CONFIG_DIRS=/etc/xdg XDG_DATA_DIRS=/usr/local/share:/usr/share \
 KWIN_WAYLAND_NO_PERMISSION_CHECKS=${FERROSEEK_SMOKE_INTERACTION:-0} XKB_DEFAULT_LAYOUT="$SMOKE_LAYOUT" \
-    kwin_wayland --virtual --socket "$SOCK" --width "$SMOKE_WIDTH" --height "$SMOKE_HEIGHT" --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
+    kwin_wayland --virtual --output-count "$SMOKE_OUTPUTS" --socket "$SOCK" --width "$SMOKE_WIDTH" --height "$SMOKE_HEIGHT" --scale "$SMOKE_SCALE" > "$T/kwin.log" 2>&1 &
 KPID=$!
 for _ in $(seq 100); do [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] && break; sleep 0.05; done
 [[ -S "$XDG_RUNTIME_DIR/$SOCK" ]] || fail "nested KWin did not start"
