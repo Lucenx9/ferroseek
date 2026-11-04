@@ -443,6 +443,11 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
         return (dy != 0.0).then_some(Message::Wheel(dy));
     }
     let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
+    if *modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
+        && *physical_key == keyboard::key::Physical::Code(keyboard::key::Code::Comma)
+    {
+        return Some(Message::ShowAppearance);
+    }
     let command = key_message(key, *modifiers);
     if status == event::Status::Captured
         && modifiers.command()
@@ -501,6 +506,7 @@ impl Launcher {
         let task = task.map(move |event| Message::Appearance { generation, event });
         if close.is_some() {
             self.appearance = None;
+            timing::event("appearance_closed");
             self.appearance_generation += 1;
             Task::batch([task, self.resize(), crate::input::focus(search_id())])
         } else {
@@ -1378,6 +1384,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let panel = appearance::Panel::new(s.settings_path.clone(), s.preferences);
             let load = panel.load().map(move |event| Message::Appearance { generation, event });
             s.appearance = Some(panel);
+            timing::event("appearance_opened");
             Task::batch([load, s.resize()])
         }
         Message::Ui(UiEvent::DesktopAppearance(dark)) => {
