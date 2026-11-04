@@ -319,6 +319,33 @@ fn ranking_uses_the_best_occurrence_of_each_name_token() {
 }
 
 #[test]
+fn multiple_short_tokens_match_substrings_in_any_order() {
+    // Exercise both direct enumeration of small scopes and the general candidate path.
+    for unrelated in [0, 4097] {
+        let (_t, db) = setup();
+        let (mut w, _) = Writer::open(&db).unwrap();
+        let mut tx = w.transaction().unwrap();
+        let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+        let folder = tx.upsert(root, b"reports", dir(2)).unwrap().0;
+        for i in 0..unrelated {
+            tx.upsert(folder, format!("noise-{i}.txt").as_bytes(), file(i + 3)).unwrap();
+        }
+        tx.upsert(folder, b"quarterly-z.txt", file(unrelated + 3)).unwrap();
+        tx.commit().unwrap();
+
+        let reader = Reader::open(&db).unwrap();
+        for within in [None, Some(PathBuf::from("/r/reports"))] {
+            let options = SearchOptions { within, ..Default::default() };
+            for query in ["q z", "z q", "ly z", "z ly", "reports/ q z", "reports/ z q", "z quarterly"] {
+                let hits = reader.search(&Query::parse(query), &options).unwrap();
+                assert_eq!(names(&hits), ["quarterly-z.txt"], "query {query:?}, {options:?}, {unrelated}");
+            }
+            assert!(reader.search(&Query::parse("z"), &options).unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
 fn short_queries_match_prefixes() {
     let (_t, db) = ranked_fixture();
     let n = names(&search(&db, "cv"));
