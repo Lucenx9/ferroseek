@@ -2468,13 +2468,23 @@ mod tests {
         events.push(typed("p", Modifiers::empty()));
         events.extend(control("k"));
         events.push(typed("z", Modifiers::empty()));
+        events.push(Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(keyboard::key::Named::Backspace),
+            modified_key: Key::Named(keyboard::key::Named::Backspace),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Backspace),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        })); // Restore a matching result before opening its actions again.
         events.extend(control("k"));
         events.push(typed("x", Modifiers::empty()));
         events.extend(control("a")); // Native select-all in the new action field.
         events.push(typed("é", Modifiers::empty()));
         widget_batch(&mut s, &mut cache, &events, false);
         settle_widgets(&mut s, &mut cache);
-        assert_eq!(s.query, "reportz");
+        assert_eq!(s.query, "report");
+        assert_eq!(s.generation, 3, "the temporary edit and its deletion both reached the main field");
         assert_eq!(s.panel.as_ref().unwrap().query, "é");
     }
 
@@ -3842,6 +3852,9 @@ mod tests {
                 messages.push(message);
             }
         }
+        // These fixtures assert domain actions; full cached-tree tests above
+        // also apply and verify the internal input acknowledgement.
+        messages.retain(|message| !matches!(message, Message::InputApplied));
         messages
     }
 
