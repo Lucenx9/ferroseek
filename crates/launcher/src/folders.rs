@@ -159,7 +159,7 @@ impl Panel {
                         self.cursor.reset();
                         self.document = Some(doc);
                         self.phase = Phase::Ready;
-                        task = widget::operation::focus(input_id());
+                        task = crate::input::focus(input_id());
                     }
                     Err(error) => {
                         self.phase = Phase::Ready;
@@ -214,7 +214,7 @@ impl Panel {
                     }
                     Err(error) => self.message = Some((error, true)),
                 }
-                task = widget::operation::focus(input_id());
+                task = crate::input::focus(input_id());
             }
             Event::Select(path) if self.phase == Phase::Ready => {
                 if let Some(i) = self.roots.iter().position(|r| r == &path) {
@@ -307,7 +307,7 @@ impl Panel {
             Event::KeepEditing => {
                 self.pending = None;
                 task = Task::batch([
-                    widget::operation::focus(input_id()),
+                    crate::input::focus(input_id()),
                     widget::operation::snap_to(scroll_id(), widget::operation::RelativeOffset::START),
                 ]);
             }

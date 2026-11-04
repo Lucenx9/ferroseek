@@ -41,7 +41,7 @@ struct EnsureFocus {
     allowed: bool,
 }
 
-pub fn focus(target: iced::widget::Id) -> iced::Task<Message> {
+pub fn focus<T>(target: iced::widget::Id) -> iced::Task<T> {
     iced_runtime::task::effect(iced_runtime::Action::widget(EnsureFocus { target, found: false, allowed: true }))
 }
 
