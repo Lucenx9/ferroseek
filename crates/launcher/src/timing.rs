@@ -83,6 +83,28 @@ pub fn surface_resized(size: (u32, u32)) {
     with_trace(|trace| trace.surface_resized(size, Instant::now()));
 }
 
+pub fn layout(geometry: crate::layout::Geometry) {
+    with_trace(|trace| {
+        let elapsed = Instant::now().saturating_duration_since(trace.start).as_micros();
+        let _ = writeln!(
+            trace.output,
+            "{{\"event\":\"layout_requested\",\"elapsed_us\":{elapsed},\"width\":{},\"height\":{},\"rows\":{},\"top\":{},\"centered\":{}}}",
+            geometry.width, geometry.height, geometry.rows, geometry.top, geometry.centered
+        );
+    });
+}
+pub fn output(bounds: Option<(u32, u32)>) {
+    if let Some((width, height)) = bounds {
+        with_trace(|trace| {
+            let elapsed = Instant::now().saturating_duration_since(trace.start).as_micros();
+            let _ = writeln!(
+                trace.output,
+                "{{\"event\":\"output_geometry\",\"elapsed_us\":{elapsed},\"width\":{width},\"height\":{height}}}"
+            );
+        });
+    }
+}
+
 struct Query {
     generation: u64,
     start: Instant,

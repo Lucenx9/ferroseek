@@ -27,7 +27,7 @@ struct Client {
 }
 
 impl Activation {
-    pub fn attach(&self, connection: Connection, material: crate::material::Material) {
+    pub fn attach(&self, connection: Connection, material: crate::material::Material, output: crate::output::Observer) {
         let mut events = connection.new_event_queue::<Worker>();
         let queue = events.handle();
         connection.display().get_registry(&queue, ());
@@ -35,8 +35,10 @@ impl Activation {
         let running = alive.clone();
         let started = std::thread::Builder::new().name("activation".into()).spawn(move || {
             let mut worker = Worker::with_material(material);
+            worker.output = output;
             while !worker.stop && events.blocking_dispatch(&mut worker).is_ok() {}
             worker.material.disconnect();
+            worker.output.disconnect();
             running.store(false, Ordering::Release);
         });
         if started.is_ok()
@@ -109,6 +111,7 @@ struct Context {
 #[derive(Default)]
 pub(super) struct Worker {
     pub(super) material: crate::material::Material,
+    pub(super) output: crate::output::Observer,
     activation: Option<(u32, xdg_activation_v1::XdgActivationV1)>,
     seats: HashMap<u32, Seat>,
     context: Option<Context>,
@@ -118,7 +121,15 @@ pub(super) struct Worker {
 
 impl Worker {
     pub(super) fn with_material(material: crate::material::Material) -> Self {
-        Self { material, activation: None, seats: HashMap::new(), context: None, pending: Vec::new(), stop: false }
+        Self {
+            material,
+            output: crate::output::Observer::default(),
+            activation: None,
+            seats: HashMap::new(),
+            context: None,
+            pending: Vec::new(),
+            stop: false,
+        }
     }
 }
 
@@ -151,6 +162,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Worker {
         queue: &QueueHandle<Self>,
     ) {
         state.material.registry(registry, &event, queue);
+        state.output.registry(registry, &event, queue);
         match event {
             wl_registry::Event::Global { name, interface, version } if interface == "wl_seat" && version >= 5 => {
                 let proxy = registry.bind(name, version.min(7), queue, name);
@@ -232,6 +244,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, u32> for Worker {
         match event {
             wl_keyboard::Event::Enter { surface, serial, .. } => {
                 state.material.surface(surface.clone(), queue);
+                state.output.surface(surface.clone(), queue);
                 crate::timing::event("keyboard_focus_enter");
                 seat.keyboard_focus = Some(surface.clone());
                 state.context = Some(Context { seat: *name, surface, serial, pointer: false });
@@ -438,7 +451,11 @@ pub(crate) mod tests {
             }
         });
         let activation = Activation::default();
-        activation.attach(Connection::from_socket(client).unwrap(), crate::material::Material::default());
+        activation.attach(
+            Connection::from_socket(client).unwrap(),
+            crate::material::Material::default(),
+            crate::output::Observer::default(),
+        );
         (activation, Server { socket, thread: Some(thread) }, seen)
     }
 

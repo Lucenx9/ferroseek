@@ -26,30 +26,32 @@ use crate::details;
 use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
+use crate::layout::{self, FOOTER_HEIGHT, INPUT_HEIGHT, PAD, ROW_HEIGHT};
 use crate::material::Material;
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
+use crate::output;
 use crate::preview;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
 
+#[cfg(test)]
 pub const WIDTH: u32 = 720;
+#[cfg(test)]
 const PREVIEW_WIDTH: u32 = 980;
 const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
-const ROW_HEIGHT: f32 = 48.0;
-const INPUT_HEIGHT: f32 = 58.0;
-const FOOTER_HEIGHT: f32 = 34.0;
-const PAD: f32 = 8.0;
 const ICON_SIZE: f32 = 28.0;
 /// Below this, file search is not run (the daemon needs two characters).
 const MIN_FILE_QUERY: usize = 2;
 const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
 
+#[cfg(test)]
 fn compact_height() -> u32 {
     (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32
 }
 
+#[cfg(test)]
 fn full_height() -> u32 {
     compact_height() + (ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD) as u32
 }
@@ -57,7 +59,8 @@ fn full_height() -> u32 {
 pub(crate) use crate::appearance::palette;
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
-static BOOT: Mutex<Option<(Boot, Material)>> = Mutex::new(None);
+static OUTPUT_EVENTS: Mutex<Option<UnboundedReceiver<output::Event>>> = Mutex::new(None);
+static BOOT: Mutex<Option<(Boot, Material, output::Observer)>> = Mutex::new(None);
 static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None);
 
 /// What the launcher starts with.
@@ -172,6 +175,10 @@ struct FolderSearchFrame {
 }
 
 pub struct Launcher {
+    output: output::Observer,
+    output_bounds: Option<(u32, u32)>,
+    placement: Option<layout::Geometry>,
+    window_height: u32,
     preferences: Preferences,
     system_dark: Option<bool>,
     opaque: bool,
@@ -237,6 +244,7 @@ pub enum Message {
     InputFocused { epoch: u64, field: Id, at: std::time::Instant },
     MaterialChanged(bool),
     SurfaceResized((u32, u32)),
+    Output(output::Event),
     ApplicationOpened { id: String, result: Result<(), String> },
     TimingFrame(std::time::Instant),
     Query(String),
@@ -288,14 +296,18 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
+    let initial = layout::calculate(boot_data.appearance, None, true, false);
+    let (output, output_events) = output::Observer::new((initial.width, initial.height));
+    let shared_output = output.clone();
+    *OUTPUT_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(output_events);
     let (material, material_events) = Material::new(
         !boot_data.opaque && boot_data.appearance.material == ferroseek_config::appearance::Material::Glass,
-        (WIDTH, compact_height()),
+        (initial.width, initial.height),
     );
     let shared_material = material.clone();
     *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material));
+    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material, output));
     iced_layershell::application(boot, namespace, update, view)
         .style(|_, theme| iced::theme::Style {
             background_color: Color::TRANSPARENT,
@@ -306,17 +318,15 @@ pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), ic
         .settings(Settings {
             with_connection: Some(iced_layershell::reexport::WithConnection::from(move || {
                 let connection = wayland_client::Connection::connect_to_env()?;
-                activation.attach(connection.clone(), shared_material.clone());
+                activation.attach(connection.clone(), shared_material.clone(), shared_output.clone());
                 Ok(connection)
             })),
             layer_settings: LayerShellSettings {
-                anchor: Anchor::Top,
+                anchor: if initial.centered { Anchor::empty() } else { Anchor::Top },
                 layer: Layer::Overlay,
                 exclusive_zone: 0,
-                size: Some((WIDTH, compact_height())),
-                // About a fifth down a 1080p screen; layer-shell cannot
-                // centre vertically without filling the output.
-                margin: (200, 0, 0, 0),
+                size: Some((initial.width, initial.height)),
+                margin: (initial.top as i32, 0, 0, 0),
                 keyboard_interactivity: KeyboardInteractivity::Exclusive,
                 start_mode: StartMode::Active,
                 events_transparent: false,
@@ -333,11 +343,12 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let (data, material) = BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
-    boot_from(data, material, Icons::new(ICON_SIZE as u16))
+    let (data, material, output) =
+        BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    boot_from(data, material, output, Icons::new(ICON_SIZE as u16))
 }
 
-fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Message>) {
+fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
     let Boot {
         activation,
         backend,
@@ -350,7 +361,12 @@ fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Me
         opaque,
     } = data;
     let first_run = !settings_path.exists();
+    let initial = layout::calculate(preferences, None, true, false);
     let mut state = Launcher {
+        output,
+        output_bounds: None,
+        placement: None,
+        window_height: initial.height,
         preferences,
         system_dark: None,
         opaque,
@@ -388,7 +404,7 @@ fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Me
         file_details: None,
         details_generation: 0,
         preview_enabled: false,
-        window_width: WIDTH,
+        window_width: initial.width,
         text_preview: None,
         preview_generation: 0,
         preview_request: None,
@@ -415,7 +431,12 @@ fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Me
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
     let events = if timing::enabled() { event::listen_raw(on_event) } else { event::listen_with(on_event) };
-    Subscription::batch([events, Subscription::run(ui_events), Subscription::run(material_events)])
+    Subscription::batch([
+        events,
+        Subscription::run(ui_events),
+        Subscription::run(material_events),
+        Subscription::run(output_events),
+    ])
 }
 
 fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
@@ -476,6 +497,12 @@ fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
     model::command_for(key, mods).map(Message::Cmd)
 }
 
+fn output_events() -> BoxStream<'static, Message> {
+    match OUTPUT_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        Some(rx) => rx.map(Message::Output).boxed(),
+        None => stream::pending().boxed(),
+    }
+}
 fn material_events() -> BoxStream<'static, Message> {
     match MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()).take() {
         Some(rx) => rx.map(Message::MaterialChanged).boxed(),
@@ -520,7 +547,7 @@ impl Launcher {
             self.appearance_generation += 1;
             Task::batch([task, self.resize(), crate::input::focus(search_id())])
         } else {
-            task
+            Task::batch([task, self.resize()])
         }
     }
 
@@ -600,14 +627,27 @@ impl Launcher {
             && self.file_details.is_none()
             && !self.preview_enabled
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
-        let width = if self.preview_visible() { PREVIEW_WIDTH } else { WIDTH };
-        if compact == self.compact && width == self.window_width {
+        let geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
+        self.cursor.visible = geometry.rows;
+        self.cursor.move_by(0, self.items.len());
+        if let Some(panel) = &mut self.panel {
+            panel.cursor.visible = geometry.rows;
+            let actions = panel.filtered_actions().len();
+            panel.cursor.move_by(0, actions);
+        }
+        if self.placement == Some(geometry) && compact == self.compact {
             return Task::none();
         }
         self.compact = compact;
-        self.window_width = width;
-        let h = if compact { compact_height() } else { full_height() };
-        Task::done(Message::SizeChange((width, h)))
+        self.window_width = geometry.width;
+        self.window_height = geometry.height;
+        self.placement = Some(geometry);
+        self.output.resize((geometry.width, geometry.height));
+        timing::layout(geometry);
+        let anchor = if geometry.centered { Anchor::empty() } else { Anchor::Top };
+        let size = Task::done(Message::AnchorSizeChange(anchor, (geometry.width, geometry.height)));
+        let margin = Task::done(Message::MarginChange((geometry.top as i32, 0, 0, 0)));
+        if geometry.centered { size.chain(margin) } else { margin.chain(size) }
     }
 
     fn selected(&self) -> Option<&Item> {
@@ -730,6 +770,7 @@ impl Launcher {
 
     fn panel_for(&self, item: &Item) -> Panel {
         let mut panel = Panel::new(item, self.is_favorite(&item.target));
+        panel.cursor.visible = self.cursor.visible;
         if let Target::App(i) = item.target
             && let Some(app) = self.apps.get(i)
         {
@@ -1191,8 +1232,19 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         return Task::none();
     }
+    if let Message::Output(event) = message {
+        return match event {
+            output::Event::Mapped => Task::done(Message::SizeChange((s.window_width, s.window_height))),
+            output::Event::Bounds(bounds) => {
+                s.output_bounds = bounds;
+                timing::output(bounds);
+                s.resize()
+            }
+        };
+    }
     if let Message::SurfaceResized(size) = message {
         s.material.resize(size);
+        s.output.resize(size);
         timing::surface_resized(size);
         return Task::none();
     }
@@ -1764,7 +1816,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             return s.perform(action);
         }
         let action_count = p.filtered_actions().len();
-        let page = VISIBLE_ROWS as isize - 1;
+        let page = p.cursor.visible.saturating_sub(1).max(1) as isize;
         match cmd {
             Command::Up => p.cursor.move_by(-1, action_count),
             Command::Down => p.cursor.move_by(1, action_count),
@@ -1797,7 +1849,7 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             return s.preview_effect(effect);
         }
     }
-    let page = VISIBLE_ROWS as isize - 1;
+    let page = s.cursor.visible.saturating_sub(1).max(1) as isize;
     match cmd {
         Command::Up => s.cursor.move_by(-1, len),
         Command::Down => s.cursor.move_by(1, len),
@@ -1978,9 +2030,25 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(2)
         .into()
     } else {
-        row![input, scopes, separator, index_status, folders, appearance].spacing(4).align_y(Vertical::Center).into()
+        if s.window_width < 640 {
+            column![
+                input,
+                row![scopes, space::horizontal(), index_status, folders, appearance]
+                    .spacing(4)
+                    .align_y(Vertical::Center)
+            ]
+            .into()
+        } else {
+            row![input, scopes, separator, index_status, folders, appearance]
+                .spacing(4)
+                .align_y(Vertical::Center)
+                .into()
+        }
     };
-    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
+    let header = container(header)
+        .padding([0, 8])
+        .height(INPUT_HEIGHT + if s.window_width < 640 { 30.0 } else { 0.0 })
+        .align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {
@@ -1998,19 +2066,22 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
                 None => preview::empty_view(),
             }
             .map(move |event| Message::Preview { generation, event });
+            let available = (s.window_width as f32 - PAD * 2.0 - 1.0).max(1.0);
+            let preview_width = (available * 0.6).min((available - 320.0).max(available * 0.4));
             row![
-                container(list).width(Length::FillPortion(2)),
+                container(list).width(Length::Fill),
                 container(space()).width(1).height(Length::Fill).style(|theme| container::Style {
                     background: Some(Background::Color(palette::FAINT.resolve(theme))),
                     ..Default::default()
                 }),
-                container(preview).width(Length::FillPortion(3))
+                container(preview).width(preview_width)
             ]
             .into()
         } else {
             results(s)
         };
-        body = body.push(container(results).height(ROW_HEIGHT * VISIBLE_ROWS as f32 + PAD).padding([PAD / 2.0, 0.0]));
+        body =
+            body.push(container(results).height(ROW_HEIGHT * s.cursor.visible as f32 + PAD).padding([PAD / 2.0, 0.0]));
         body = body.push(divider());
     }
     body = body.push(footer(s));
@@ -2374,10 +2445,10 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     if let Some(item) = s.selected() {
         let acts = s.actions_for(&item.target);
         hints = hints.push(hint("Enter", acts[0].label()));
-        if let Some(action) = model::secondary_action(&acts) {
+        if let Some(action) = model::secondary_action(&acts).filter(|_| s.window_width >= 640) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
-        if acts.contains(&Action::BrowseFolder) {
+        if s.window_width >= 640 && acts.contains(&Action::BrowseFolder) {
             hints = hints.push(hint("Alt+→", "Browse here"));
         }
         hints = hints.push(
@@ -2510,7 +2581,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let mut footer = row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })]
         .align_y(Vertical::Center)
         .padding([4, 10]);
-    if actions.len() > VISIBLE_ROWS {
+    if actions.len() > p.cursor.visible {
         let window = p.cursor.window(actions.len());
         footer = footer.push(space::horizontal()).push(
             text(format!("{}–{} / {}", window.start + 1, window.end, actions.len())).size(11).style(
@@ -2714,6 +2785,7 @@ mod tests {
                 settings_path: config,
             },
             Material::default(),
+            output::Observer::default(),
             Icons::disabled(),
         );
         assert_eq!(s.query, "report");
@@ -2975,6 +3047,10 @@ mod tests {
         )
         .unwrap();
         Launcher {
+            output: output::Observer::default(),
+            output_bounds: None,
+            placement: None,
+            window_height: full_height(),
             preferences: Preferences::default(),
             system_dark: None,
             opaque: false,

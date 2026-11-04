@@ -256,8 +256,6 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::mpsc as channel;
 
-    wayland_client::delegate_noop!(Worker: ignore wl_surface::WlSurface);
-
     struct DisconnectOnDrop(UnixStream);
 
     impl Drop for DisconnectOnDrop {

@@ -287,6 +287,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn launcher_layout_preferences_coexist_with_saved_themes() {
+        let config = Config::parse(
+            "roots = []\n[appearance]\nmode = 'light'\nlight_theme = 'slate'\nwidth = 'wide'\nposition = 'centered'\n",
+        )
+        .expect("layout preferences should be accepted");
+        assert!(config.roots.is_empty());
+        assert_eq!(config.appearance.width, appearance::Width::Wide);
+        assert_eq!(config.appearance.position, appearance::Position::Centered);
+        assert_eq!(config.appearance.mode, appearance::Mode::Light);
+        assert_eq!(config.appearance.light_theme, appearance::Palette::Slate);
+    }
+
+    #[test]
     fn appearance_preferences_are_accepted_without_changing_index_configuration() {
         let config = Config::parse("roots = []\nmax_cpu_percent = 17\n[appearance]\nmode = 'light'\nmaterial = 'solid'\nlight_theme = 'iron'\ndark_theme = 'forest'\n").expect("appearance preferences should coexist with indexing settings");
         assert!(config.roots.is_empty());
