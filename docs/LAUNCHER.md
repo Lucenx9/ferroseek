@@ -434,9 +434,11 @@ and the mouse wheel navigate longer lists.
 The chooser stays bound to the original file while results finish loading.
 Esc clears a nonempty application filter; Esc again returns to the same search
 query, scope and file selection when that file is still present. Ctrl+R reloads
-the application list. Loading, empty and error states are distinct; a failed
-read can be retried. The list is requested only when opening or reloading this
-view, rather than on each filter keystroke.
+the application list, retaining the selected application if it is still present,
+including after a failed read and retry. Editing or clearing the filter resets
+the selection even while a reload is pending. Loading, empty and error states
+are distinct; a failed read can be retried. The list is requested only when
+opening or reloading this view, rather than on each filter keystroke.
 
 Choosing an application is a one-time action. It does not change MIME defaults
 or save a preferred application. The daemon checks that the file is still

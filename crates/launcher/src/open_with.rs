@@ -91,7 +91,9 @@ impl Panel {
         if matches!(self.state, State::Loading) {
             return false;
         }
-        self.restore = self.filtered().get(self.cursor.selected).map(|&i| self.apps()[i].id.clone());
+        if matches!(self.state, State::Ready(_)) {
+            self.restore = self.filtered().get(self.cursor.selected).map(|&i| self.apps()[i].id.clone());
+        }
         self.state = State::Loading;
         self.error = None;
         self.icons.clear();
@@ -100,13 +102,16 @@ impl Panel {
     }
 
     pub fn loaded(&mut self, result: Result<Vec<ApplicationChoice>, String>, icons: &mut Icons) {
-        self.state = match result {
+        match result {
             Ok(apps) => {
                 self.icons = apps.iter().map(|app| icons.get(&app.icon, &["application-x-executable"])).collect();
-                State::Ready(apps)
+                self.state = State::Ready(apps);
             }
-            Err(error) => State::Error(error),
-        };
+            Err(error) => {
+                self.state = State::Error(error);
+                return;
+            }
+        }
         let filtered = self.filtered();
         let selected =
             self.restore.take().and_then(|id| filtered.iter().position(|&i| self.apps()[i].id == id)).unwrap_or(0);
@@ -134,6 +139,7 @@ impl Panel {
             Event::Back if self.query.is_empty() => return Effect::Close,
             Event::Back => {
                 self.query.clear();
+                self.restore = None;
                 self.cursor.reset();
                 return Effect::Focus;
             }
