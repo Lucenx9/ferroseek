@@ -136,7 +136,7 @@ pub fn data_dirs() -> Vec<PathBuf> {
     match std::env::var_os("XDG_DATA_HOME").filter(|v| Path::new(v).is_absolute()) {
         Some(d) => dirs.push(PathBuf::from(d)),
         None => {
-            if let Some(h) = std::env::var_os("HOME") {
+            if let Some(h) = std::env::var_os("HOME").filter(|v| Path::new(v).is_absolute()) {
                 dirs.push(PathBuf::from(h).join(".local/share"));
             }
         }
@@ -854,6 +854,68 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    }
+
+    #[test]
+    fn application_discovery_requires_absolute_home() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_ABSOLUTE_HOME";
+        if let Ok(expected) = std::env::var(CASE) {
+            let dirs = data_dirs();
+            for apps in [scan(&dirs, &[], &[]), file_handlers(&dirs, &[], &[], &["text/plain".into()])] {
+                assert_eq!(apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>(), [expected.as_str()]);
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (relative, name) in [
+            ("home/.local/share", "User application"),
+            (".local/share", "Working directory application"),
+            ("explicit", "Explicit application"),
+            ("system", "System application"),
+        ] {
+            let file = temp.path().join(relative).join("applications/probe.desktop");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(
+                file,
+                format!("[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true %f\nMimeType=text/plain;\n"),
+            )
+            .unwrap();
+        }
+        let absolute_home = temp.path().join("home");
+        let explicit_data = temp.path().join("explicit");
+        for home in [Some(Path::new("home")), Some(Path::new(".")), Some(Path::new("")), None, Some(&absolute_home)] {
+            for data in [None, Some(Path::new("")), Some(Path::new("relative")), Some(&explicit_data)] {
+                let expected = if data == Some(explicit_data.as_path()) {
+                    "Explicit application"
+                } else if home == Some(absolute_home.as_path()) {
+                    "User application"
+                } else {
+                    "System application"
+                };
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args(["--exact", "apps::tests::application_discovery_requires_absolute_home"])
+                    .current_dir(temp.path())
+                    .env(CASE, expected)
+                    .env_remove("HOME")
+                    .env_remove("XDG_DATA_HOME")
+                    .env("XDG_DATA_DIRS", temp.path().join("system"));
+                if let Some(home) = home {
+                    command.env("HOME", home);
+                }
+                if let Some(data) = data {
+                    command.env("XDG_DATA_HOME", data);
+                }
+                let output = command.output().unwrap();
+                assert!(
+                    output.status.success(),
+                    "HOME={home:?}, XDG_DATA_HOME={data:?}: {}",
+                    String::from_utf8_lossy(&output.stdout)
+                );
+            }
+        }
     }
 
     #[test]
