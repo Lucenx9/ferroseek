@@ -32,7 +32,7 @@ struct State {
     needs_focus: bool,
     window_focused: bool,
     blocked: bool,
-    pending: VecDeque<Event>,
+    pending: VecDeque<(Event, mouse::Cursor)>,
 }
 
 struct EnsureFocus {
@@ -176,13 +176,13 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
             }
             state.needs_focus = false;
         }
-        let mut dispatch = |event: &Event, child: &mut Tree, shell: &mut Shell<'_, Message>| {
+        let mut dispatch = |event: &Event, child: &mut Tree, shell: &mut Shell<'_, Message>, cursor: mouse::Cursor| {
             let mut messages = Vec::new();
             let mut inner = Shell::new(&mut messages);
             self.content
                 .as_widget_mut()
                 .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
-            let command = ui::key_event(event, inner.event_status());
+            let command = ui::input_event(event, inner.event_status());
             let numbered = matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. })
                 if crate::model::numbered_command(key, *physical_key, *modifiers).is_some() && inner.is_event_captured());
             let pause = command.is_some()
@@ -202,18 +202,18 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
             pause
         };
         if !state.blocked && state.window_focused {
-            while let Some(pending) = state.pending.pop_front() {
-                if dispatch(&pending, child, shell) {
+            while let Some((pending, observed_cursor)) = state.pending.pop_front() {
+                if dispatch(&pending, child, shell, observed_cursor) {
                     state.blocked = true;
                     break;
                 }
             }
         }
         if state.blocked && !matches!(event, Event::Window(_)) {
-            state.pending.push_back(event.clone());
+            state.pending.push_back((event.clone(), cursor));
             shell.capture_event();
         } else {
-            state.blocked |= dispatch(event, child, shell);
+            state.blocked |= dispatch(event, child, shell, cursor);
         }
     }
 

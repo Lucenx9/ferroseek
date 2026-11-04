@@ -331,8 +331,12 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let (Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. }, material) =
-        BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    let (data, material) = BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
+    boot_from(data, material, Icons::new(ICON_SIZE as u16))
+}
+
+fn boot_from(data: Boot, material: Material, icons: Icons) -> (Launcher, Task<Message>) {
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, .. } = data;
     let first_run = !settings_path.exists();
     let mut state = Launcher {
         input_epoch: 0,
@@ -347,7 +351,7 @@ fn boot() -> (Launcher, Task<Message>) {
         launch_task: None,
         unconfirmed_open: false,
         clipboard_owner: false,
-        icons: Icons::new(ICON_SIZE as u16),
+        icons,
         query: String::new(),
         scope: Scope::All,
         search_folder: None,
@@ -397,7 +401,7 @@ fn subscription(_: &Launcher) -> Subscription<Message> {
     Subscription::batch([events, Subscription::run(ui_events), Subscription::run(material_events)])
 }
 
-fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> Option<Message> {
+fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> Option<Message> {
     match event {
         Event::Window(iced::window::Event::Resized(size) | iced::window::Event::Opened { size, .. }) => {
             Some(Message::SurfaceResized((size.width.round() as u32, size.height.round() as u32)))
@@ -406,18 +410,21 @@ fn on_event(event: Event, status: event::Status, _window: iced::window::Id) -> O
             Some(Message::TimingFrame(at))
         }
         Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
-        Event::Mouse(mouse::Event::WheelScrolled { delta }) if status != event::Status::Captured => {
-            let dy = match delta {
-                ScrollDelta::Lines { y, .. } => y,
-                ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
-            };
-            (dy != 0.0).then_some(Message::Wheel(dy))
-        }
         _ => None,
     }
 }
 
-pub(super) fn key_event(event: &Event, status: event::Status) -> Option<Message> {
+pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Message> {
+    if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
+        if status == event::Status::Captured {
+            return None;
+        }
+        let dy = match delta {
+            ScrollDelta::Lines { y, .. } => *y,
+            ScrollDelta::Pixels { y, .. } => *y / ROW_HEIGHT,
+        };
+        return (dy != 0.0).then_some(Message::Wheel(dy));
+    }
     let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
     let command = key_message(key, *modifiers);
     if status == event::Status::Captured
@@ -2468,6 +2475,74 @@ mod tests {
         widget_batch(&mut s, &mut cache, &events, false);
         settle_widgets(&mut s, &mut cache);
         assert_eq!(s.query, "reportz");
+        assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
+    #[test]
+    fn query_prefill_is_applied_before_the_first_input_event() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config.toml");
+        std::fs::write(&config, "roots = []\n").unwrap();
+        let (mut s, _pending_tasks) = boot_from(
+            Boot {
+                opaque: true,
+                activation: Activation::default(),
+                backend: Backend::disconnected(),
+                apps: search_state().apps,
+                usage: Usage::disabled(),
+                favorites: Favorites::disabled(),
+                initial_query: "report".into(),
+                settings_path: config,
+            },
+            Material::default(),
+            Icons::disabled(),
+        );
+        assert_eq!(s.query, "report");
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[typed("x", Modifiers::empty())], false);
+        assert_eq!(s.query, "reportx");
+    }
+
+    #[test]
+    fn delayed_focus_tasks_cannot_steal_action_input_or_reset_its_selection() {
+        let mut s = search_state();
+        let _ = update(&mut s, Message::Query("report".into()));
+        let mut cache = iced_runtime::user_interface::Cache::default();
+        widget_batch(&mut s, &mut cache, &[typed("k", Modifiers::CTRL)], true);
+        settle_widgets(&mut s, &mut cache);
+        widget_batch(
+            &mut s,
+            &mut cache,
+            &[
+                typed("o", Modifiers::empty()),
+                typed("p", Modifiers::empty()),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
+                typed("a", Modifiers::CTRL),
+                Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
+            ],
+            false,
+        );
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        {
+            let mut ui = iced_runtime::UserInterface::build(
+                view(&s),
+                iced::Size::new(WIDTH as f32, full_height() as f32),
+                std::mem::take(&mut cache),
+                &mut renderer,
+            );
+            for target in [search_id(), actions_id()] {
+                let mut stream = iced_runtime::task::into_stream(crate::input::focus(target)).unwrap();
+                let action = iced::futures::executor::block_on(stream.next()).unwrap();
+                let iced_runtime::Action::Widget(mut operation) = action else {
+                    panic!("focus must use a widget operation")
+                };
+                ui.operate(&renderer, operation.as_mut());
+            }
+            cache = ui.into_cache();
+        }
+        widget_batch(&mut s, &mut cache, &[typed("é", Modifiers::empty())], false);
+        assert_eq!(s.query, "report");
         assert_eq!(s.panel.as_ref().unwrap().query, "é");
     }
 
@@ -4542,7 +4617,7 @@ mod tests {
             text: None,
             repeat: false,
         });
-        let message = key_event(&event, event::Status::Captured).unwrap();
+        let message = input_event(&event, event::Status::Captured).unwrap();
         let task = update(&mut s, message);
         let actions = iced::futures::executor::block_on(async {
             iced_runtime::task::into_stream(task).unwrap().collect::<Vec<_>>().await
