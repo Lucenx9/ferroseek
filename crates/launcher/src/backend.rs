@@ -837,7 +837,7 @@ mod tests {
     struct AppearancePortal;
     #[zbus::interface(name = "org.freedesktop.portal.Settings")]
     impl AppearancePortal {
-        async fn read_one(&self, _namespace: &str, _key: &str) -> zbus::zvariant::OwnedValue {
+        async fn read_one(&self, _namespace: &str, _key: &str) -> zbus::OwnedVariant {
             1u32.into()
         }
     }
@@ -863,7 +863,7 @@ mod tests {
                             "/org/freedesktop/portal/desktop",
                             "org.freedesktop.portal.Settings",
                             "SettingChanged",
-                            &("org.freedesktop.appearance", "color-scheme", zbus::zvariant::Value::new(raw)),
+                            &("org.freedesktop.appearance", "color-scheme", zbus::Variant::new(raw)),
                         )
                         .await
                         .unwrap();

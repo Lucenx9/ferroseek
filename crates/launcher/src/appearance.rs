@@ -258,7 +258,7 @@ impl Panel {
         let support = if opaque {
             "Solid for this session (--opaque)"
         } else if self.draft.material == Material::Glass && !glass {
-            "Glass selected · using Solid when blur or transparency is unavailable"
+            "Glass uses a solid surface when blur or transparency is unavailable"
         } else if self.draft.mode == Mode::System && system.is_none() {
             "System appearance unavailable · using Dark"
         } else {

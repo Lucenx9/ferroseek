@@ -495,12 +495,21 @@ impl Launcher {
         appearance::theme(self.preferences, self.system_dark, glass)
     }
     fn appearance_event(&mut self, event: appearance::Event) -> Task<Message> {
+        let ready = matches!(&event, appearance::Event::Loaded(Ok(_)));
+        let saved = matches!(&event, appearance::Event::Saved(Ok(_)));
         let (task, close) = self.appearance.as_mut().unwrap().update(event);
+        if ready {
+            timing::event("appearance_ready");
+        }
+        if saved {
+            timing::event("appearance_saved");
+        }
         self.finish_appearance(task, close)
     }
     fn finish_appearance(&mut self, task: Task<appearance::Event>, close: Option<Preferences>) -> Task<Message> {
         let generation = self.appearance_generation;
         self.preferences = close.unwrap_or_else(|| self.appearance.as_ref().unwrap().draft);
+        timing::event(if self.preferences.dark(self.system_dark) { "appearance_dark" } else { "appearance_light" });
         self.material
             .set_allowed(!self.opaque && self.preferences.material == ferroseek_config::appearance::Material::Glass);
         let task = task.map(move |event| Message::Appearance { generation, event });
@@ -1192,6 +1201,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     if let Message::TimingFrame(at) = message {
+        if s.appearance.is_some() {
+            timing::event_at("appearance_frame", at);
+        }
         let visible = s.panel.is_none()
             && s.file_details.is_none()
             && s.application_picker.is_none()
