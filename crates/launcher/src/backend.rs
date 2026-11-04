@@ -869,6 +869,21 @@ mod tests {
                         .unwrap();
                     assert!(matches!(rx.next().await,Some(UiEvent::DesktopAppearance(value)) if value==expected));
                 }
+                service.release_name("org.freedesktop.portal.Desktop").await.unwrap();
+                assert!(
+                    matches!(rx.next().await, Some(UiEvent::DesktopAppearance(None))),
+                    "owner loss resets the system preference"
+                );
+                let _replacement = zbus::connection::Builder::address(address.trim())
+                    .name("org.freedesktop.portal.Desktop")
+                    .serve_at("/org/freedesktop/portal/desktop", AppearancePortal)
+                    .build()
+                    .await
+                    .unwrap();
+                assert!(
+                    matches!(rx.next().await, Some(UiEvent::DesktopAppearance(Some(true)))),
+                    "replacement is read without waiting for a change signal"
+                );
             };
             match iced::futures::future::select(
                 Box::pin(crate::desktop_settings::watch(conn, tx)),

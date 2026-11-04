@@ -63,7 +63,7 @@ pub mod palette {
                 Self::Surface => alpha(p.background, 1.0),
                 Self::Border => alpha(p.text, 0.18),
                 Self::Text => p.text,
-                Self::Dim => super::rgb(if dark { 0xb0b2bc } else { 0x535863 }),
+                Self::Dim => super::rgb(if dark { 0xc0c2ca } else { 0x434852 }),
                 Self::Faint => alpha(p.text, 0.06),
                 Self::Accent => p.primary,
                 Self::Selected => alpha(p.primary, 0.18),
@@ -226,7 +226,16 @@ impl Panel {
             Command::Back => return self.update(Event::Back),
             _ => {}
         }
-        (Task::none(), None)
+        (
+            iced::widget::operation::snap_to(
+                iced::widget::Id::new("appearance-scroll"),
+                iced::widget::operation::RelativeOffset {
+                    x: 0.0,
+                    y: if self.cursor.selected >= 8 { 1.0 } else { 0.0 },
+                },
+            ),
+            None,
+        )
     }
     pub fn view(&self, system: Option<bool>, opaque: bool, glass: bool) -> Element<'_, Event> {
         let enabled = !self.busy && self.document.is_some() && !self.confirm;
@@ -289,29 +298,31 @@ impl Panel {
             content = content.push(cards);
         }
         if !self.notice.is_empty() {
-            content = content.push(text(&self.notice).size(12));
-        }
-        if self.confirm {
-            content = content.push(text("Discard unsaved appearance changes?").size(14)).push(
-                row![
-                    button("Keep editing").on_press(Event::Keep),
-                    button("Discard changes (Ctrl+D)").on_press(Event::Discard)
-                ]
-                .spacing(12),
-            );
+            content = column![text(&self.notice).size(12), content].spacing(8);
         }
         let save = button(ui::hint("Ctrl+S", "Save"))
             .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == 11));
         let back = button(ui::hint("Esc", "Back"))
             .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == 12));
-        let footer = row![
-            text(if self.dirty() { "Unsaved changes" } else { "Appearance" }).size(12),
-            space::horizontal(),
-            if enabled { save.on_press(Event::Save) } else { save },
-            if self.busy { back } else { back.on_press(Event::Back) }
-        ]
-        .spacing(12)
-        .align_y(iced::Center);
+        let footer = if self.confirm {
+            row![
+                text("Discard changes?").size(13),
+                space::horizontal(),
+                button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep),
+                button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard)
+            ]
+            .spacing(12)
+            .align_y(iced::Center)
+        } else {
+            row![
+                text(if self.dirty() { "Unsaved changes" } else { "Appearance" }).size(12),
+                space::horizontal(),
+                if enabled { save.on_press(Event::Save) } else { save },
+                if self.busy { back } else { back.on_press(Event::Back) }
+            ]
+            .spacing(12)
+            .align_y(iced::Center)
+        };
         container(column![
             row![
                 text("Appearance").size(20),
@@ -321,7 +332,7 @@ impl Panel {
             .padding([8, 16])
             .align_y(iced::Center),
             ui::divider(),
-            scrollable(content.padding([12, 16])).height(Length::Fill),
+            scrollable(content.padding([12, 16])).id(iced::widget::Id::new("appearance-scroll")).height(Length::Fill),
             ui::divider(),
             container(footer).padding([8, 16])
         ])

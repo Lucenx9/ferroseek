@@ -31,11 +31,13 @@ pub async fn watch(conn: zbus::Connection, tx: mpsc::UnboundedSender<UiEvent>) {
             !tx.is_closed()
         }
     };
-    loop {
+    'observe: loop {
         let proxy = zbus::Proxy::new(&conn, DESTINATION, PATH, INTERFACE).await;
         if let Ok(proxy) = proxy {
             // Subscribe before reading so a concurrent desktop change is retained.
-            if let Ok(mut changes) = proxy.receive_signal("SettingChanged").await {
+            if let (Ok(mut changes), Ok(mut owners)) =
+                (proxy.receive_signal("SettingChanged").await, proxy.receive_owner_changed().await)
+            {
                 let read = async {
                     match proxy.call::<_, _, OwnedVariant>("ReadOne", &(NAMESPACE, "color-scheme")).await {
                         Err(zbus::Error::MethodError(name, _, _))
@@ -59,13 +61,24 @@ pub async fn watch(conn: zbus::Connection, tx: mpsc::UnboundedSender<UiEvent>) {
                 if !publish(value) {
                     return;
                 }
-                while let Some(message) = changes.next().await {
-                    if let Ok((namespace, key, value)) = message.body().deserialize::<(String, String, OwnedVariant)>()
-                        && namespace == NAMESPACE
-                        && key == "color-scheme"
-                        && !publish(dark(value))
-                    {
-                        return;
+                loop {
+                    match iced::futures::future::select(Box::pin(changes.next()), Box::pin(owners.next())).await {
+                        iced::futures::future::Either::Left((Some(message), _)) => {
+                            if let Ok((namespace, key, value)) =
+                                message.body().deserialize::<(String, String, OwnedVariant)>()
+                                && namespace == NAMESPACE
+                                && key == "color-scheme"
+                                && !publish(dark(value))
+                            {
+                                return;
+                            }
+                        }
+                        _ => {
+                            if !publish(None) {
+                                return;
+                            }
+                            continue 'observe;
+                        }
                     }
                 }
             }

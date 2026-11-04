@@ -1228,7 +1228,16 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             Message::RefreshSearchStatus => return s.appearance_event(appearance::Event::Reload),
             Message::ShowAppearance => return s.appearance_event(appearance::Event::Back),
-            Message::Ui(_) | Message::FocusLost => {}
+            Message::Ui(_)
+            | Message::FocusLost
+            | Message::Files { .. }
+            | Message::FolderListed { .. }
+            | Message::PreviewLoaded { .. }
+            | Message::DetailsLoaded { .. }
+            | Message::ApplicationsLoaded { .. }
+            | Message::SearchStatusLoaded { .. }
+            | Message::Opened(_)
+            | Message::ApplicationOpened { .. } => {}
             _ => return Task::none(),
         }
     }
@@ -2808,6 +2817,19 @@ mod tests {
         widget_batch(&mut s, &mut cache, &[typed("é", Modifiers::empty())], false);
         assert_eq!(s.query, "report");
         assert_eq!(s.panel.as_ref().unwrap().query, "é");
+    }
+
+    #[test]
+    fn pending_search_completes_while_appearance_is_open() {
+        let mut state = search_state();
+        let _ = update(&mut state, Message::Query("report".into()));
+        let generation = state.generation;
+        let _ = update(&mut state, Message::ShowAppearance);
+        let _ = update(&mut state, Message::Files { generation, result: Ok(Some(file_hits())) });
+        assert_eq!(state.status, Status::Idle);
+        assert_eq!(state.files.len(), file_hits().len());
+        assert!(state.appearance.is_some());
+        assert_eq!(state.query, "report");
     }
 
     #[test]
