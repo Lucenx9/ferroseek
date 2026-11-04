@@ -431,3 +431,31 @@ The entire search holds one SQLite read snapshot.
 The bounded probe does not guarantee constant latency: very wide directories
 and short directory components remain potential scan costs. Candidate
 ranking remains approximate for large result sets, as documented previously.
+
+## Contributor constraints
+
+- Policy changes invalidate directory listings transactionally through
+  `Writer::apply_policy`; preserve crash-safe invalidation on future changes.
+- Inotify reads must return after one buffer so channel backpressure works.
+- Search budgets count candidates *after* filters. Path-only queries stream
+  entries; do not infer a mandatory filename token from a directory path.
+- Path searches derive bounded directory scopes from existing name FTS and
+  parent indexes; no schema change. Root/broad anchors fall back; short path
+  components may still scan. Preserve explicit prefix ordering before caps.
+- All search stages share one read transaction. Tests compare independent
+  path lists and exercise concurrent directory renames.
+- Reader-pool epoch and database identity checks protect Release/recovery.
+  Never restore per-Status malloc_trim or blocking async control work.
+- Benchmark --work must be new/empty unless explicitly reusing a matching
+  generated corpus. Reuse initial indexing deletes only that work/data.
+- Incomplete listings and failed child stats must never imply deletion.
+  Preserve existing entries, count errors and invalidate directory listing
+  timestamps so future quick passes retry. Event stat errors enter bounded
+  retry handling. Overflow and dropped-event recovery must use Full mode:
+  changing file contents does not update its parent directory's mtime.
+- `scripts/verify-index.py` is an independent read-only desktop oracle. Use
+  complete effective config; reports contain counts, not private file paths.
+  See docs/DESKTOP_SOAK.md. Never commit real user indexes/configs/logs.
+- Benchmark library rows use the harness library even with an old daemon;
+  compare D-Bus rows only. Legacy relevance percentages counted skipped samples
+  as successes; use the corrected denominator and measured workload in the guide.

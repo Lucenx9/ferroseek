@@ -220,3 +220,22 @@ remains available when a matching archive is unavailable.
 Implementation references: [systemd command syntax](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html),
 [D-Bus activation specification](https://dbus.freedesktop.org/doc/dbus-specification.html),
 [Claude Code MCP](https://code.claude.com/docs/en/mcp).
+
+## Contributor constraints
+
+- Installer needs Python 3.11+; shell entrypoints only dispatch. No engine,
+  schema, search protocol or MCP server changes are needed for packaging.
+- Default is interactive; on Wayland recommend launcher + core, otherwise core.
+  `--launcher` installs the UI; package.py defaults to launcher archives.
+  Explicit component flags are scriptable; preserve previously installed components.
+- Never restart on upgrade. --enable and uninstall --stop are explicit actions.
+  Agent edits require a displayed plan, explicit roots and a separate yes.
+- Ownership is hash-based. Never adopt conflicting legacy/modified files by
+  name alone. Journal recovery refuses externally changed destinations.
+- D-Bus argv has two escaping layers. Both activation paths use fixed shell
+  code with the executable as a positional argument, never interpolated code
+  (env alone mistakes '=' in a command path for an assignment). systemd uses
+  ':' to disable dollar expansion. Keep real private-bus
+  activation and systemd-analyze checks in tests/install-smoke.py.
+- `tests/package-smoke.py` checks archives without Cargo/network. No release
+  is published; signed artifacts/libc baseline remain future work.

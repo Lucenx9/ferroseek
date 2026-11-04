@@ -682,3 +682,22 @@ complete newer results. These signals request a redraw; they do **not measure
 completed drawing, compositor presentation or physical input-to-display latency**.
 Diagnostics can affect the timing they observe. See
 [the benchmark method](BENCHMARKS.md#12-launcher-interaction-latency).
+
+## Contributor constraints
+
+- `ferroseek-launcher` stays pure Rust: no GTK/Qt or crates that build C;
+  this is why `.desktop` parsing is local. Building needs libxkbcommon headers
+  for sctk's pkg-config probe. Revisit the `winit-core` beta.2 pin for
+  `iced_exdevtools` 0.19.1 when bumping iced_layershell.
+- It never opens the index: files come from the daemon's `Search`/`Open`
+  (D-Bus activation), so `Open` keeps refusing non-indexed paths.
+- zbus stays on its own thread inside `zbus::block_on`; never await zbus
+  futures on iced's executor. Replies carry the query generation.
+- A new query clears old file rows; late results keep the selected target.
+  Only one open is in flight; the process exits after it succeeds.
+- History boosts reorder within a match class only (exact > strong > weak);
+  history writes are locked read-modify-write, `0600`, honour `--private`.
+- Graphical smoke tests use nested `kwin_wayland --virtual`, temp HOME/XDG and
+  a private bus with an EMPTY activation dir to exclude user daemons and portals.
+- Launch activation shares iced's Wayland connection; preserve input
+  context, bounded waits and cancellation. See the application activation section above.

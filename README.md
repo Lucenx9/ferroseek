@@ -137,5 +137,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Repository conventions are in [CLAUDE.md](CLAUDE.md).
+Repository conventions are in [AGENTS.md](AGENTS.md).
 Licensed under [GPL-3.0-or-later](LICENSE).
