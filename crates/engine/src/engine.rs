@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ferroseek_index::{OpenOutcome, Writer};
 
-use crate::config::{Config, Paths, Rules, normalize};
+use crate::config::{Config, Paths, Rules};
 use crate::indexer::{Indexer, Mode};
 use crate::inotify::{Inotify, RawEvent};
 use crate::status::{Snapshot, State, Status};
@@ -109,14 +109,7 @@ fn acquire(paths: &Paths) -> Result<InstanceLock, EngineError> {
 
 fn rules(cfg: &Config, paths: &Paths) -> Result<Rules, EngineError> {
     let data_dir = std::fs::canonicalize(&paths.data_dir)?;
-    let named = normalize(&std::path::absolute(&paths.data_dir)?);
-    let mut excluded = vec![data_dir.clone()];
-    // Scanner roots can retain a symlinked ancestor. Keep that spelling only
-    // when collapsing `..` still names the actual data directory.
-    if named != data_dir && std::fs::canonicalize(&named).is_ok_and(|resolved| resolved == data_dir) {
-        excluded.push(named);
-    }
-    Ok(Rules::new(cfg, &excluded))
+    Ok(Rules::new(cfg, &[data_dir]))
 }
 
 fn refresh_counts(ix: &Indexer, status: &Status) {

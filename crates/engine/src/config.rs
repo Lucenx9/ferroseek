@@ -16,6 +16,8 @@ pub struct Rules {
     exact: Vec<Vec<u8>>,
     globs: Vec<Vec<u8>>,
     paths: Vec<PathBuf>,
+    extra_paths: Vec<PathBuf>,
+    root_aliases: Vec<PathBuf>,
     pub respect_cachedir_tag: bool,
     pub stay_on_filesystem: bool,
     pub max_depth: u32,
@@ -23,7 +25,7 @@ pub struct Rules {
 
 impl Rules {
     pub(crate) fn has_exclusions_below(&self, dir: &Path) -> bool {
-        self.paths.iter().any(|p| p.starts_with(dir))
+        self.paths.iter().chain(&self.root_aliases).any(|p| p.starts_with(dir))
     }
 
     /// `extra_paths` are always excluded too (FerroSeek's own data dir).
@@ -40,9 +42,35 @@ impl Rules {
             exact,
             globs,
             paths,
+            extra_paths: extra_paths.to_vec(),
+            root_aliases: Vec::new(),
             respect_cachedir_tag: cfg.respect_cachedir_tag,
             stay_on_filesystem: cfg.stay_on_filesystem,
             max_depth: cfg.max_depth,
+        }
+    }
+
+    /// Express physical internal exclusions in each scanner root's spelling.
+    /// Rebuild these when roots change so retired aliases cannot exclude files.
+    pub(crate) fn refresh_root_aliases(&mut self, roots: &[PathBuf]) {
+        self.root_aliases.clear();
+        if self.extra_paths.is_empty() {
+            return;
+        }
+        for root in roots {
+            let Ok(real) = fs::canonicalize(root) else { continue };
+            for path in &self.extra_paths {
+                let alias = if let Ok(relative) = path.strip_prefix(&real) {
+                    root.join(relative)
+                } else if real.starts_with(path) {
+                    root.clone()
+                } else {
+                    continue;
+                };
+                if !self.paths.contains(&alias) && !self.root_aliases.contains(&alias) {
+                    self.root_aliases.push(alias);
+                }
+            }
         }
     }
 
@@ -57,13 +85,11 @@ impl Rules {
         if self.exact.iter().any(|e| e == name) || self.globs.iter().any(|g| glob_match(g, name)) {
             return true;
         }
-        if !self.paths.is_empty() {
-            let full = dir.join(OsStr::from_bytes(name));
-            if self.paths.iter().any(|p| full.starts_with(p)) {
-                return true;
-            }
+        if self.paths.is_empty() && self.root_aliases.is_empty() {
+            return false;
         }
-        false
+        let full = dir.join(OsStr::from_bytes(name));
+        self.paths.iter().chain(&self.root_aliases).any(|p| full.starts_with(p))
     }
 }
 

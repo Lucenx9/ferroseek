@@ -96,9 +96,17 @@ fn helpful_errors() {
 
 #[test]
 fn data_directory_is_excluded_with_relative_and_non_normalized_paths() {
-    for spelling in ["absolute", "relative", "parent", "symlink-parent", "symlink-root"] {
+    for spelling in [
+        "absolute",
+        "relative",
+        "parent",
+        "symlink-parent",
+        "symlink-root",
+        "symlink-root-canonical",
+        "symlink-root-relative",
+    ] {
         let t = tempfile::tempdir().unwrap();
-        let root = if spelling == "symlink-root" {
+        let root = if spelling.starts_with("symlink-root") {
             fs::create_dir_all(t.path().join("real/docs")).unwrap();
             std::os::unix::fs::symlink(t.path().join("real"), t.path().join("alias")).unwrap();
             t.path().join("alias/docs")
@@ -120,12 +128,14 @@ fn data_directory_is_excluded_with_relative_and_non_normalized_paths() {
             "relative" => std::path::PathBuf::from("state"),
             "parent" => t.path().join("unused/../state"),
             "symlink-parent" => t.path().join("link/../state"),
+            "symlink-root-canonical" => t.path().join("real/docs/state"),
+            "symlink-root-relative" => std::path::PathBuf::from("state"),
             _ => root.join("state"),
         };
         let invoke = |args: &[&str]| {
             Command::new(env!("CARGO_BIN_EXE_ferroseek"))
                 .args(args)
-                .current_dir(t.path())
+                .current_dir(if spelling == "symlink-root-relative" { &root } else { t.path() })
                 .env("FERROSEEK_CONFIG", t.path().join("config.toml"))
                 .env("FERROSEEK_DATA_DIR", &data)
                 .env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}/no-bus", t.path().display()))
