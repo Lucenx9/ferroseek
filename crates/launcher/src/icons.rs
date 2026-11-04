@@ -109,10 +109,10 @@ fn load(p: &Path) -> Option<Icon> {
 /// the launcher never writes desktop configuration); otherwise the GTK
 /// setting, then Breeze/hicolor via the lookup's own fallback.
 fn current_theme() -> String {
-    let config = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| Path::new(v).is_absolute())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    let config =
+        std::env::var_os("XDG_CONFIG_HOME").filter(|v| Path::new(v).is_absolute()).map(PathBuf::from).or_else(|| {
+            std::env::var_os("HOME").filter(|h| Path::new(h).is_absolute()).map(|h| PathBuf::from(h).join(".config"))
+        });
     if let Some(dir) = config
         && let Ok(text) = std::fs::read_to_string(dir.join("kdeglobals"))
         && let Some(t) = ini_value(&text, "Icons", "Theme")
@@ -142,6 +142,52 @@ fn ini_value(text: &str, group: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icon_theme_ignores_relative_and_empty_home() {
+        use std::process::Command;
+
+        const CASE: &str = "FERROSEEK_TEST_ICON_HOME";
+        if let Ok(expected) = std::env::var(CASE) {
+            let icons = Icons::new(24);
+            if expected == "fallback" {
+                assert_ne!(icons.theme, "working-directory-theme");
+            } else {
+                assert_eq!(icons.theme, expected);
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        for (directory, theme) in [
+            ("home/.config", "working-directory-theme"),
+            (".config", "working-directory-theme"),
+            ("absolute", "absolute-theme"),
+        ] {
+            let directory = temp.path().join(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("kdeglobals"), format!("[Icons]\nTheme={theme}\n")).unwrap();
+        }
+        for (home, config, expected) in [
+            (PathBuf::from("home"), PathBuf::new(), "fallback"),
+            (PathBuf::new(), PathBuf::from("relative"), "fallback"),
+            (temp.path().join("home"), PathBuf::new(), "working-directory-theme"),
+            (PathBuf::from("home"), temp.path().join("absolute"), "absolute-theme"),
+        ] {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "icons::tests::icon_theme_ignores_relative_and_empty_home"])
+                .current_dir(temp.path())
+                .env(CASE, expected)
+                .env("HOME", &home)
+                .env("XDG_CONFIG_HOME", &config)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "HOME={home:?}, XDG_CONFIG_HOME={config:?}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
 
     #[test]
     fn icon_theme_ignores_relative_xdg_config_home() {
