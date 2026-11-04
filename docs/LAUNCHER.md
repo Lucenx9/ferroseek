@@ -57,7 +57,8 @@ Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
 show search, selection and secondary text with the same semantic colors as the
 launcher. A check marks the selected choice; an accent outline marks keyboard
 focus. Up/Down or Tab/Shift+Tab move between choices, and Enter selects one.
-Lower choices scroll into view. Ctrl+S saves; Esc returns to search. Unsaved
+Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
+or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
 changes require explicit discard (Ctrl+D); Esc keeps editing at that prompt.
 Ctrl+R reloads saved preferences when there are no unsaved edits. Search state
 and in-flight results are retained while editing.
@@ -75,7 +76,25 @@ mode = "system"       # system, light, dark
 material = "glass"    # glass, solid
 light_theme = "iron"  # iron, slate, forest
 dark_theme = "iron"
+width = "standard"   # compact (640), standard (720), wide (880) logical px
+position = "upper"   # upper, centered
 ```
+
+**Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
+or centered placement. The default remains Standard and Upper. The side preview
+adds 260 logical pixels when space permits. Width is capped to the entered
+output minus 16 pixels on each side; short outputs show fewer result/action rows
+and the header wraps below 640 pixels. Upper placement stays stable as results
+expand; centering follows the current surface height. **Restore default layout**
+previews Standard and Upper without changing themes or material. Save keeps the
+reset; Back and discard restore the last saved settings.
+
+Automatic bounds require the compositor's XDG output and subsurface interfaces.
+Without them the requested preset still applies, with final sizing controlled
+by the compositor. The bounds describe the logical output, not a panel-free
+work area. No desktop configuration is changed. Multiple-output transitions and
+physical desktops remain unverified. Versions predating these controls reject
+`width` and `position`; remove those keys before downgrading.
 
 System follows the read-only XDG Settings portal's color preference and change
 notifications, including service replacement. No preference, unknown values or
@@ -581,8 +600,9 @@ ferroseek-launcher
   D-Bus-only entries and explicit application-window switching are unsupported.
 - Closing on outside clicks needs the compositor to move keyboard focus away from
   an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
-- The window is 720 px wide normally and 980 px while the preview sidebar is visible, near the
-  top of the active output. Its size/position are not configurable; there is no
+- The default width is 720 logical px, or 980 with the preview sidebar.
+  Appearance → Layout changes width and placement; output bounds can reduce
+  the effective width and row count. There is no
   light theme yet.
 
 ## Tests
@@ -606,6 +626,15 @@ For real keyboard input and focus checks in the disposable compositor:
 ```sh
 FERROSEEK_SMOKE_INTERACTION=1 tests/launcher-smoke.sh target/release target/launcher-interaction
 ```
+
+The same harness accepts `FERROSEEK_SMOKE_PROFILE=us-layout-1x` (640×480)
+and `us-layout-1.5x` (960×640 logical, 1440×960 native). These run functional
+layout cases instead of latency trials: three width presets, upper/centered
+placement measured from native screenshots, live reset/discard, save/restart,
+side preview and typing after returning to results, in all three renderer modes.
+The existing US/AZERTY/1.5× latency workloads are unchanged. See `layout.json`
+and the companion native captures in the workflow artifacts. These checks cover
+single virtual outputs; hotplug, output switching and physical panels remain open.
 
 Set `FERROSEEK_SMOKE_MODE=auto`, `opaque` or `software` to measure the default
 appearance, `--opaque` or forced tiny-skia. `all` rotates all three within the
@@ -723,6 +752,9 @@ identify accepted preview replies and closing the sidebar.
 root widget's draw path, once initially and again if it changes. They identify
 the renderer implementation, not the graphics adapter or completed rendering.
 They appear only when timings are enabled.
+`output_geometry` records the observed logical output bounds; `layout_requested`
+records the requested surface size, result row count and placement. A request
+is not compositor acknowledgement or a presented-frame measurement.
 `surface_resized` records logical `width` and `height` after the launcher handles
 iced's open/resize event and updates the material region to that observed extent.
 It does not acknowledge compositor presentation.

@@ -292,7 +292,7 @@ impl Panel {
         };
         let content = if self.tab == Tab::Layout {
             column![
-                text("Window width").size(12),
+                row![text("Window width").size(12), space::horizontal(), ui::hint("Ctrl+Tab", "Colors / Layout")],
                 row![
                     choice(0, "Compact · 640", self.draft.width == Width::Compact),
                     choice(1, "Standard · 720", self.draft.width == Width::Standard),

@@ -2480,9 +2480,16 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         );
     }
     container(
-        row![text(msg).size(12).color(color).wrapping(text::Wrapping::None), space::horizontal(), hints]
-            .align_y(Vertical::Center)
-            .padding(padding::left(16).right(10)),
+        row![
+            text(ellipsize_end(&msg, if s.window_width < 640 { 42 } else { 70 }))
+                .width(Length::Fill)
+                .size(12)
+                .color(color)
+                .wrapping(text::Wrapping::None),
+            hints
+        ]
+        .align_y(Vertical::Center)
+        .padding(padding::left(16).right(10)),
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
