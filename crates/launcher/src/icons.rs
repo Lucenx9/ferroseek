@@ -2,6 +2,8 @@
 //! Icon theme lookup, cached per icon name.
 
 use std::collections::HashMap;
+use std::io::{self, Read};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use iced::widget::{image, svg};
@@ -87,7 +89,7 @@ impl Icons {
 fn load_generic_icons(dirs: &[PathBuf]) -> HashMap<String, String> {
     let mut table = HashMap::new();
     for dir in dirs {
-        let Ok(text) = std::fs::read_to_string(dir.join("mime/generic-icons")) else { continue };
+        let Ok(text) = read_icon_metadata(&dir.join("mime/generic-icons")) else { continue };
         for (mime, icon) in text.lines().filter_map(|line| line.split_once(':')) {
             if !icon.is_empty() {
                 table.entry(mime.replace('/', "-")).or_insert_with(|| icon.to_string());
@@ -95,6 +97,18 @@ fn load_generic_icons(dirs: &[PathBuf]) -> HashMap<String, String> {
         }
     }
     table
+}
+
+/// These reads run during startup or on the UI thread. Never wait for a FIFO
+/// writer, and validate the opened descriptor before reading special files.
+fn read_icon_metadata(path: &Path) -> io::Result<String> {
+    let mut file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "icon metadata must be a regular file"));
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    Ok(text)
 }
 
 fn load(p: &Path) -> Option<Icon> {
@@ -114,7 +128,7 @@ fn current_theme() -> String {
             std::env::var_os("HOME").filter(|h| Path::new(h).is_absolute()).map(|h| PathBuf::from(h).join(".config"))
         });
     if let Some(dir) = config
-        && let Ok(text) = std::fs::read_to_string(dir.join("kdeglobals"))
+        && let Ok(text) = read_icon_metadata(&dir.join("kdeglobals"))
         && let Some(t) = ini_value(&text, "Icons", "Theme")
     {
         return t;
@@ -142,6 +156,76 @@ fn ini_value(text: &str, group: &str, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icon_metadata_accepts_regular_file_links_and_rejects_devices() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("metadata");
+        let link = temp.path().join("linked");
+        std::fs::write(&file, "[Icons]\nTheme=synthetic\n").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(read_icon_metadata(&link).unwrap(), "[Icons]\nTheme=synthetic\n");
+        assert_eq!(read_icon_metadata(Path::new("/dev/null")).unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn icon_metadata_pipes_do_not_block_the_launcher() {
+        metadata_pipe("icons::tests::icon_metadata_pipes_do_not_block_the_launcher", "theme");
+    }
+
+    #[test]
+    fn mime_icon_metadata_pipes_do_not_block_results() {
+        metadata_pipe("icons::tests::mime_icon_metadata_pipes_do_not_block_results", "mime");
+    }
+
+    fn metadata_pipe(test: &str, kind: &str) {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        const CASE: &str = "FERROSEEK_TEST_ICON_METADATA_PIPE";
+        if std::env::var_os(CASE).is_some() {
+            if kind == "theme" {
+                assert_eq!(current_theme(), "breeze");
+            } else {
+                let root = PathBuf::from(std::env::var_os("HOME").unwrap());
+                assert!(load_generic_icons(&[root]).is_empty());
+            }
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(if kind == "theme" { "kdeglobals" } else { "mime/generic-icons" });
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        for pipe in [false, true] {
+            if pipe {
+                std::fs::remove_file(&path).unwrap();
+                assert!(Command::new("mkfifo").arg(&path).status().unwrap().success());
+            } else {
+                std::fs::write(&path, "").unwrap();
+            }
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env(CASE, "1")
+                .env("HOME", temp.path())
+                .env("XDG_CONFIG_HOME", temp.path())
+                .env("PATH", temp.path())
+                .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-ferroseek-test-bus")
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("launcher blocked reading {kind} metadata, pipe={pipe}");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
 
     #[test]
     fn icon_theme_ignores_relative_and_empty_home() {
