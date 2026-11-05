@@ -2356,17 +2356,9 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
                 .wrapping(text::Wrapping::None),
         );
     }
-    let tag = container(
-        text(item.tag)
-            .size(11)
-            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
-    )
-    .padding([2, 8])
-    .style(|theme| container::Style {
-        background: Some(Background::Color(palette::FAINT.resolve(theme))),
-        border: Border { radius: 6.0.into(), ..Default::default() },
-        ..Default::default()
-    });
+    let tag = text(item.tag)
+        .size(11)
+        .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) });
     let mut content = row![icon, container(labels).width(Length::Fill).clip(true)];
     if s.is_favorite(&item.target) {
         content = content.push(text("★").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
@@ -2504,17 +2496,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
 
 pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     row![
-        container(
-            text(key).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(palette::TEXT.resolve(theme)),
-            })
-        )
-        .padding([1, 6])
-        .style(|theme| container::Style {
-            background: Some(Background::Color(palette::FAINT.resolve(theme))),
-            border: Border { radius: 4.0.into(), color: palette::BORDER.resolve(theme), width: 1.0 },
-            ..Default::default()
-        }),
+        keycap(key),
         text(label)
             .size(12)
             .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
@@ -2524,12 +2506,24 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     .into()
 }
 
-fn numbered_hint(slot: usize) -> Element<'static, Message> {
-    let label = if slot < model::NUMBERED_SLOTS { format!("Ctrl+{}", slot + 1) } else { String::new() };
-    text(label)
-        .size(11)
-        .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) })
-        .into()
+fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>) -> Element<'a, M> {
+    container(
+        text(key)
+            .size(11)
+            .wrapping(text::Wrapping::None)
+            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::TEXT.resolve(theme)) }),
+    )
+    .padding([1, 6])
+    .style(|theme| container::Style {
+        background: Some(Background::Color(palette::FAINT.resolve(theme))),
+        border: Border { radius: 4.0.into(), color: palette::BORDER.resolve(theme), width: 1.0 },
+        ..Default::default()
+    })
+    .into()
+}
+
+pub(crate) fn numbered_hint<M: 'static>(slot: usize) -> Element<'static, M> {
+    if slot < model::NUMBERED_SLOTS { keycap(format!("Ctrl+{}", slot + 1)) } else { space().into() }
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {

@@ -203,6 +203,9 @@ to another command.
 
 ## Results
 
+Numbered shortcuts use the same keycaps as the footer, action menu and
+application chooser. Result types appear as plain secondary labels.
+
 - **Applications** come from `.desktop` files in `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, parsed by the launcher itself (Desktop Entry
   Specification: ID masking, localized names and keywords, `Hidden`,
@@ -423,7 +426,8 @@ launcher and daemon versions are required.
 
 ![Application chooser](assets/launcher-open-with.png)
 
-Rendered in a private virtual KWin session with synthetic document handlers.
+Rendered at 640×480 in a private virtual KWin session with synthetic document
+handlers. Long names leave room for the numbered shortcuts after scrolling.
 
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
 Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
