@@ -12,7 +12,7 @@ use iced::mouse::{self, ScrollDelta};
 use iced::widget::{
     self, Id, button, column, container, image, mouse_area, row, scrollable, space, stack, svg, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Length, Subscription, Task, Theme, padding};
+use iced::{Background, Border, Color, Element, Font, Length, Subscription, Task, Theme, padding};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
@@ -1977,20 +1977,12 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         });
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
         let selected = s.scope == scope;
-        choices.push(button(text(scope.to_string()).size(11)).on_press(Message::Scope(scope)).padding([6, 8]).style(
-            move |theme, status| button::Style {
-                background: if selected {
-                    Some(Background::Color(palette::SELECTED.resolve(theme)))
-                } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                    Some(Background::Color(palette::FAINT.resolve(theme)))
-                } else {
-                    None
-                },
-                text_color: if selected { palette::TEXT.resolve(theme) } else { palette::DIM.resolve(theme) },
-                border: Border { radius: 5.0.into(), ..Default::default() },
-                ..Default::default()
-            },
-        ))
+        choices.push(
+            button(text(scope.to_string()).size(11))
+                .on_press(Message::Scope(scope))
+                .padding([6, 8])
+                .style(move |theme, status| tab_style(theme, status, selected)),
+        )
     });
     let index_status = button(text("Index status").size(11))
         .on_press(Message::ShowSearchStatus)
@@ -2002,7 +1994,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .on_press(Message::ShowAppearance)
         .padding([6, 8])
         .style(status_button_style);
-    // A hairline separates the result filter from the two screens it does not affect.
+    // A hairline separates result filters from navigation to other screens.
     let separator = container(space()).width(1).height(16).style(|theme| container::Style {
         background: Some(Background::Color(palette::BORDER.resolve(theme))),
         ..Default::default()
@@ -2010,29 +2002,36 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
-        let path = folder.path.as_deref().and_then(|path| path.to_str()).unwrap_or(&folder.id);
-        let location = widget::tooltip(
-            text(ellipsize_middle(path, 62)).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(palette::DIM.resolve(theme)),
-            }),
-            container(text(path).size(12).wrapping(text::Wrapping::WordOrGlyph))
-                .padding(8)
-                .max_width(600)
-                .style(surface_style),
-            widget::tooltip::Position::Bottom,
-        );
+        let path = folder.path.as_deref().and_then(|path| path.to_str());
+        let display = path.map_or_else(|| folder.id.clone(), model::home_relative);
+        let location = widget::responsive(move |size| {
+            widget::tooltip(
+                text(label_for_width(&display, size.width, 11.0, true))
+                    .size(11)
+                    .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(palette::DIM.resolve(theme)),
+                    })
+                    .wrapping(text::Wrapping::None),
+                container(text(path.unwrap_or(&folder.id)).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                    .padding(8)
+                    .max_width(600)
+                    .style(surface_style),
+                widget::tooltip::Position::Bottom,
+            )
+            .into()
+        })
+        .height(Length::Shrink);
         column![
             row![
                 button(hint("Alt+←", "Back")).on_press(Message::FolderBack { generation }).style(status_button_style),
                 location,
-                space::horizontal(),
                 button(hint("Ctrl+R", "Refresh")).on_press(Message::RefreshSearchStatus).style(status_button_style)
             ]
             .spacing(6)
             .align_y(Vertical::Center),
             input
         ]
-        .spacing(2)
+        .spacing(4)
         .into()
     } else {
         if header_extra > 0 {
@@ -2163,6 +2162,27 @@ pub(crate) fn status_button_style(theme: &Theme, status: button::Status) -> butt
         border: Border { radius: 5.0.into(), ..Default::default() },
         ..Default::default()
     }
+}
+
+pub(crate) fn tab_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
+    button::Style {
+        background: if selected {
+            Some(Background::Color(palette::SELECTED.resolve(theme)))
+        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            Some(Background::Color(palette::FAINT.resolve(theme)))
+        } else {
+            None
+        },
+        text_color: if selected { palette::TEXT.resolve(theme) } else { palette::DIM.resolve(theme) },
+        border: Border { radius: 5.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+fn recovery_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    // Accent text loses contrast over bright backdrops through glass.
+    let foreground = if theme.palette().background.a < 1.0 { palette::TEXT } else { palette::ACCENT };
+    button::Style { text_color: foreground.resolve(theme), ..status_button_style(theme, status) }
 }
 
 fn status_metric(value: u64, label: &'static str) -> Element<'static, Message> {
@@ -2320,13 +2340,18 @@ fn results(s: &Launcher) -> Element<'_, Message> {
         .align_x(Horizontal::Center);
         if s.scope.file_query(&s.query) && !matches!(s.status, Status::Searching) {
             empty = empty.push(
-                row![
-                    button(text("Check file search status").size(13))
-                        .on_press(Message::ShowSearchStatus)
-                        .style(status_button_style),
-                    button(text("Choose folders").size(13)).on_press(Message::ShowFolders).style(status_button_style),
-                ]
-                .spacing(8),
+                container(
+                    row![
+                        button(text("Check file search status").size(13))
+                            .on_press(Message::ShowSearchStatus)
+                            .style(recovery_button_style),
+                        button(text("Choose folders").size(13))
+                            .on_press(Message::ShowFolders)
+                            .style(recovery_button_style),
+                    ]
+                    .spacing(8),
+                )
+                .padding(padding::top(4)),
             );
         }
         return container(empty).center(Length::Fill).into();
@@ -2371,16 +2396,18 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         labels.into()
     })
     .height(Length::Shrink);
-    let tag = text(item.tag)
-        .size(11)
-        .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) });
     let mut content = row![icon, container(labels).width(Length::Fill).clip(true)];
     if s.is_favorite(&item.target) {
         content = content.push(text("★").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    let mut content = content.push(tag);
+    if !s.preview_visible() {
+        content =
+            content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }));
+    }
     if s.panel.is_none() {
         content = content.push(numbered_hint(slot, selected));
     }
@@ -2453,7 +2480,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     let mut hints = row![].spacing(14).align_y(Vertical::Center);
     if let Some(item) = s.selected() {
         let acts = s.actions_for(&item.target);
-        hints = hints.push(hint("Enter", acts[0].label()));
+        hints = hints.push(primary_hint("Enter", acts[0].label()));
         if let Some(action) = model::secondary_action(&acts).filter(|_| s.window_width >= 640) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
@@ -2520,6 +2547,19 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
         text(label)
             .size(12)
             .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
+    ]
+    .spacing(6)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+pub(crate) fn primary_hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
+    row![
+        keycap(key, true),
+        text(label)
+            .size(12)
+            .font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT })
+            .style(|theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) }),
     ]
     .spacing(6)
     .align_y(Vertical::Center)
@@ -2630,7 +2670,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .into()
 }
 
-fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
+pub(crate) fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
     use iced::advanced::text::{Paragraph, Renderer};
 
     // Measure the same default font and shaping as the labels; character counts
@@ -3128,13 +3168,21 @@ mod tests {
                     );
                     for backdrop in [Color::WHITE, Color::BLACK] {
                         let surface = over(theme.palette().background, backdrop);
-                        for background in [
+                        for (background_index, background) in [
                             surface,
                             over(palette::FAINT.resolve(theme), surface),
                             over(palette::SELECTED.resolve(theme), surface),
                             palette::RAISED.resolve(theme),
-                        ] {
-                            for foreground in [palette::TEXT.resolve(theme), palette::DIM.resolve(theme)] {
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            for foreground in
+                                [palette::TEXT.resolve(theme), palette::DIM.resolve(theme)].into_iter().chain(
+                                    (background_index < 2)
+                                        .then(|| recovery_button_style(theme, button::Status::Active).text_color),
+                                )
+                            {
                                 let a = luminance(foreground);
                                 let b = luminance(background);
                                 let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
@@ -5723,21 +5771,150 @@ mod tests {
         assert_eq!(s.status, status, "a filtered-out action cannot run from a queued click");
     }
 
+    #[derive(Default)]
+    struct RenderedLabels {
+        text: Vec<(String, iced::Rectangle)>,
+        inputs: Vec<iced::Rectangle>,
+    }
+
+    impl iced::advanced::widget::Operation for RenderedLabels {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation)) {
+            operate(self);
+        }
+        fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+            self.text.push((value.to_string(), bounds));
+        }
+        fn text_input(
+            &mut self,
+            _: Option<&Id>,
+            bounds: iced::Rectangle,
+            _: &mut dyn iced::advanced::widget::operation::TextInput,
+        ) {
+            self.inputs.push(bounds);
+        }
+    }
+
+    fn rendered_labels<M>(mut element: Element<'_, M>, size: iced::Size) -> RenderedLabels {
+        use iced::advanced::{Layout, layout, widget::Tree};
+
+        let renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let widget = element.as_widget_mut();
+        let mut tree = Tree::new(&*widget);
+        let node = widget.layout(&mut tree, &renderer, &layout::Limits::new(iced::Size::ZERO, size));
+        let mut labels = RenderedLabels::default();
+        widget.operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        labels
+    }
+
+    #[test]
+    fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
+        use iced::Size;
+        use std::os::unix::ffi::OsStringExt;
+
+        if let Ok(home) = std::env::var("HOME")
+            && !home.is_empty()
+        {
+            let path = format!("{home}/Corpus/report.md");
+            assert_eq!(model::home_relative(&home), "~");
+            assert_eq!(model::home_relative(&path), "~/Corpus/report.md");
+            assert_eq!(model::home_relative(&format!("{home}x/report.md")), format!("{home}x/report.md"));
+            let mut file = file_hits().remove(0);
+            file.path = Some(path.clone().into());
+            let mut preview = preview::Panel::new(file.clone());
+            let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
+            assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+            assert!(
+                matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == path)
+            );
+            let chooser = open_with::Panel::new(file.clone());
+            let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
+            assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+            let mut state = search_state();
+            state.search_folder = Some(file);
+            let labels = rendered_labels(view_content(&state), Size::new(640.0, full_height() as f32));
+            assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+        }
+        let mut file = file_hits().remove(0);
+        file.id = "file:///synthetic/non%FF.md".into();
+        file.path = Some(std::ffi::OsString::from_vec(b"/synthetic/non\xff.md".to_vec()).into());
+        let mut preview = preview::Panel::new(file.clone());
+        let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
+        assert!(labels.text.iter().any(|(value, _)| value == &file.id));
+        assert!(
+            matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == file.id)
+        );
+        let mut state = search_state();
+        state.search_folder = Some(file.clone());
+        let labels = rendered_labels(view_content(&state), Size::new(640.0, full_height() as f32));
+        assert!(labels.text.iter().any(|(value, _)| value == &file.id));
+    }
+
+    #[test]
+    fn folder_header_keeps_controls_and_input_inside_its_height() {
+        use iced::Size;
+
+        let (state, _) = browser_state();
+        for width in [320.0, 608.0, 640.0, 880.0] {
+            let labels = rendered_labels(view_content(&state), Size::new(width, full_height() as f32));
+            let input = labels.inputs[0];
+            assert!(input.height >= 26.0, "folder input was squeezed at {width}px: {input:?}");
+            assert!(input.y >= PAD && input.y + input.height <= PAD + INPUT_HEIGHT + 0.5, "{input:?}");
+            for control in ["Back", "Refresh"] {
+                let (_, bounds) = labels.text.iter().find(|(value, _)| value == control).unwrap();
+                assert!(bounds.y >= PAD && bounds.y + bounds.height <= PAD + INPUT_HEIGHT + 0.5, "{bounds:?}");
+            }
+            // The measured path must not consume the Back/Refresh hit areas.
+            let (_, path) = labels.text.iter().find(|(value, _)| value.starts_with('/')).unwrap();
+            assert!(path.x >= 90.0 && path.x + path.width < width - 90.0);
+        }
+    }
+
+    #[test]
+    fn open_with_labels_use_available_width_and_keep_suffixes() {
+        use iced::Size;
+        use iced::advanced::text::Paragraph;
+
+        let mut state = picker_state();
+        let name = "Visual document handler with a long descriptive name and 日本語";
+        let id = "org.example.Documents.Visual.document.handler.with.a.long.identifier.desktop";
+        let panel = state.application_picker.as_mut().unwrap();
+        panel.loaded(
+            Ok(vec![crate::backend::ApplicationChoice { id: id.into(), name: name.into(), icon: String::new() }]),
+            &mut state.icons,
+        );
+        for width in [320.0, 608.0, 704.0, 880.0] {
+            let labels = rendered_labels(view_content(&state), Size::new(width, full_height() as f32)).text;
+            for (prefix, size) in [("Visual", 15.0), ("org.example", 11.0)] {
+                let (value, bounds) = labels.iter().find(|(value, _)| value.starts_with(prefix)).unwrap();
+                let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+                    iced::advanced::text::Text {
+                        content: value,
+                        bounds: Size::INFINITE,
+                        size: iced::Pixels(size),
+                        line_height: Default::default(),
+                        font: iced::Font::DEFAULT,
+                        align_x: Default::default(),
+                        align_y: Vertical::Top,
+                        shaping: Default::default(),
+                        wrapping: text::Wrapping::None,
+                    },
+                );
+                assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at chooser width {width}");
+                if size == 11.0 {
+                    assert!(value.ends_with(".desktop"));
+                } else if width == 880.0 {
+                    assert_eq!(value, name, "do not truncate a name that fits");
+                }
+            }
+            assert!(labels.iter().any(|(value, _)| value == "Ctrl+1"));
+        }
+    }
+
     #[test]
     fn narrow_result_labels_fit_and_keep_distinguishing_text() {
-        use iced::advanced::{Layout, layout, text::Paragraph, widget::Operation, widget::Tree};
-        use iced::{Rectangle, Size};
-
-        #[derive(Default)]
-        struct Labels(Vec<(String, Rectangle)>);
-        impl Operation for Labels {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-            fn text(&mut self, _: Option<&Id>, bounds: Rectangle, value: &str) {
-                self.0.push((value.to_string(), bounds));
-            }
-        }
+        use iced::Size;
+        use iced::advanced::text::Paragraph;
 
         let mut state = search_state();
         let mut file = file_hits().remove(0);
@@ -5746,19 +5923,14 @@ mod tests {
         state.apps[0].comment = Some("Create and protect your documents with the synthetic report viewer".into());
         state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &[file]);
         state.items.push(model::calc_item("1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12").unwrap());
-        let renderer =
-            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
-        for width in [280.0, 320.0, 384.0, 704.0] {
+        for (width, preview) in [(280.0, false), (320.0, false), (384.0, false), (704.0, false), (352.0, true)] {
+            state.preview_enabled = preview;
             for i in 0..state.items.len() {
-                let mut element = result_row(&state, i, i);
-                let widget = element.as_widget_mut();
-                let mut tree = Tree::new(&*widget);
-                let node =
-                    widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, Size::new(width, ROW_HEIGHT)));
-                let mut labels = Labels::default();
-                widget.operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
-                assert!(labels.0.len() >= 2);
-                for ((value, bounds), size) in labels.0.iter().take(2).zip([15.0, 12.0]) {
+                let labels = rendered_labels(result_row(&state, i, i), Size::new(width, ROW_HEIGHT)).text;
+                assert!(labels.len() >= 2);
+                assert_eq!(labels.iter().any(|(value, _)| value == state.items[i].tag), !preview);
+                assert!(labels.iter().any(|(value, _)| value == &format!("Ctrl+{}", i + 1)));
+                for ((value, bounds), size) in labels.iter().take(2).zip([15.0, 12.0]) {
                     let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
                         iced::advanced::text::Text {
                             content: value,
@@ -5775,10 +5947,10 @@ mod tests {
                     assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at list width {width}");
                 }
                 if matches!(state.items[i].target, Target::File(_)) {
-                    assert!(labels.0[0].0.ends_with(".md"), "the extension distinguishes similar files");
-                    assert!(labels.0[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
+                    assert!(labels[0].0.ends_with(".md"), "the extension distinguishes similar files");
+                    assert!(labels[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
                 } else {
-                    let subtitle = &labels.0[1].0;
+                    let subtitle = &labels[1].0;
                     if subtitle != &state.items[i].subtitle {
                         assert!(
                             subtitle.ends_with('…'),

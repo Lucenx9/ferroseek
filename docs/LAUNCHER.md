@@ -212,11 +212,20 @@ to another command.
 
 Numbered shortcuts stay visible on every result and application choice. The
 selected row keeps its keycap; other rows use quieter text with the same spacing.
-Footer and action-menu shortcuts keep their keycaps. Result types appear as plain secondary labels.
+Footer and action-menu shortcuts keep their keycaps. The Enter action uses
+stronger text in the result and application-chooser footers. Result types appear
+as plain secondary labels, except beside the preview, where names and paths use
+that space. Paths and numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
 preview. File names keep both ends so their extension remains visible; application
 names, application descriptions and calculator expressions shorten at the end.
-Paths keep both ends. The preview and file details retain the full location.
+Paths keep both ends. Result paths, folder headers, the application chooser and
+the preview abbreviate the home directory as `~`. Header and preview path
+tooltips retain the absolute location; copying a path still uses the absolute
+path or lossless file URL. File details retain the full location.
+Empty file-search states separate the existing recovery actions from the help
+text with more spacing and stronger text: accent on opaque surfaces, primary
+text on translucent surfaces to preserve contrast over bright backgrounds.
 
 - **Applications** come from `.desktop` files in `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, parsed by the launcher itself (Desktop Entry
@@ -439,8 +448,10 @@ launcher and daemon versions are required.
 ![Application chooser](assets/launcher-open-with.png)
 
 Native Compact capture in a private virtual KWin 6.3.6 session at 1× with
-synthetic document handlers and the tiny-skia renderer. Long names leave room
-for numbered shortcuts. This presentation check does not extend the desktop
+synthetic document handlers and the tiny-skia renderer. Names, desktop IDs and
+the target path shorten to their actual available width, leaving room for
+numbered shortcuts. Hover over the target path to see its absolute location.
+This presentation check does not extend the desktop
 validation matrix below.
 
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
