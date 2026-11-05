@@ -208,9 +208,8 @@ impl Panel {
             reload = reload.on_press(Event::Reload);
         }
         let title = row![text("Open with…").size(20), space::horizontal(), reload].align_y(Vertical::Center);
-        let path =
-            self.file.path.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| self.file.id.clone());
-        let display = if self.file.path.is_some() { model::home_relative(&path) } else { path.clone() };
+        let path = self.file.path.as_deref().and_then(|path| path.to_str());
+        let display = path.map_or_else(|| self.file.id.clone(), model::home_relative);
         let target = widget::responsive(move |size| {
             widget::tooltip(
                 text(ui::label_for_width(&display, size.width, 12.0, true))
@@ -219,7 +218,7 @@ impl Panel {
                         color: Some(palette::DIM.resolve(theme)),
                     })
                     .wrapping(text::Wrapping::None),
-                container(text(path.clone()).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                container(text(path.unwrap_or(&self.file.id)).size(12).wrapping(text::Wrapping::WordOrGlyph))
                     .padding(8)
                     .max_width(560)
                     .style(ui::surface_style),

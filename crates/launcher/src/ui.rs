@@ -5841,6 +5841,9 @@ mod tests {
         let mut preview = preview::Panel::new(file.clone());
         let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
         assert!(labels.text.iter().any(|(value, _)| value == &file.id));
+        let chooser = open_with::Panel::new(file.clone());
+        let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
+        assert!(labels.text.iter().any(|(value, _)| value == &file.id));
         assert!(
             matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == file.id)
         );
