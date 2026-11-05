@@ -3007,10 +3007,10 @@ mod tests {
             let cursor = mouse::Cursor::Available(iced::Point::new(100.0, 90.0));
             let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
             let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
-            widget_batch_at(&mut state, &mut cache, &[press.clone()], false, cursor);
+            widget_batch_at(&mut state, &mut cache, std::slice::from_ref(&press), false, cursor);
             let original = state.preferences;
             let _ = update(&mut state, Message::Cmd(switch));
-            widget_batch_at(&mut state, &mut cache, &[release.clone()], false, cursor);
+            widget_batch_at(&mut state, &mut cache, std::slice::from_ref(&release), false, cursor);
             assert_eq!(state.preferences, original, "release after leaving {tab:?}");
 
             widget_batch_at(&mut state, &mut cache, &[press, release], false, cursor);
