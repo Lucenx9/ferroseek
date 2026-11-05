@@ -2419,6 +2419,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         .height(FOOTER_HEIGHT)
         .padding([0, 16])
         .align_y(Vertical::Center)
+        .style(footer_style)
         .into();
     }
     let (msg, color) = match &s.status {

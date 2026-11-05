@@ -334,6 +334,23 @@ impl Panel {
             ]
             .spacing(16)
         } else {
+            let mut mode = column![
+                label("Color mode"),
+                row![
+                    choice(0, "System", self.draft.mode == Mode::System),
+                    choice(1, "Light", self.draft.mode == Mode::Light),
+                    choice(2, "Dark", self.draft.mode == Mode::Dark)
+                ]
+                .spacing(8),
+            ]
+            .spacing(6);
+            if self.draft.mode == Mode::System && system.is_none() {
+                mode = mode.push(
+                    text("No system color preference · using Dark")
+                        .size(11)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                );
+            }
             let mut surface = column![
                 label("Surface"),
                 row![
@@ -348,8 +365,6 @@ impl Panel {
                 Some("Solid for this session (--opaque)")
             } else if self.draft.material == Material::Glass && !glass {
                 Some("Glass uses a solid surface when blur or transparency is unavailable")
-            } else if self.draft.mode == Mode::System && system.is_none() {
-                Some("No system color preference · using Dark")
             } else {
                 None
             };
@@ -360,20 +375,7 @@ impl Panel {
                         .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
                 );
             }
-            let mut content = column![
-                column![
-                    label("Color mode"),
-                    row![
-                        choice(0, "System", self.draft.mode == Mode::System),
-                        choice(1, "Light", self.draft.mode == Mode::Light),
-                        choice(2, "Dark", self.draft.mode == Mode::Dark)
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(6),
-                surface,
-            ]
-            .spacing(16);
+            let mut content = column![mode, surface].spacing(16);
             for dark in [false, true] {
                 let mut cards = row![].spacing(8);
                 for (i, (palette, name)) in PALETTES.iter().enumerate() {
@@ -413,7 +415,10 @@ impl Panel {
         } else {
             row![
                 text(if self.dirty() { "Unsaved changes" } else { "Preview changes immediately · Save to keep them" })
-                    .size(11),
+                    .size(11)
+                    .style(move |theme: &Theme| text::Style {
+                        color: Some(if self.dirty() { palette::TEXT } else { palette::DIM }.resolve(theme)),
+                    }),
                 space::horizontal(),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
