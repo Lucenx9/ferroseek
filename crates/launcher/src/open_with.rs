@@ -285,15 +285,9 @@ impl Panel {
                             .wrapping(text::Wrapping::None)
                     ]
                     .spacing(1);
-                    let content = row![
-                        icon,
-                        container(labels).width(Length::Fill).clip(true),
-                        text(format!("Ctrl+{}", slot + 1)).size(11).style(move |theme: &iced::Theme| {
-                            iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-                        })
-                    ]
-                    .spacing(12)
-                    .align_y(Vertical::Center);
+                    let content = row![icon, container(labels).width(Length::Fill).clip(true), ui::numbered_hint(slot)]
+                        .spacing(12)
+                        .align_y(Vertical::Center);
                     let mut choice = button(container(content).height(Length::Fill).center_y(Length::Fill))
                         .height(44)
                         .width(Length::Fill)
