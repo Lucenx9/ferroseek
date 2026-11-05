@@ -5,7 +5,7 @@ use iced::widget::{Id, button, column, container, row, scrollable, space, text};
 use iced::{Element, Font, Length};
 
 use crate::backend::{FileHit, PreviewData, TextPreview};
-use crate::model::Command;
+use crate::model::{self, Command};
 use crate::ui::{self, palette};
 
 #[derive(Debug, Clone)]
@@ -111,11 +111,12 @@ impl Panel {
         .spacing(6)
         .align_y(Vertical::Center);
         let (location, url) = self.location();
+        let display = if url { location.to_owned() } else { model::home_relative(location) };
         let copy = if url { "Copy file URL" } else { "Copy path" };
         let identity = column![
             text(ui::ellipsize_middle(&self.file.name, 65)).size(15),
             iced::widget::tooltip(
-                text(ui::ellipsize_middle(location, 75)).size(11).style(move |theme: &iced::Theme| {
+                text(ui::ellipsize_middle(&display, 75)).size(11).style(move |theme: &iced::Theme| {
                     iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
                 }),
                 container(text(location).size(12).wrapping(text::Wrapping::WordOrGlyph))

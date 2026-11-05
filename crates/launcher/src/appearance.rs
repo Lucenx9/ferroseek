@@ -436,10 +436,12 @@ impl Panel {
                 text("Appearance").size(20),
                 button(text("Colors").size(12))
                     .on_press(Event::Tab(Tab::Colors))
-                    .style(move |theme, status| choice_style(theme, status, self.tab == Tab::Colors, false)),
+                    .padding([6, 8])
+                    .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors)),
                 button(text("Layout").size(12))
                     .on_press(Event::Tab(Tab::Layout))
-                    .style(move |theme, status| choice_style(theme, status, self.tab == Tab::Layout, false)),
+                    .padding([6, 8])
+                    .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout)),
                 space::horizontal(),
                 button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
             ]
