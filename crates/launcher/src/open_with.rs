@@ -183,8 +183,8 @@ impl Panel {
         Effect::None
     }
 
-    /// Fit rows after reserving the title, input, range and footer. Error text
-    /// can wrap; opening feedback needs one additional line.
+    /// Fit rows after reserving the header, input, footer and feedback headroom.
+    /// Error text can wrap.
     pub fn resize(&mut self, height: u32, opening: bool) {
         let reserved = 200
             + if self.error.is_some() {
@@ -287,7 +287,7 @@ impl Panel {
                     .spacing(1);
                     let content = row![
                         ui::selection_bar(selected, 22.0),
-                        row![icon, container(labels).width(Length::Fill).clip(true), ui::numbered_hint(slot)]
+                        row![icon, container(labels).width(Length::Fill).clip(true), ui::numbered_hint(slot, selected)]
                             .spacing(12)
                             .padding(iced::padding::left(9).right(16))
                             .align_y(Vertical::Center)
@@ -314,16 +314,6 @@ impl Panel {
                     }
                     body = body.push(choice);
                 }
-                if !filtered.is_empty() {
-                    let window = self.cursor.window(filtered.len());
-                    body = body.push(
-                        text(format!("{}–{} / {} applications", window.start + 1, window.end, filtered.len()))
-                            .size(11)
-                            .style(move |theme: &iced::Theme| iced::widget::text::Style {
-                                color: Some(palette::DIM.resolve(theme)),
-                            }),
-                    );
-                }
             }
         }
         if let Some(error) = &self.error {
@@ -331,22 +321,51 @@ impl Panel {
                 iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
             }));
         }
-        if opening {
-            body = body.push(text("Opening the selected file…").size(12).style(move |theme: &iced::Theme| {
-                iced::widget::text::Style { color: Some(palette::ACCENT.resolve(theme)) }
-            }));
-        }
         let back = button(ui::hint("Esc", if self.query.is_empty() { "Back to search" } else { "Clear filter" }))
             .on_press(Event::Back)
             .style(ui::status_button_style);
-        let footer = row![back, space::horizontal(), ui::hint("Enter", "Open")].align_y(Vertical::Center);
+        let (status, color) = if opening {
+            ("Opening…".to_string(), palette::ACCENT)
+        } else if self.error.is_some() {
+            ("Could not open file".into(), palette::ERROR)
+        } else {
+            match &self.state {
+                State::Loading => ("Loading applications…".into(), palette::DIM),
+                State::Error(_) => ("Applications unavailable".into(), palette::ERROR),
+                State::Ready(_) => {
+                    let filtered = self.filtered();
+                    let window = self.cursor.window(filtered.len());
+                    let status = if filtered.is_empty() {
+                        "0 applications".into()
+                    } else {
+                        format!("{}–{} / {} applications", window.start + 1, window.end, filtered.len())
+                    };
+                    (status, palette::DIM)
+                }
+            }
+        };
+        let footer = row![
+            text(status)
+                .size(12)
+                .width(Length::Fill)
+                .wrapping(text::Wrapping::None)
+                .style(move |theme: &iced::Theme| text::Style { color: Some(color.resolve(theme)) }),
+            ui::hint("Enter", "Open"),
+            back
+        ]
+        .spacing(14)
+        .align_y(Vertical::Center);
         container(
             column![
                 container(column![title, container(target).width(Length::Fill).clip(true)].spacing(7))
                     .padding([10, 16]),
                 container(input).padding([0, 16]),
                 container(body).padding([10, 8]).height(Length::Fill),
-                container(footer).height(34).padding([0, 10]).center_y(34)
+                container(footer)
+                    .height(crate::layout::FOOTER_HEIGHT)
+                    .padding(iced::padding::left(16).right(10))
+                    .center_y(crate::layout::FOOTER_HEIGHT)
+                    .style(ui::footer_style)
             ]
             .spacing(3),
         )
