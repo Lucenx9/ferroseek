@@ -138,6 +138,12 @@ impl Panel {
         let path = self.path.clone();
         Task::perform(async move { zruntime::unblock(move || Document::load(path)).await }, Event::Loaded)
     }
+    pub fn content_id(&self) -> iced::widget::Id {
+        iced::widget::Id::new(match self.tab {
+            Tab::Colors => "appearance-colors",
+            Tab::Layout => "appearance-layout",
+        })
+    }
     fn dirty(&self) -> bool {
         self.draft != self.original
     }

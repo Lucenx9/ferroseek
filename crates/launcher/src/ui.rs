@@ -1923,6 +1923,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         crate::material::renderer::opaque_fallback(view_content(s), s.appearance_theme(false)),
         s.input_epoch,
         focus,
+        s.appearance.as_ref().map(appearance::Panel::content_id),
     )
 }
 
@@ -2977,6 +2978,53 @@ mod tests {
         assert_eq!(state.preferences, Preferences::default(), "late page events are ignored");
         let _ = update(&mut state, Message::Ui(UiEvent::DesktopAppearance(Some(false))));
         assert!(state.appearance_theme(false).palette().background.r > 0.9, "System follows the desktop");
+    }
+
+    #[test]
+    fn appearance_tab_switch_cancels_pressed_choices() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        std::fs::write(&path, "roots = []\n[appearance]\nmode = \"dark\"\n").unwrap();
+        for (tab, switch) in
+            [(appearance::Tab::Colors, Command::NextScope), (appearance::Tab::Layout, Command::PreviousScope)]
+        {
+            let mut state = search_state();
+            state.settings_path = path.clone();
+            let _ = update(&mut state, Message::ShowAppearance);
+            let generation = state.appearance_generation;
+            let _ = update(
+                &mut state,
+                Message::Appearance {
+                    generation,
+                    event: appearance::Event::Loaded(Ok(
+                        ferroseek_config::folders::Document::load(path.clone()).unwrap()
+                    )),
+                },
+            );
+            let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Tab(tab) });
+            let mut cache = iced_runtime::user_interface::Cache::default();
+            // The first choice in either tab occupies this point.
+            let cursor = mouse::Cursor::Available(iced::Point::new(100.0, 90.0));
+            let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+            let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+            widget_batch_at(&mut state, &mut cache, &[press.clone()], false, cursor);
+            let original = state.preferences;
+            let _ = update(&mut state, Message::Cmd(switch));
+            widget_batch_at(&mut state, &mut cache, &[release.clone()], false, cursor);
+            assert_eq!(state.preferences, original, "release after leaving {tab:?}");
+
+            widget_batch_at(&mut state, &mut cache, &[press, release], false, cursor);
+            if tab == appearance::Tab::Colors {
+                assert_eq!(state.preferences.width, ferroseek_config::appearance::Width::Compact);
+            } else {
+                assert_eq!(state.preferences.mode, ferroseek_config::appearance::Mode::System);
+            }
+            let _ = update(&mut state, Message::Cmd(Command::Back));
+            assert!(state.appearance.is_some(), "a new click still edits the draft");
+            let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Discard });
+            assert!(state.appearance.is_none());
+            assert_eq!(state.preferences, original);
+        }
     }
 
     #[test]
