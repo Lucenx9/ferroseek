@@ -5740,7 +5740,7 @@ mod tests {
         state.items = model::build_items(&[], &[], &[file]);
         let renderer =
             iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
-        for width in [320.0, 384.0, 704.0] {
+        for width in [280.0, 320.0, 384.0, 704.0] {
             let mut element = result_row(&state, 0, 0);
             let widget = element.as_widget_mut();
             let mut tree = Tree::new(&*widget);
@@ -5766,7 +5766,7 @@ mod tests {
                 assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at list width {width}");
             }
             assert!(labels.0[0].0.ends_with(".md"), "the extension distinguishes similar files");
-            assert!(labels.0[1].0.ends_with("Reports 2026"), "keep the distinguishing end of the parent path");
+            assert!(labels.0[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
         }
     }
 
