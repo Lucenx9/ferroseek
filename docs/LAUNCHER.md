@@ -47,16 +47,16 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
 
-[Dark appearance](assets/launcher-appearance-dark.png). Native captures from the
-[isolated KWin matrix](https://github.com/Lucenx9/ferroseek/actions/runs/41841162147),
-AZERTY 1× profile, with synthetic data.
+[Dark appearance](assets/launcher-appearance-dark.png). Native captures from
+isolated virtual KWin, US 1× profile, with synthetic data.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
 **System**, **Light** and **Dark** control the color mode. Choose an independent
 **Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures
 show search, selection and secondary text with the same semantic colors as the
-launcher. A check marks the selected choice; an accent outline marks keyboard
-focus. Up/Down or Tab/Shift+Tab move between choices, and Enter selects one.
+launcher. A check on the right marks the selected choice without shifting its
+name; an accent outline marks keyboard focus. Up/Down or Tab/Shift+Tab move
+between choices, and Enter selects one.
 Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
 or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
 changes require explicit discard (Ctrl+D); Esc keeps editing at that prompt.
@@ -83,8 +83,8 @@ position = "upper"   # upper, centered
 ![Layout settings on a constrained output](assets/launcher-layout.png)
 
 [Wide centered layout at 1.5×](assets/launcher-layout-centered.png). Native
-captures from the same matrix: 640×480 at 1× and 960×640 logical at 1.5×,
-respectively. The matrix artifacts retain the full keyboard and pixel checks.
+captures from isolated virtual KWin: 640×480 at 1× and 960×640 logical at 1.5×,
+respectively.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview

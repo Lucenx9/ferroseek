@@ -284,7 +284,7 @@ impl Panel {
         let enabled = !self.busy && self.document.is_some() && !self.confirm;
         let choice = |index, label: &'static str, selected| {
             let focused = self.cursor.selected == index;
-            let b = button(text(if selected { format!("✓ {label}") } else { label.into() }).size(13))
+            let b = button(choice_label(label, 13, selected))
                 .width(Length::Fill)
                 .padding([7, 10])
                 .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
@@ -356,8 +356,7 @@ impl Panel {
                     preview.light_theme = *palette;
                     preview.dark_theme = *palette;
                     let color_theme = theme(preview, system, false);
-                    let label = if selected { format!("✓ {name}") } else { name.to_string() };
-                    let b = button(column![miniature(&color_theme), text(label).size(12)].spacing(4))
+                    let b = button(column![miniature(&color_theme), choice_label(name, 12, selected)].spacing(4))
                         .padding(5)
                         .width(Length::Fill)
                         .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
@@ -432,6 +431,17 @@ impl Panel {
 }
 const PALETTES: [(Palette, &str); 3] =
     [(Palette::Iron, "Iron"), (Palette::Slate, "Slate"), (Palette::Forest, "Forest")];
+
+fn choice_label(label: &str, size: u32, selected: bool) -> Element<'_, Event> {
+    row![
+        text(label).size(size).width(Length::Fill),
+        text(if selected { "✓" } else { "" }).size(size).width(16).align_x(iced::Right),
+    ]
+    .spacing(8)
+    .align_y(iced::Center)
+    .into()
+}
+
 fn choice_style(theme: &Theme, status: button::Status, selected: bool, focused: bool) -> button::Style {
     button::Style {
         background: Some(Background::Color(if selected || status == button::Status::Pressed {
