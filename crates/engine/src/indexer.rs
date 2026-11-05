@@ -501,6 +501,7 @@ impl State {
                 (Some(o), true) => o.id,
                 (Some(o), false) if o.meta.kind == Kind::Dir && meta.kind != Kind::Dir => {
                     self.drop_children(tx, o.id)?;
+                    self.unwatch(o.id);
                     tx.upsert(id, &name, meta)?.0
                 }
                 _ => tx.upsert(id, &name, meta)?.0,
@@ -529,6 +530,10 @@ impl State {
 
     /// The state-based primitive: make `(dir, name)` match the filesystem.
     fn resolve(&mut self, tx: &mut Txn<'_>, dir: Id, name: &[u8], tries: u8) -> Result<()> {
+        // A prior event in this batch may have replaced the watched directory.
+        if !tx.meta(dir)?.is_some_and(|meta| meta.kind == Kind::Dir) {
+            return Ok(());
+        }
         let Some(dpath) = tx.path(dir)? else { return Ok(()) };
         if self.rules.respect_cachedir_tag {
             if has_cachedir_tag(&dpath) {
@@ -558,6 +563,7 @@ impl State {
                     && meta.kind != Kind::Dir
                 {
                     self.drop_children(tx, c.id)?;
+                    self.unwatch(c.id);
                 }
                 let (id, change) = tx.upsert(dir, name, meta)?;
                 if meta.kind == Kind::Dir {

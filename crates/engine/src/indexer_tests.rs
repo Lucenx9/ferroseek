@@ -409,6 +409,45 @@ fn directory_replaced_by_file_and_back() {
 }
 
 #[test]
+fn replacing_a_watched_directory_with_a_symlink_does_not_index_its_target() {
+    for (reconcile, same_batch) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut f = fx();
+        touch(&f.p("folder/original.txt"));
+        f.scan(Mode::Quick);
+        let outside = f._t.path().join("outside");
+        fs::rename(f.p("folder"), &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, f.p("folder")).unwrap();
+        if reconcile {
+            f.scan(Mode::Full);
+        }
+        if !same_batch {
+            f.settle();
+            assert!(f.find("original.txt").is_empty());
+        }
+        touch(&outside.join("outside-only.txt"));
+        f.settle();
+        assert!(
+            f.find("outside-only").is_empty(),
+            "symlink target indexed after reconcile={reconcile}, same_batch={same_batch}"
+        );
+        assert!(f.find("original.txt").is_empty());
+        assert_eq!(f.ix.watched_dirs(), 1, "only the root should remain watched");
+        assert_eq!(
+            Reader::open(&f.db).unwrap().lookup(&f.p("folder")).unwrap().unwrap().1.kind,
+            ferroseek_index::Kind::Symlink
+        );
+
+        fs::remove_file(f.p("folder")).unwrap();
+        touch(&f.p("folder/returned.txt"));
+        f.settle();
+        assert_eq!(f.find("returned.txt"), ["folder/returned.txt"]);
+        touch(&f.p("folder/later.txt"));
+        f.settle();
+        assert_eq!(f.find("later.txt"), ["folder/later.txt"]);
+    }
+}
+
+#[test]
 fn stale_parent_path_across_batches_loses_nothing() {
     let mut f = fx();
     fs::create_dir(f.p("d")).unwrap();
