@@ -426,13 +426,19 @@ impl Panel {
                     remove = remove.on_press(Event::Remove(path.clone()));
                 }
                 let content = container(
-                    row![text(ui::ellipsize_middle(path, ROW_PATH)).size(14), space::horizontal(), remove]
-                        .align_y(Vertical::Center),
+                    row![
+                        ui::selection_bar(selected, 24.0),
+                        row![text(ui::ellipsize_middle(path, ROW_PATH)).size(14), space::horizontal(), remove]
+                            .padding(iced::padding::left(9).right(8))
+                            .align_y(Vertical::Center)
+                    ]
+                    .align_y(Vertical::Center),
                 )
-                .padding([4, 8])
+                .height(48)
+                .align_y(Vertical::Center)
                 .style(move |theme| container::Style {
                     background: selected.then_some(iced::Background::Color(palette::SELECTED.resolve(theme))),
-                    border: iced::Border { radius: 5.0.into(), ..Default::default() },
+                    border: iced::Border { radius: 9.0.into(), ..Default::default() },
                     ..Default::default()
                 });
                 body = body.push(mouse_area(content).on_press(Event::Select(path.clone())));
@@ -458,9 +464,7 @@ impl Panel {
                 );
             }
             if !self.roots.is_empty() {
-                body = body.push(text("↑↓ select · Ctrl+D remove").size(12).style(move |theme: &iced::Theme| {
-                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-                }));
+                body = body.push(row![ui::hint("↑↓", "Select"), ui::hint("Ctrl+D", "Remove")].spacing(14));
             }
             if let Some(warning) = &self.policy_warning {
                 body = body.push(

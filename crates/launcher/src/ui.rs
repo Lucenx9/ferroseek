@@ -2073,7 +2073,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
             row![
                 container(list).width(Length::Fill),
                 container(space()).width(1).height(Length::Fill).style(|theme| container::Style {
-                    background: Some(Background::Color(palette::FAINT.resolve(theme))),
+                    background: Some(Background::Color(palette::BORDER.resolve(theme))),
                     ..Default::default()
                 }),
                 container(preview).width(preview_width)
@@ -2338,6 +2338,15 @@ fn results(s: &Launcher) -> Element<'_, Message> {
     col.into()
 }
 
+pub(crate) fn selection_bar<'a, M: 'a>(selected: bool, height: f32) -> Element<'a, M> {
+    let bar = container(space::vertical()).width(3).height(height).style(move |theme| container::Style {
+        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
+        border: Border { radius: 1.5.into(), ..Default::default() },
+        ..Default::default()
+    });
+    container(bar).padding(padding::left(4)).into()
+}
+
 fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     let item = &s.items[i];
     let selected = i == s.cursor.selected;
@@ -2346,17 +2355,22 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         Some(Icon::Raster(h)) => image(h).width(ICON_SIZE).height(ICON_SIZE).into(),
         None => space().width(ICON_SIZE).height(ICON_SIZE).into(),
     };
-    let mut labels = column![text(ellipsize_end(&item.title, 60)).size(15).wrapping(text::Wrapping::None)].spacing(1);
-    if !item.subtitle.is_empty() {
-        labels = labels.push(
-            text(ellipsize_middle(&item.subtitle, 80))
-                .size(12)
-                .style(move |theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(palette::DIM.resolve(theme)),
-                })
-                .wrapping(text::Wrapping::None),
-        );
-    }
+    let labels = widget::responsive(move |size| {
+        let title = label_for_width(&item.title, size.width, 15.0, matches!(item.target, Target::File(_)));
+        let mut labels = column![text(title).size(15).wrapping(text::Wrapping::None)].spacing(1);
+        if !item.subtitle.is_empty() {
+            labels = labels.push(
+                text(label_for_width(&item.subtitle, size.width, 12.0, true))
+                    .size(12)
+                    .style(move |theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(palette::DIM.resolve(theme)),
+                    })
+                    .wrapping(text::Wrapping::None),
+            );
+        }
+        labels.into()
+    })
+    .height(Length::Shrink);
     let tag = text(item.tag)
         .size(11)
         .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) });
@@ -2372,12 +2386,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     }
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
     // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
-    let bar = container(space::vertical()).width(3).height(ROW_HEIGHT / 2.0).style(move |theme| container::Style {
-        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
-        border: Border { radius: 1.5.into(), ..Default::default() },
-        ..Default::default()
-    });
-    let bar = container(bar).padding(padding::left(4));
+    let bar = selection_bar(selected, ROW_HEIGHT / 2.0);
     let row = container(row![bar, content].align_y(Vertical::Center))
         .height(ROW_HEIGHT)
         .width(Length::Fill)
@@ -2387,7 +2396,12 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             border: Border { radius: 9.0.into(), ..Default::default() },
             ..Default::default()
         });
-    mouse_area(row)
+    let hover = container(space()).width(Length::Fill).height(Length::Fill).style(move |theme| container::Style {
+        background: (!selected).then_some(Background::Color(palette::FAINT.resolve(theme))),
+        border: Border { radius: 9.0.into(), ..Default::default() },
+        ..Default::default()
+    });
+    mouse_area(widget::hover(row, hover))
         .on_press(Message::Selected(item.target.clone()))
         .on_double_click(Message::Clicked(item.target.clone()))
         .on_right_press(Message::ContextMenu(item.target.clone()))
@@ -2608,6 +2622,46 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .align_y(Vertical::Bottom)
         .padding([FOOTER_HEIGHT + PAD + 4.0, PAD + 8.0])
         .into()
+}
+
+fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
+    use iced::advanced::text::{Paragraph, Renderer};
+
+    // Measure the same default font and shaping as the labels; character counts
+    // cannot predict wide glyphs or the space left by icons, tags and the sidebar.
+    let fits = |content: &str| {
+        <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
+            content,
+            bounds: iced::Size::INFINITE,
+            size: iced::Pixels(size),
+            line_height: Default::default(),
+            font: iced::Font::DEFAULT,
+            align_x: Default::default(),
+            align_y: Vertical::Top,
+            shaping: Default::default(),
+            wrapping: text::Wrapping::None,
+        })
+        .min_width()
+            <= width
+    };
+    if fits(value) {
+        return value.to_string();
+    }
+    let shorten = |count| if middle { ellipsize_middle(value, count) } else { ellipsize_end(value, count) };
+    if !fits(&shorten(3)) {
+        return if fits("…") { "…".into() } else { String::new() };
+    }
+    let mut low = 3;
+    let mut high = value.chars().count();
+    while low + 1 < high {
+        let mid = low + (high - low) / 2;
+        if fits(&shorten(mid)) {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    shorten(low)
 }
 
 /// `s` cut to `max` characters with a trailing ellipsis.
@@ -5661,6 +5715,59 @@ mod tests {
         let target = s.selected().unwrap().target.clone();
         let _ = update(&mut s, Message::PanelClicked { target, action: invalid });
         assert_eq!(s.status, status, "a filtered-out action cannot run from a queued click");
+    }
+
+    #[test]
+    fn narrow_result_labels_fit_without_losing_the_file_extension() {
+        use iced::advanced::{Layout, layout, text::Paragraph, widget::Operation, widget::Tree};
+        use iced::{Rectangle, Size};
+
+        #[derive(Default)]
+        struct Labels(Vec<(String, Rectangle)>);
+        impl Operation for Labels {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+                operate(self);
+            }
+            fn text(&mut self, _: Option<&Id>, bounds: Rectangle, value: &str) {
+                self.0.push((value.to_string(), bounds));
+            }
+        }
+
+        let mut state = search_state();
+        let mut file = file_hits().remove(0);
+        file.name = "Quarterly report 2026 with reviewed figures and final recommendations.md".into();
+        file.subtext = "~/Corpus/Documents/Department/Annual planning/Reports 2026".into();
+        state.items = model::build_items(&[], &[], &[file]);
+        let renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        for width in [280.0, 320.0, 384.0, 704.0] {
+            let mut element = result_row(&state, 0, 0);
+            let widget = element.as_widget_mut();
+            let mut tree = Tree::new(&*widget);
+            let node =
+                widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, Size::new(width, ROW_HEIGHT)));
+            let mut labels = Labels::default();
+            widget.operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+            assert!(labels.0.len() >= 2);
+            for ((value, bounds), size) in labels.0.iter().take(2).zip([15.0, 12.0]) {
+                let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+                    iced::advanced::text::Text {
+                        content: value,
+                        bounds: Size::INFINITE,
+                        size: iced::Pixels(size),
+                        line_height: Default::default(),
+                        font: iced::Font::DEFAULT,
+                        align_x: Default::default(),
+                        align_y: Vertical::Top,
+                        shaping: Default::default(),
+                        wrapping: text::Wrapping::None,
+                    },
+                );
+                assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at list width {width}");
+            }
+            assert!(labels.0[0].0.ends_with(".md"), "the extension distinguishes similar files");
+            assert!(labels.0[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
+        }
     }
 
     #[test]
