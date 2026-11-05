@@ -47,15 +47,19 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
 
-[Dark appearance](assets/launcher-appearance-dark.png). Native captures from
-isolated virtual KWin, US 1× profile, with synthetic data.
+[Dark appearance](assets/launcher-appearance-dark.png). Native presentation
+captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
+with the tiny-skia renderer and synthetic data. The refreshed folder, application
+chooser and text-preview images use the same setup. These captures do not extend
+the desktop, fractional-scale or blur validation matrix below.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
 **System**, **Light** and **Dark** control the color mode. Choose an independent
 **Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures
 show search, selection and secondary text with the same semantic colors as the
-launcher. A check on the right marks the selected choice without shifting its
-name; an accent outline marks keyboard focus. Up/Down or Tab/Shift+Tab move
+launcher, including its accent selection bar. A check on the right marks the
+selected choice without shifting its name; an accent outline marks keyboard
+focus. Up/Down or Tab/Shift+Tab move
 between choices, and Enter selects one.
 Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
 or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
@@ -80,11 +84,11 @@ width = "standard"   # compact (640), standard (720), wide (880) logical px
 position = "upper"   # upper, centered
 ```
 
-![Layout settings on a constrained output](assets/launcher-layout.png)
+![Compact layout settings](assets/launcher-layout.png)
 
-[Wide centered layout at 1.5×](assets/launcher-layout-centered.png). Native
-captures from isolated virtual KWin: 640×480 at 1× and 960×640 logical at 1.5×,
-respectively.
+[Centered layout](assets/launcher-layout-centered.png). Native Compact layout
+captures from the same isolated KWin setup: upper on 1280×800 and centered on
+1440×960, both at an observed 1× scale.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview
@@ -195,6 +199,7 @@ This applies to input received by the launcher. Before the compositor gives it
 keyboard focus, keystrokes still belong to the previously focused application.
 
 Click a result once to select it; double-click or press Enter to open it.
+Hover highlights the pointed row without moving the keyboard selection.
 Right-click a result to select it and open its actions, or click **Actions**
 in the footer. A click on a result that disappears while results update is
 ignored rather than opening a different row. Action clicks also keep the target
@@ -205,6 +210,9 @@ to another command.
 
 Numbered shortcuts use the same keycaps as the footer, action menu and
 application chooser. Result types appear as plain secondary labels.
+Names and paths shorten to fit the available column, including beside the text
+preview. File names keep both ends so their extension remains visible; application
+names shorten at the end. The preview and file details retain the full location.
 
 - **Applications** come from `.desktop` files in `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, parsed by the launcher itself (Desktop Entry
@@ -330,7 +338,7 @@ together to use the status and folder interfaces.
 
 ## Search folders and initial setup
 
-![Search folders with two folders and the exclusion summary](assets/launcher-folders.png)
+![Search folders with a long path and the exclusion summary](assets/launcher-folders.png)
 
 Screenshot from a nested test session with sample folders.
 

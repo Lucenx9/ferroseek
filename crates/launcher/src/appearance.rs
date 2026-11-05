@@ -308,7 +308,8 @@ impl Panel {
                 text("Position").size(12),
                 row![
                     choice(3, "Upper", self.draft.position == Position::Upper),
-                    choice(4, "Centered", self.draft.position == Position::Centered)
+                    choice(4, "Centered", self.draft.position == Position::Centered),
+                    space::horizontal()
                 ]
                 .spacing(8),
                 text("Width is limited to the current screen. The side preview adapts to the available space.")
@@ -329,13 +330,13 @@ impl Panel {
                     choice(2, "Dark", self.draft.mode == Mode::Dark)
                 ]
                 .spacing(8),
+                text("Surface").size(12),
                 row![
-                    text("Surface").size(12).width(100),
                     choice(3, "Solid", self.draft.material == Material::Solid),
-                    choice(4, "Glass", self.draft.material == Material::Glass)
+                    choice(4, "Glass", self.draft.material == Material::Glass),
+                    space::horizontal()
                 ]
-                .spacing(8)
-                .align_y(iced::Center),
+                .spacing(8),
             ]
             .spacing(8);
             let support = if opaque {
@@ -406,7 +407,7 @@ impl Panel {
         let notice: Element<'_, Event> = if self.notice.is_empty() {
             space().height(0).into()
         } else {
-            container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 16]).into()
+            container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 24]).into()
         };
         container(column![
             row![
@@ -421,13 +422,13 @@ impl Panel {
                 button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
             ]
             .spacing(8)
-            .padding([8, 16])
+            .padding([8, 24])
             .align_y(iced::Center),
             ui::divider(),
             notice,
-            scrollable(content.padding([12, 16])).id(iced::widget::Id::new("appearance-scroll")).height(Length::Fill),
+            scrollable(content.padding([12, 24])).id(iced::widget::Id::new("appearance-scroll")).height(Length::Fill),
             ui::divider(),
-            container(footer).padding([8, 16])
+            container(footer).padding([8, 24])
         ])
         .width(Length::Fill)
         .height(Length::Fill)
@@ -474,16 +475,25 @@ fn miniature(theme: &Theme) -> Element<'static, Event> {
     let selected = palette::SELECTED.resolve(theme);
     let foreground = palette::TEXT.resolve(theme);
     let dim = palette::DIM.resolve(theme);
+    let accent = palette::ACCENT.resolve(theme);
+    let bar = container(space()).width(3).height(11).style(move |_| container::Style {
+        background: Some(accent.into()),
+        border: Border { radius: 1.5.into(), ..Default::default() },
+        ..Default::default()
+    });
     container(
         column![
             text("Search…").size(11).color(dim),
-            container(text("Files").size(11).color(foreground)).padding([2, 5]).width(Length::Fill).style(move |_| {
-                container::Style {
-                    background: Some(selected.into()),
-                    border: Border { radius: 4.0.into(), ..Default::default() },
-                    ..Default::default()
-                }
-            }),
+            container(row![bar, text("Files").size(11).color(foreground)].spacing(4).align_y(iced::Center))
+                .padding([2, 5])
+                .width(Length::Fill)
+                .style(move |_| {
+                    container::Style {
+                        background: Some(selected.into()),
+                        border: Border { radius: 4.0.into(), ..Default::default() },
+                        ..Default::default()
+                    }
+                }),
             text("~/Documents").size(10).color(dim)
         ]
         .spacing(3),

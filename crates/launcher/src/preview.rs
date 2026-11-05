@@ -216,9 +216,7 @@ impl Panel {
             notes,
             ui::divider(),
             metadata,
-            text("Alt+PgUp / PgDn  Scroll text").size(10).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(palette::DIM.resolve(theme)),
-            })
+            container(ui::hint("Alt+PgUp/PgDn", "Scroll")).width(Length::Fill).clip(true)
         ]
         .spacing(8)
         .padding([8, 16])

@@ -285,13 +285,18 @@ impl Panel {
                             .wrapping(text::Wrapping::None)
                     ]
                     .spacing(1);
-                    let content = row![icon, container(labels).width(Length::Fill).clip(true), ui::numbered_hint(slot)]
-                        .spacing(12)
-                        .align_y(Vertical::Center);
+                    let content = row![
+                        ui::selection_bar(selected, 22.0),
+                        row![icon, container(labels).width(Length::Fill).clip(true), ui::numbered_hint(slot)]
+                            .spacing(12)
+                            .padding(iced::padding::left(9).right(16))
+                            .align_y(Vertical::Center)
+                    ]
+                    .align_y(Vertical::Center);
                     let mut choice = button(container(content).height(Length::Fill).center_y(Length::Fill))
                         .height(44)
                         .width(Length::Fill)
-                        .padding([0, 16])
+                        .padding(0)
                         .style(move |theme, status| button::Style {
                             background: if selected {
                                 Some(Background::Color(palette::SELECTED.resolve(theme)))
