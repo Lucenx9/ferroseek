@@ -88,7 +88,7 @@ use crate::{
 use ferroseek_config::appearance::{Material, Mode, Position, Width};
 use ferroseek_config::folders::Document;
 use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{Background, Border, Element, Length, Task};
+use iced::{Background, Border, Element, Font, Length, Task};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,41 +296,46 @@ impl Panel {
                 .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
             if enabled { b.on_press(Event::Choose(index)) } else { b }
         };
+        let label = |value: &'static str| {
+            text(value).size(12).font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT })
+        };
         let content = if self.tab == Tab::Layout {
             column![
-                row![text("Window width").size(12), space::horizontal(), ui::hint("Ctrl+Tab", "Colors / Layout")],
-                row![
-                    choice(0, "Compact · 640", self.draft.width == Width::Compact),
-                    choice(1, "Standard · 720", self.draft.width == Width::Standard),
-                    choice(2, "Wide · 880", self.draft.width == Width::Wide)
+                column![
+                    row![label("Window width"), space::horizontal(), ui::hint("Ctrl+Tab", "Colors / Layout")],
+                    row![
+                        choice(0, "Compact · 640", self.draft.width == Width::Compact),
+                        choice(1, "Standard · 720", self.draft.width == Width::Standard),
+                        choice(2, "Wide · 880", self.draft.width == Width::Wide)
+                    ]
+                    .spacing(8),
+                    text("Width is limited to the current screen. The side preview adapts to the available space.")
+                        .size(12)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
                 ]
-                .spacing(8),
-                text("Position").size(12),
-                row![
-                    choice(3, "Upper", self.draft.position == Position::Upper),
-                    choice(4, "Centered", self.draft.position == Position::Centered),
-                    space::horizontal()
+                .spacing(6),
+                column![
+                    label("Position"),
+                    row![
+                        choice(3, "Upper", self.draft.position == Position::Upper),
+                        choice(4, "Centered", self.draft.position == Position::Centered),
+                        space::horizontal()
+                    ]
+                    .spacing(8),
                 ]
-                .spacing(8),
-                text("Width is limited to the current screen. The side preview adapts to the available space.")
-                    .size(12)
-                    .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
-                choice(5, "Restore default layout", false),
-                text("Restores width and position. Your themes and surface preference stay the same.")
-                    .size(12)
-                    .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                .spacing(6),
+                column![
+                    choice(5, "Restore default layout", false),
+                    text("Restores width and position. Your themes and surface preference stay the same.")
+                        .size(12)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                ]
+                .spacing(6),
             ]
-            .spacing(12)
+            .spacing(16)
         } else {
-            let mut content = column![
-                text("Color mode").size(12),
-                row![
-                    choice(0, "System", self.draft.mode == Mode::System),
-                    choice(1, "Light", self.draft.mode == Mode::Light),
-                    choice(2, "Dark", self.draft.mode == Mode::Dark)
-                ]
-                .spacing(8),
-                text("Surface").size(12),
+            let mut surface = column![
+                label("Surface"),
                 row![
                     choice(3, "Solid", self.draft.material == Material::Solid),
                     choice(4, "Glass", self.draft.material == Material::Glass),
@@ -338,21 +343,38 @@ impl Panel {
                 ]
                 .spacing(8),
             ]
-            .spacing(8);
+            .spacing(6);
             let support = if opaque {
-                "Solid for this session (--opaque)"
+                Some("Solid for this session (--opaque)")
             } else if self.draft.material == Material::Glass && !glass {
-                "Glass uses a solid surface when blur or transparency is unavailable"
+                Some("Glass uses a solid surface when blur or transparency is unavailable")
             } else if self.draft.mode == Mode::System && system.is_none() {
-                "No system color preference · using Dark"
+                Some("No system color preference · using Dark")
             } else {
-                "Preview changes immediately · Save to keep them"
+                None
             };
-            content = content.push(
-                text(support).size(11).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
-            );
+            if let Some(support) = support {
+                surface = surface.push(
+                    text(support)
+                        .size(11)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                );
+            }
+            let mut content = column![
+                column![
+                    label("Color mode"),
+                    row![
+                        choice(0, "System", self.draft.mode == Mode::System),
+                        choice(1, "Light", self.draft.mode == Mode::Light),
+                        choice(2, "Dark", self.draft.mode == Mode::Dark)
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(6),
+                surface,
+            ]
+            .spacing(16);
             for dark in [false, true] {
-                content = content.push(text(if dark { "Dark theme" } else { "Light theme" }).size(12));
                 let mut cards = row![].spacing(8);
                 for (i, (palette, name)) in PALETTES.iter().enumerate() {
                     let index = if dark { 8 + i } else { 5 + i };
@@ -369,7 +391,8 @@ impl Panel {
                         .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
                     cards = cards.push(if enabled { b.on_press(Event::Choose(index)) } else { b });
                 }
-                content = content.push(cards);
+                content =
+                    content.push(column![label(if dark { "Dark theme" } else { "Light theme" }), cards].spacing(6));
             }
             content
         };
@@ -389,14 +412,8 @@ impl Panel {
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() {
-                    "Unsaved changes"
-                } else if self.tab == Tab::Layout {
-                    "Layout"
-                } else {
-                    "Appearance"
-                })
-                .size(12),
+                text(if self.dirty() { "Unsaved changes" } else { "Preview changes immediately · Save to keep them" })
+                    .size(11),
                 space::horizontal(),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
@@ -458,8 +475,10 @@ fn choice_style(theme: &Theme, status: button::Status, selected: bool, focused: 
         })),
         text_color: palette::TEXT.resolve(theme),
         border: Border {
-            color: if focused || status == button::Status::Hovered {
+            color: if focused {
                 palette::ACCENT.resolve(theme)
+            } else if status == button::Status::Hovered {
+                Color { a: 0.32, ..palette::TEXT.resolve(theme) }
             } else {
                 palette::BORDER.resolve(theme)
             },

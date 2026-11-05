@@ -49,8 +49,8 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
-with the tiny-skia renderer and synthetic data. The refreshed folder, application
-chooser and text-preview images use the same setup. These captures do not extend
+with the tiny-skia renderer and synthetic data. The refreshed search, folder
+browser, application chooser and text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
@@ -59,7 +59,9 @@ Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
 show search, selection and secondary text with the same semantic colors as the
 launcher, including its accent selection bar. A check on the right marks the
 selected choice without shifting its name; an accent outline marks keyboard
-focus. Up/Down or Tab/Shift+Tab move
+focus, while pointer hover uses a neutral border. Section labels and spacing
+group related choices; the footer explains live preview and saving unless
+unsaved changes need attention. Up/Down or Tab/Shift+Tab move
 between choices, and Enter selects one.
 Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
 or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
@@ -87,8 +89,8 @@ position = "upper"   # upper, centered
 ![Compact layout settings](assets/launcher-layout.png)
 
 [Centered layout](assets/launcher-layout-centered.png). Native Compact layout
-captures from the same isolated KWin setup: upper on 1280×800 and centered on
-1440×960, both at an observed 1× scale.
+captures from the same isolated KWin setup: upper and centered on 1280×800,
+both at an observed 1× scale.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview
@@ -208,11 +210,13 @@ to another command.
 
 ## Results
 
-Numbered shortcuts use the same keycaps as the footer, action menu and
-application chooser. Result types appear as plain secondary labels.
+Numbered shortcuts stay visible on every result and application choice. The
+selected row keeps its keycap; other rows use quieter text with the same spacing.
+Footer and action-menu shortcuts keep their keycaps. Result types appear as plain secondary labels.
 Names and paths shorten to fit the available column, including beside the text
 preview. File names keep both ends so their extension remains visible; application
-names shorten at the end. The preview and file details retain the full location.
+names, application descriptions and calculator expressions shorten at the end.
+Paths keep both ends. The preview and file details retain the full location.
 
 - **Applications** come from `.desktop` files in `$XDG_DATA_HOME` and
   `$XDG_DATA_DIRS`, parsed by the launcher itself (Desktop Entry
@@ -434,14 +438,18 @@ launcher and daemon versions are required.
 
 ![Application chooser](assets/launcher-open-with.png)
 
-Rendered at 640×480 in a private virtual KWin session with synthetic document
-handlers. Long names leave room for the numbered shortcuts after scrolling.
+Native Compact capture in a private virtual KWin 6.3.6 session at 1× with
+synthetic document handlers and the tiny-skia renderer. Long names leave room
+for numbered shortcuts. This presentation check does not extend the desktop
+validation matrix below.
 
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
 Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
 or a click. Typing filters application names and desktop IDs; the ID beneath
 its name helps distinguish similarly named apps. Page Up/Down, Ctrl+Home/End
 and the mouse wheel navigate longer lists.
+The footer shows the visible application range or current loading/opening/error
+status on the left, with Enter and the contextual Esc action on the right.
 
 The chooser stays bound to the original file while results finish loading.
 Esc clears a nonempty application filter; Esc again returns to the same search

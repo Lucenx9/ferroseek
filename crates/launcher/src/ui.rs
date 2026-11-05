@@ -2084,7 +2084,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         };
         body =
             body.push(container(results).height(ROW_HEIGHT * s.cursor.visible as f32 + PAD).padding([PAD / 2.0, 0.0]));
-        body = body.push(divider());
+        body = body.push(space().height(1));
     }
     body = body.push(footer(s));
 
@@ -2360,7 +2360,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         let mut labels = column![text(title).size(15).wrapping(text::Wrapping::None)].spacing(1);
         if !item.subtitle.is_empty() {
             labels = labels.push(
-                text(label_for_width(&item.subtitle, size.width, 12.0, true))
+                text(label_for_width(&item.subtitle, size.width, 12.0, matches!(item.target, Target::File(_))))
                     .size(12)
                     .style(move |theme: &iced::Theme| iced::widget::text::Style {
                         color: Some(palette::DIM.resolve(theme)),
@@ -2382,7 +2382,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     }
     let mut content = content.push(tag);
     if s.panel.is_none() {
-        content = content.push(numbered_hint(slot));
+        content = content.push(numbered_hint(slot, selected));
     }
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
     // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
@@ -2501,17 +2501,21 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
     )
     .height(FOOTER_HEIGHT)
     .align_y(Vertical::Center)
-    .style(|theme| container::Style {
+    .style(footer_style)
+    .into()
+}
+
+pub(crate) fn footer_style(theme: &Theme) -> container::Style {
+    container::Style {
         background: Some(Background::Color(palette::FAINT.resolve(theme))),
         border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
-    })
-    .into()
+    }
 }
 
 pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     row![
-        keycap(key),
+        keycap(key, true),
         text(label)
             .size(12)
             .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
@@ -2521,24 +2525,25 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     .into()
 }
 
-fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>) -> Element<'a, M> {
-    container(
-        text(key)
-            .size(11)
-            .wrapping(text::Wrapping::None)
-            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::TEXT.resolve(theme)) }),
-    )
+fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>, prominent: bool) -> Element<'a, M> {
+    container(text(key).size(11).wrapping(text::Wrapping::None).style(move |theme: &iced::Theme| {
+        iced::widget::text::Style { color: Some(if prominent { palette::TEXT } else { palette::DIM }.resolve(theme)) }
+    }))
     .padding([1, 6])
-    .style(|theme| container::Style {
-        background: Some(Background::Color(palette::FAINT.resolve(theme))),
-        border: Border { radius: 4.0.into(), color: palette::BORDER.resolve(theme), width: 1.0 },
+    .style(move |theme| container::Style {
+        background: prominent.then_some(Background::Color(palette::FAINT.resolve(theme))),
+        border: Border {
+            radius: 4.0.into(),
+            color: if prominent { palette::BORDER.resolve(theme) } else { Color::TRANSPARENT },
+            width: 1.0,
+        },
         ..Default::default()
     })
     .into()
 }
 
-pub(crate) fn numbered_hint<M: 'static>(slot: usize) -> Element<'static, M> {
-    if slot < model::NUMBERED_SLOTS { keycap(format!("Ctrl+{}", slot + 1)) } else { space().into() }
+pub(crate) fn numbered_hint<M: 'static>(slot: usize, selected: bool) -> Element<'static, M> {
+    if slot < model::NUMBERED_SLOTS { keycap(format!("Ctrl+{}", slot + 1), selected) } else { space().into() }
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
@@ -2575,7 +2580,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 text(a.shortcut()).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                     color: Some(palette::DIM.resolve(theme)),
                 }),
-                numbered_hint(slot),
+                numbered_hint(slot, true),
             ]
             .spacing(10)
             .align_y(Vertical::Center)
@@ -5718,7 +5723,7 @@ mod tests {
     }
 
     #[test]
-    fn narrow_result_labels_fit_without_losing_the_file_extension() {
+    fn narrow_result_labels_fit_and_keep_distinguishing_text() {
         use iced::advanced::{Layout, layout, text::Paragraph, widget::Operation, widget::Tree};
         use iced::{Rectangle, Size};
 
@@ -5737,36 +5742,51 @@ mod tests {
         let mut file = file_hits().remove(0);
         file.name = "Quarterly report 2026 with reviewed figures and final recommendations.md".into();
         file.subtext = "~/Corpus/Documents/Department/Annual planning/Reports 2026".into();
-        state.items = model::build_items(&[], &[], &[file]);
+        state.apps[0].comment = Some("Create and protect your documents with the synthetic report viewer".into());
+        state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &[file]);
+        state.items.push(model::calc_item("1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12").unwrap());
         let renderer =
             iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
         for width in [280.0, 320.0, 384.0, 704.0] {
-            let mut element = result_row(&state, 0, 0);
-            let widget = element.as_widget_mut();
-            let mut tree = Tree::new(&*widget);
-            let node =
-                widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, Size::new(width, ROW_HEIGHT)));
-            let mut labels = Labels::default();
-            widget.operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
-            assert!(labels.0.len() >= 2);
-            for ((value, bounds), size) in labels.0.iter().take(2).zip([15.0, 12.0]) {
-                let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
-                    iced::advanced::text::Text {
-                        content: value,
-                        bounds: Size::INFINITE,
-                        size: iced::Pixels(size),
-                        line_height: Default::default(),
-                        font: iced::Font::DEFAULT,
-                        align_x: Default::default(),
-                        align_y: Vertical::Top,
-                        shaping: Default::default(),
-                        wrapping: text::Wrapping::None,
-                    },
-                );
-                assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at list width {width}");
+            for i in 0..state.items.len() {
+                let mut element = result_row(&state, i, i);
+                let widget = element.as_widget_mut();
+                let mut tree = Tree::new(&*widget);
+                let node =
+                    widget.layout(&mut tree, &renderer, &layout::Limits::new(Size::ZERO, Size::new(width, ROW_HEIGHT)));
+                let mut labels = Labels::default();
+                widget.operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+                assert!(labels.0.len() >= 2);
+                for ((value, bounds), size) in labels.0.iter().take(2).zip([15.0, 12.0]) {
+                    let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
+                        iced::advanced::text::Text {
+                            content: value,
+                            bounds: Size::INFINITE,
+                            size: iced::Pixels(size),
+                            line_height: Default::default(),
+                            font: iced::Font::DEFAULT,
+                            align_x: Default::default(),
+                            align_y: Vertical::Top,
+                            shaping: Default::default(),
+                            wrapping: text::Wrapping::None,
+                        },
+                    );
+                    assert!(paragraph.min_width() <= bounds.width + 0.5, "{value:?} is clipped at list width {width}");
+                }
+                if matches!(state.items[i].target, Target::File(_)) {
+                    assert!(labels.0[0].0.ends_with(".md"), "the extension distinguishes similar files");
+                    assert!(labels.0[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
+                } else {
+                    let subtitle = &labels.0[1].0;
+                    if subtitle != &state.items[i].subtitle {
+                        assert!(
+                            subtitle.ends_with('…'),
+                            "descriptions and expressions must truncate at the end: {subtitle}"
+                        );
+                        assert!(state.items[i].subtitle.starts_with(subtitle.trim_end_matches('…')));
+                    }
+                }
             }
-            assert!(labels.0[0].0.ends_with(".md"), "the extension distinguishes similar files");
-            assert!(labels.0[1].0.ends_with("2026"), "keep the distinguishing end of the parent path");
         }
     }
 
