@@ -16,19 +16,22 @@ pub fn capture<'a, R: iced::advanced::Renderer + 'a>(
     content: Element<'a, Message, Theme, R>,
     epoch: u64,
     focus: Option<iced::widget::Id>,
+    context: Option<iced::widget::Id>,
 ) -> Element<'a, Message, Theme, R> {
-    Element::new(Input { content, epoch, focus })
+    Element::new(Input { content, epoch, focus, context })
 }
 
 struct Input<'a, R> {
     content: Element<'a, Message, Theme, R>,
     epoch: u64,
     focus: Option<iced::widget::Id>,
+    context: Option<iced::widget::Id>,
 }
 
 struct State {
     epoch: u64,
     focus: Option<iced::widget::Id>,
+    context: Option<iced::widget::Id>,
     needs_focus: bool,
     window_focused: bool,
     blocked: bool,
@@ -83,6 +86,7 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
         tree::State::new(State {
             epoch: self.epoch,
             focus: self.focus.clone(),
+            context: self.context.clone(),
             needs_focus: true,
             window_focused: true,
             blocked: false,
@@ -95,6 +99,12 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
     }
 
     fn diff(&self, tree: &mut Tree) {
+        let state = tree.state.downcast_mut::<State>();
+        if state.context != self.context {
+            // A held button must not transfer its press to a different view.
+            state.context = self.context.clone();
+            tree.children = vec![Tree::new(&self.content)];
+        }
         tree.diff_children(&[&self.content]);
         let state = tree.state.downcast_mut::<State>();
         if state.epoch != self.epoch {
