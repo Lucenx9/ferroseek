@@ -96,7 +96,7 @@ impl Panel {
     }
 
     pub fn view(&self) -> Element<'_, Event> {
-        let mut refresh = button(ui::hint("Ctrl+R", "Refresh")).style(ui::status_button_style);
+        let mut refresh = button(ui::hint("Ctrl+R", "Refresh")).padding([6, 8]).style(ui::status_button_style);
         if !matches!(self.state, State::Loading) {
             refresh = refresh.on_press(Event::Refresh);
         }
@@ -112,14 +112,9 @@ impl Panel {
         let mut body = column![
             field("Name", &self.file.name),
             column![
-                row![
-                    text(if url { "File URL" } else { "Location" }).size(12).style(move |theme: &iced::Theme| {
-                        iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-                    }),
-                    space::horizontal(),
-                    button(text(copy).size(12)).on_press(Event::CopyLocation).style(ui::status_button_style)
-                ]
-                .align_y(Vertical::Center),
+                text(if url { "File URL" } else { "Location" }).size(12).style(move |theme: &iced::Theme| {
+                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                }),
                 text(location).size(15).wrapping(text::Wrapping::WordOrGlyph)
             ]
             .spacing(4),
@@ -150,7 +145,14 @@ impl Panel {
                 body = body.push(field("Modified", &modified));
             }
         }
-        let mut footer = row![ui::hint("Esc", "Back to search"), space::horizontal()].align_y(Vertical::Center);
+        let mut footer = row![
+            button(ui::hint("Esc", "Back to search"))
+                .on_press(Event::Back)
+                .padding([4, 0])
+                .style(ui::status_button_style),
+            space::horizontal()
+        ]
+        .align_y(Vertical::Center);
         if let Some(notice) = self.notice {
             footer = footer
                 .push(text(notice).size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
@@ -158,15 +160,19 @@ impl Panel {
                 }))
                 .push(space::horizontal());
         }
-        footer = footer.push(ui::hint("Ctrl+Shift+C", copy));
-        container(
-            column![
-                container(header).padding([8, 16]),
-                scrollable(container(body).padding([12, 16])).id(scroll_id()).height(Length::Fill),
-                container(footer).padding([0, 10]).height(34).center_y(34),
-            ]
-            .spacing(3),
-        )
+        footer = footer.push(
+            button(ui::hint("Ctrl+Shift+C", copy))
+                .on_press(Event::CopyLocation)
+                .padding([4, 8])
+                .style(ui::status_button_style),
+        );
+        container(column![
+            ui::page_header(header),
+            ui::divider(),
+            scrollable(container(body).padding([12, 16])).id(scroll_id()).height(Length::Fill),
+            ui::divider(),
+            container(footer).padding(iced::padding::left(16).right(8)).height(34).center_y(34).style(ui::footer_style),
+        ])
         .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)

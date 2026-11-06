@@ -375,7 +375,7 @@ impl Panel {
                         .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
                 );
             }
-            let mut content = column![mode, surface].spacing(16);
+            let mut content = column![mode, surface].spacing(12);
             for dark in [false, true] {
                 let mut cards = row![].spacing(8);
                 for (i, (palette, name)) in PALETTES.iter().enumerate() {
@@ -398,27 +398,38 @@ impl Panel {
             }
             content
         };
-        let save = button(ui::hint("Ctrl+S", "Save"))
-            .style(move |theme, status| choice_style(theme, status, false, self.cursor.selected == self.save_index()));
-        let back = button(ui::hint("Esc", "Back")).style(move |theme, status| {
-            choice_style(theme, status, false, self.cursor.selected == self.save_index() + 1)
-        });
+        let command_style = |focused| {
+            move |theme: &Theme, status| button::Style {
+                border: Border {
+                    color: if focused { palette::ACCENT.resolve(theme) } else { Color::TRANSPARENT },
+                    width: 1.0,
+                    radius: 5.0.into(),
+                },
+                ..ui::status_button_style(theme, status)
+            }
+        };
+        let save = button(ui::primary_hint("Ctrl+S", "Save"))
+            .padding([4, 8])
+            .style(command_style(self.cursor.selected == self.save_index()));
+        let back = button(ui::hint("Esc", "Back to search"))
+            .padding([4, 8])
+            .style(command_style(self.cursor.selected == self.save_index() + 1));
         let footer = if self.confirm {
             row![
                 text("Discard changes?").size(13),
                 space::horizontal(),
-                button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep),
-                button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard)
+                button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep).style(ui::status_button_style),
+                button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard).style(ui::status_button_style)
             ]
             .spacing(12)
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() { "Unsaved changes" } else { "Preview changes immediately · Save to keep them" })
-                    .size(11)
-                    .style(move |theme: &Theme| text::Style {
+                text(if self.dirty() { "Unsaved changes" } else { "Changes preview immediately" }).size(11).style(
+                    move |theme: &Theme| text::Style {
                         color: Some(if self.dirty() { palette::TEXT } else { palette::DIM }.resolve(theme)),
-                    }),
+                    }
+                ),
                 space::horizontal(),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
@@ -429,31 +440,42 @@ impl Panel {
         let notice: Element<'_, Event> = if self.notice.is_empty() {
             space().height(0).into()
         } else {
-            container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 24]).into()
+            container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 16]).into()
         };
         container(column![
-            row![
-                text("Appearance").size(20),
-                button(text("Colors").size(12))
-                    .on_press(Event::Tab(Tab::Colors))
-                    .padding([6, 8])
-                    .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors)),
-                button(text("Layout").size(12))
-                    .on_press(Event::Tab(Tab::Layout))
-                    .padding([6, 8])
-                    .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout)),
-                space::horizontal(),
-                button(ui::hint("Ctrl+R", "Reload")).on_press(Event::Reload).style(ui::status_button_style)
-            ]
-            .spacing(8)
-            .padding([8, 24])
-            .align_y(iced::Center),
+            ui::page_header(
+                row![
+                    text("Appearance").size(20),
+                    button(text("Colors").size(12))
+                        .on_press(Event::Tab(Tab::Colors))
+                        .padding([6, 8])
+                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors)),
+                    button(text("Layout").size(12))
+                        .on_press(Event::Tab(Tab::Layout))
+                        .padding([6, 8])
+                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout)),
+                    space::horizontal(),
+                    button(ui::hint("Ctrl+R", "Reload"))
+                        .padding([6, 8])
+                        .on_press(Event::Reload)
+                        .style(ui::status_button_style)
+                ]
+                .spacing(8)
+                .align_y(iced::Center)
+            ),
             ui::divider(),
             notice,
-            scrollable(content.padding([12, 24])).id(iced::widget::Id::new("appearance-scroll")).height(Length::Fill),
+            scrollable(content.padding(iced::padding::top(12).bottom(8).left(16).right(16)))
+                .id(iced::widget::Id::new("appearance-scroll"))
+                .height(Length::Fill),
             ui::divider(),
-            container(footer).padding([8, 24])
+            container(footer)
+                .height(crate::layout::FOOTER_HEIGHT)
+                .padding(iced::padding::left(16).right(8))
+                .align_y(iced::Center)
+                .style(ui::footer_style)
         ])
+        .padding(crate::layout::PAD)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(ui::surface_style)

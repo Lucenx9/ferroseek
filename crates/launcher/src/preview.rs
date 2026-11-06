@@ -111,7 +111,16 @@ impl Panel {
         .spacing(6)
         .align_y(Vertical::Center);
         let (location, url) = self.location();
-        let display = if url { location.to_owned() } else { model::home_relative(location) };
+        let display = if url {
+            location.to_owned()
+        } else {
+            self.file
+                .path
+                .as_deref()
+                .and_then(|path| path.parent())
+                .and_then(|path| path.to_str())
+                .map_or_else(|| model::home_relative(location), model::home_relative)
+        };
         let copy = if url { "Copy file URL" } else { "Copy path" };
         let identity = column![
             text(ui::ellipsize_middle(&self.file.name, 65)).size(15),
@@ -165,7 +174,7 @@ impl Panel {
                 }
             }
         }
-        let mut notes = row![].spacing(12).align_y(Vertical::Center);
+        let mut notes = row![ui::hint("Alt+PgUp/PgDn", "Scroll text")].spacing(12).align_y(Vertical::Center);
         if let Some(notice) = self.notice {
             notes = notes.push(text(notice).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::ACCENT.resolve(theme)),
@@ -181,7 +190,7 @@ impl Panel {
                     color: Some(palette::DIM.resolve(theme)),
                 }),
                 space::horizontal(),
-                button(text(copy).size(11)).on_press(Event::CopyLocation).style(ui::status_button_style)
+                button(ui::hint("Ctrl+Shift+C", copy)).on_press(Event::CopyLocation).style(ui::status_button_style)
             ]
             .align_y(Vertical::Center)
         ]
@@ -216,8 +225,7 @@ impl Panel {
                 .height(Length::Fill),
             notes,
             ui::divider(),
-            metadata,
-            container(ui::hint("Alt+PgUp/PgDn", "Scroll")).width(Length::Fill).clip(true)
+            metadata
         ]
         .spacing(8)
         .padding([8, 16])

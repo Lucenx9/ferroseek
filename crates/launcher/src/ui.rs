@@ -1965,40 +1965,30 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let input = text_input(placeholder, &s.query)
         .id(search_id())
         .on_input(move |query| Message::ContextQuery { generation: scope_generation, query })
-        .size(if s.search_folder.is_some() { 16 } else { 20 })
-        .padding(if s.search_folder.is_some() { [3, 8] } else { [14, 8] })
-        .style(|theme, _| text_input::Style {
-            background: Background::Color(Color::TRANSPARENT),
-            border: Border::default(),
-            icon: palette::DIM.resolve(theme),
-            placeholder: palette::DIM.resolve(theme),
-            value: palette::TEXT.resolve(theme),
-            selection: palette::SELECTED.resolve(theme),
-        });
+        .size(if s.search_folder.is_some() { 15 } else { 20 })
+        .padding([4, 8])
+        .style(field_style);
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
         let selected = s.scope == scope;
         choices.push(
-            button(text(scope.to_string()).size(11))
+            button(text(scope.to_string()).size(12))
                 .on_press(Message::Scope(scope))
-                .padding([6, 8])
+                .padding([4, 8])
                 .style(move |theme, status| tab_style(theme, status, selected)),
         )
     });
-    let index_status = button(text("Index status").size(11))
+    let index_status = button(text("Search status").size(12))
         .on_press(Message::ShowSearchStatus)
-        .padding([6, 8])
+        .padding([4, 8])
         .style(status_button_style);
-    let folders =
-        button(text("Folders").size(11)).on_press(Message::ShowFolders).padding([6, 8]).style(status_button_style);
-    let appearance = button(text("Appearance").size(11))
+    let folders = button(text("Search folders").size(12))
+        .on_press(Message::ShowFolders)
+        .padding([4, 8])
+        .style(status_button_style);
+    let appearance = button(text("Appearance").size(12))
         .on_press(Message::ShowAppearance)
-        .padding([6, 8])
+        .padding([4, 8])
         .style(status_button_style);
-    // A hairline separates result filters from navigation to other screens.
-    let separator = container(space()).width(1).height(16).style(|theme| container::Style {
-        background: Some(Background::Color(palette::BORDER.resolve(theme))),
-        ..Default::default()
-    });
     let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
@@ -2006,8 +1996,8 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         let display = path.map_or_else(|| folder.id.clone(), model::home_relative);
         let location = widget::responsive(move |size| {
             widget::tooltip(
-                text(label_for_width(&display, size.width, 11.0, true))
-                    .size(11)
+                text(label_for_width(&display, size.width, 12.0, true))
+                    .size(12)
                     .style(move |theme: &iced::Theme| iced::widget::text::Style {
                         color: Some(palette::DIM.resolve(theme)),
                     })
@@ -2034,19 +2024,11 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
+        let navigation = row![index_status, folders, appearance].spacing(2).align_y(Vertical::Center);
         if header_extra > 0 {
-            column![
-                input,
-                row![scopes, space::horizontal(), index_status, folders, appearance]
-                    .spacing(4)
-                    .align_y(Vertical::Center)
-            ]
-            .into()
+            column![input, row![scopes, space::horizontal()], row![space::horizontal(), navigation]].spacing(6).into()
         } else {
-            row![input, scopes, separator, index_status, folders, appearance]
-                .spacing(4)
-                .align_y(Vertical::Center)
-                .into()
+            column![input, row![scopes, space::horizontal(), navigation].align_y(Vertical::Center)].spacing(6).into()
         }
     };
     let header = container(header).padding([0, 8]).height(INPUT_HEIGHT + header_extra as f32).align_y(Vertical::Center);
@@ -2081,8 +2063,15 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         } else {
             results(s)
         };
-        body =
-            body.push(container(results).height(ROW_HEIGHT * s.cursor.visible as f32 + PAD).padding([PAD / 2.0, 0.0]));
+        body = body.push(
+            container(results).height(ROW_HEIGHT * s.cursor.visible as f32 + PAD).padding([PAD / 2.0, 0.0]).style(
+                |theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color { a: 0.025, ..theme.palette().text })),
+                    border: Border { radius: 9.0.into(), ..Default::default() },
+                    ..Default::default()
+                },
+            ),
+        );
         body = body.push(space().height(1));
     }
     body = body.push(footer(s));
@@ -2111,6 +2100,10 @@ pub(crate) fn surface_style(theme: &Theme) -> container::Style {
         text_color: Some(palette::TEXT.resolve(theme)),
         ..Default::default()
     }
+}
+
+pub(crate) fn page_header<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
+    container(content).height(INPUT_HEIGHT).padding(padding::left(16).right(8)).align_y(Vertical::Center).into()
 }
 
 pub(crate) fn divider<'a, M: 'a>() -> Element<'a, M> {
@@ -2212,10 +2205,7 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
         refresh = refresh.on_press(Message::RefreshSearchStatus);
     }
     let header =
-        container(row![text("File search status").size(20), space::horizontal(), refresh].align_y(Vertical::Center))
-            .height(INPUT_HEIGHT)
-            .padding(padding::left(16).right(PAD))
-            .align_y(Vertical::Center);
+        page_header(row![text("Search status").size(20), space::horizontal(), refresh].align_y(Vertical::Center));
     let mut content = column![].spacing(12).padding(16);
     match status {
         SearchStatusPanel::Loading => {
@@ -2268,7 +2258,8 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
                 content = content.push(text("No indexed locations yet. Check the indexing configuration; locations may also be unavailable while the first scan starts.").size(13).style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)), }));
             } else {
                 for root in &info.roots {
-                    content = content.push(text(root).size(13).wrapping(text::Wrapping::WordOrGlyph));
+                    content =
+                        content.push(text(model::home_relative(root)).size(13).wrapping(text::Wrapping::WordOrGlyph));
                 }
             }
         }
@@ -2289,7 +2280,8 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     )
     .height(FOOTER_HEIGHT)
     .padding(padding::left(16).right(PAD))
-    .align_y(Vertical::Center);
+    .align_y(Vertical::Center)
+    .style(footer_style);
     container(column![header, divider(), detail, divider(), footer])
         .padding(PAD)
         .width(Length::Fill)
@@ -2342,7 +2334,7 @@ fn results(s: &Launcher) -> Element<'_, Message> {
             empty = empty.push(
                 container(
                     row![
-                        button(text("Check file search status").size(13))
+                        button(text("Check search status").size(13))
                             .on_press(Message::ShowSearchStatus)
                             .style(recovery_button_style),
                         button(text("Choose folders").size(13))
@@ -2383,9 +2375,17 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     let labels = widget::responsive(move |size| {
         let title = label_for_width(&item.title, size.width, 15.0, matches!(item.target, Target::File(_)));
         let mut labels = column![text(title).size(15).wrapping(text::Wrapping::None)].spacing(1);
-        if !item.subtitle.is_empty() {
+        let subtitle = match (&s.search_folder, &item.target) {
+            (Some(folder), Target::File(file)) => folder
+                .path
+                .as_ref()
+                .and_then(|parent| file.path.as_ref()?.parent()?.strip_prefix(parent).ok()?.to_str())
+                .unwrap_or(&item.subtitle),
+            _ => &item.subtitle,
+        };
+        if !subtitle.is_empty() {
             labels = labels.push(
-                text(label_for_width(&item.subtitle, size.width, 12.0, matches!(item.target, Target::File(_))))
+                text(label_for_width(subtitle, size.width, 12.0, matches!(item.target, Target::File(_))))
                     .size(12)
                     .style(move |theme: &iced::Theme| iced::widget::text::Style {
                         color: Some(palette::DIM.resolve(theme)),
@@ -2726,13 +2726,50 @@ pub fn ellipsize_middle(s: &str, max: usize) -> String {
     if n <= max || max < 3 {
         return s.to_string();
     }
+    if max >= 5
+        && let Some((_, name)) = s.rsplit_once('/')
+        && !name.is_empty()
+    {
+        let name_len = name.chars().count();
+        if name_len > max - 3 {
+            return format!("…/{}", ellipsize_middle(name, max - 2));
+        }
+        let budget = max - name_len - 2;
+        let prefix: String = s.chars().take(budget).collect();
+        let boundary = prefix.rfind('/').map_or(prefix.as_str(), |i| &prefix[..i + 1]);
+        let path = format!("{boundary}…/{name}");
+        if path.chars().count() * 4 >= max * 3 {
+            return path;
+        }
+        // Long directory components still need enough text to distinguish siblings.
+        let prefix = prefix
+            .rfind(' ')
+            .filter(|&i| prefix[..i].chars().count() * 4 >= budget * 3)
+            .map_or(prefix.as_str(), |i| &prefix[..i]);
+        return format!("{}…/{name}", prefix.trim_end());
+    }
+    let chars: Vec<_> = s.chars().collect();
     let keep = max - 1;
-    let head = keep / 2;
-    let tail = keep - head;
-    let mut out: String = s.chars().take(head).collect();
-    out.push('…');
-    out.extend(s.chars().skip(n - tail));
-    out
+    let mut tail = keep - keep * 2 / 3;
+    let end_start = n - tail;
+    if !chars[end_start - 1].is_whitespace()
+        && !chars[end_start].is_whitespace()
+        && let Some(space) = chars[..end_start].iter().rposition(|c| c.is_whitespace())
+    {
+        let whole_words = n - space - 1;
+        if whole_words <= keep * 2 / 3 {
+            tail = whole_words;
+        }
+    }
+    let head = keep - tail;
+    let start: String = chars[..head].iter().collect();
+    let end: String = chars[n - tail..].iter().collect();
+    let start = if !chars[head].is_whitespace() {
+        start.rfind(' ').filter(|&i| start[..i].chars().count() >= 3).map_or(start.as_str(), |i| &start[..i])
+    } else {
+        &start
+    };
+    format!("{}…{}", start.trim_end(), end.trim_start())
 }
 
 #[cfg(test)]
@@ -3103,8 +3140,10 @@ mod tests {
             );
             let _ = update(&mut state, Message::Appearance { generation, event: appearance::Event::Tab(tab) });
             let mut cache = iced_runtime::user_interface::Cache::default();
-            // The first choice in either tab occupies this point.
-            let cursor = mouse::Cursor::Available(iced::Point::new(100.0, 90.0));
+            let labels = rendered_labels(view_content(&state), iced::Size::new(WIDTH as f32, full_height() as f32));
+            let first = if tab == appearance::Tab::Colors { "System" } else { "Compact · 640" };
+            let (_, bounds) = labels.text.iter().find(|(value, _)| value == first).unwrap();
+            let cursor = mouse::Cursor::Available(bounds.center());
             let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
             let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
             widget_batch_at(&mut state, &mut cache, std::slice::from_ref(&press), false, cursor);
@@ -4610,33 +4649,46 @@ mod tests {
                 ],
             )
         };
-        let messages = click(&s, 500.0, 35.0);
+        let control = |s: &Launcher, name: &str| {
+            let width = if s.preview_visible() { PREVIEW_WIDTH } else { WIDTH };
+            let labels = rendered_labels(view_content(s), iced::Size::new(width as f32, full_height() as f32));
+            let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
+            click(s, bounds.center_x(), bounds.center_y())
+        };
+        let messages = control(&s, "Preview text");
         assert!(matches!(&messages[..], [Message::Details { event: details::Event::Preview, .. }]));
         for message in messages {
             let _ = update(&mut s, message);
         }
         assert!(s.preview_visible());
-        assert!(click(&s, 810.0, 90.0).is_empty(), "refresh is disabled while loading");
+        assert!(control(&s, "Refresh").is_empty(), "refresh is disabled while loading");
         let initial = s.preview_generation;
         let _ = update(&mut s, Message::PreviewLoaded { generation: initial, result: preview_data("synthetic text") });
-        let messages = click(&s, 920.0, 350.0);
+        let messages = control(&s, "Copy path");
         assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::CopyLocation, .. }]));
         for message in messages {
             let _ = update(&mut s, message);
         }
-        let messages = click(&s, 810.0, 90.0);
+        let messages = control(&s, "Refresh");
         assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Refresh, .. }]));
         for message in messages {
             let _ = update(&mut s, message);
         }
         assert!(s.preview_generation > initial);
         let pending = s.preview_request.clone().unwrap();
-        let messages = click(&s, 920.0, 90.0);
+        let messages = control(&s, "Hide");
         assert!(matches!(&messages[..], [Message::Preview { event: preview::Event::Back, .. }]));
         for message in messages {
             let _ = update(&mut s, message);
         }
         assert!(!s.preview_enabled && !pending.is_active());
+        let _ = s.perform(Action::Details);
+        let messages = control(&s, "Back to search");
+        assert!(matches!(&messages[..], [Message::Details { event: details::Event::Back, .. }]));
+        for message in messages {
+            let _ = update(&mut s, message);
+        }
+        assert!(s.file_details.is_none());
         assert_eq!(s.query, "report");
         assert_eq!(s.scope, Scope::Files);
         assert!(s.opening.is_none());
@@ -5823,7 +5875,7 @@ mod tests {
             file.path = Some(path.clone().into());
             let mut preview = preview::Panel::new(file.clone());
             let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
-            assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+            assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus"));
             assert!(
                 matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == path)
             );
@@ -5854,6 +5906,25 @@ mod tests {
     }
 
     #[test]
+    fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
+        for width in [320, 608, 640, 720, 880] {
+            let mut state = search_state();
+            let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), false, false);
+            state.placement =
+                Some(layout::Geometry { width, header_extra: if width < 512 { 30 } else { 0 }, ..geometry });
+            let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
+            let input = labels.inputs[0];
+            assert_eq!(input.width, width as f32 - 32.0);
+            for name in ["All", "Applications", "Files", "Search status", "Search folders", "Appearance"] {
+                let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
+                assert!(bounds.y >= input.y + input.height, "{name} overlaps the query at {width}px");
+                assert!(bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD, "{name}: {bounds:?}");
+                assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT + state.placement.unwrap().header_extra as f32);
+            }
+        }
+    }
+
+    #[test]
     fn folder_header_keeps_controls_and_input_inside_its_height() {
         use iced::Size;
 
@@ -5868,7 +5939,17 @@ mod tests {
                 assert!(bounds.y >= PAD && bounds.y + bounds.height <= PAD + INPUT_HEIGHT + 0.5, "{bounds:?}");
             }
             // The measured path must not consume the Back/Refresh hit areas.
-            let (_, path) = labels.text.iter().find(|(value, _)| value.starts_with('/')).unwrap();
+            let paths: Vec<_> = labels
+                .text
+                .iter()
+                .filter(|(value, bounds)| {
+                    bounds.y + bounds.height <= input.y
+                        && !matches!(value.as_str(), "Alt+←" | "Back" | "Ctrl+R" | "Refresh")
+                })
+                .collect();
+            assert_eq!(paths.len(), 1, "expected one folder label at {width}px: {:?}", labels.text);
+            let (value, path) = paths[0];
+            assert!(!value.is_empty(), "folder label disappeared at {width}px");
             assert!(path.x >= 90.0 && path.x + path.width < width - 90.0);
         }
     }
@@ -5967,10 +6048,67 @@ mod tests {
     }
 
     #[test]
+    fn secondary_pages_share_title_and_return_action_alignment() {
+        let file = file_hits().remove(0);
+        let status = SearchStatusPanel::Loading;
+        let folders = folders::Panel::new("/synthetic/config.toml".into(), false);
+        let appearance = appearance::Panel::new("/synthetic/config.toml".into(), Preferences::default());
+        let details = details::Panel::new(file.clone());
+        let chooser = open_with::Panel::new(file);
+        for (title, page) in [
+            ("Search status", search_status_view(&status).map(|_| ())),
+            ("Search folders", folders.view().map(|_| ())),
+            ("Appearance", appearance.view(None, true, false).map(|_| ())),
+            ("File details", details.view().map(|_| ())),
+            ("Open with…", chooser.view(false).map(|_| ())),
+        ] {
+            let labels = rendered_labels(page, iced::Size::new(720.0, 515.0)).text;
+            let (_, heading) = labels.iter().find(|(value, _)| value == title).unwrap();
+            assert!((heading.center_y() - 44.0).abs() < 0.5, "{title}: {heading:?}");
+            let (_, back) = labels.iter().find(|(value, _)| value == "Back to search").unwrap();
+            assert!((back.center_y() - 490.0).abs() < 0.5, "{title}: {back:?}");
+        }
+    }
+
+    #[test]
+    fn folder_settings_only_repeat_locations_that_are_actually_shortened() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        let root = "/synthetic/medium-length-project-directory/documents";
+        std::fs::write(&path, format!("roots = ['{root}']\n")).unwrap();
+        let mut panel = folders::Panel::new(path.clone(), false);
+        let _ = panel.update(
+            folders::Event::Loaded { revision: 0, result: ferroseek_config::folders::Document::load(path) },
+            Backend::disconnected(),
+        );
+        let labels = rendered_labels(panel.view(), iced::Size::new(720.0, 515.0)).text;
+        assert_eq!(labels.iter().filter(|(value, _)| value == root).count(), 1);
+        let labels = rendered_labels(panel.view(), iced::Size::new(320.0, 515.0)).text;
+        assert_eq!(
+            labels.iter().filter(|(value, _)| value == root).count(),
+            1,
+            "the complete selected location remains keyboard-accessible"
+        );
+        assert!(labels.iter().any(|(value, _)| value.contains('…')));
+    }
+
+    #[test]
     fn ellipsizing() {
         assert_eq!(ellipsize_end("abcdef", 6), "abcdef");
         assert_eq!(ellipsize_end("abcdefg", 6), "abcde…");
-        assert_eq!(ellipsize_middle("~/a/very/long/path/name", 11), "~/a/v…/name");
+        assert_eq!(ellipsize_middle("~/a/very/long/path/name", 11), "~/a/…/name");
+        assert_eq!(ellipsize_middle("Visual report with final notes.md", 21), "Visual…notes.md");
+        for path in [
+            "~/Projects/averyveryverylongprojectdirectoryname/src",
+            "~/Work/Client deliverables for the second quarter review/final",
+        ] {
+            let shortened = ellipsize_middle(path, 40);
+            assert!(shortened.chars().count() >= 30, "unused path budget: {shortened}");
+        }
+        let name = "Visual report 2026 with reviewed figures and final recommendations.md";
+        assert!(ellipsize_middle(name, 34).ends_with("recommendations.md"));
+        let path = format!("~/Corpus/Documents/Department with a long name/Reports 2026/{name}");
+        assert!(ellipsize_middle(&path, 90).ends_with(name));
         assert_eq!(ellipsize_middle("short", 11), "short");
         assert_eq!(ellipsize_middle("日本語のパス/ファイル", 7).chars().count(), 7);
     }
