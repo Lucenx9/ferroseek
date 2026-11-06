@@ -119,6 +119,11 @@ it is idempotent, and races between the scan and events converge.
   path no longer points at the same inode, the parent directory was moved by
   an event not yet processed. The parent is re-reconciled in a later batch
   instead of deleting data.
+- **Replaced roots.** Reconciliation drops a configured root's indexed tree
+  and watches when its path is a file, symlink or another non-directory.
+  Inaccessible roots retain their cached index so offline disks remain searchable.
+  Restoring a directory at the configured path allows indexing to resume on the
+  next reconciliation.
 - **Lost events and suspend.** Queue overflow and discarded event batches
   trigger a full reconciliation; ordinary startup and periodic checks
   normally use the quicker directory-mtime pass. There is not yet a

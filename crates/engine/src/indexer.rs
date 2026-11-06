@@ -148,7 +148,13 @@ impl Indexer {
                     let id = tx.ensure_root(&root, Meta::from_metadata(&m))?;
                     self.st.work.push((id, mode));
                 }
-                Ok(_) => log::warn!("root {} is not a directory; skipping", root.display()),
+                Ok(_) => {
+                    log::warn!("root {} is not a directory; dropping its index", root.display());
+                    // Watches follow the old inode even when this path becomes a symlink.
+                    if let Some((id, _)) = tx.roots()?.into_iter().find(|(_, path)| path == &root) {
+                        self.st.drop_subtree(&mut tx, id)?;
+                    }
+                }
                 // Possibly an unmounted disk: keep what is indexed.
                 Err(e) => log::warn!("root {} is not accessible ({e}); keeping its index", root.display()),
             }
