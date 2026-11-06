@@ -5939,7 +5939,17 @@ mod tests {
                 assert!(bounds.y >= PAD && bounds.y + bounds.height <= PAD + INPUT_HEIGHT + 0.5, "{bounds:?}");
             }
             // The measured path must not consume the Back/Refresh hit areas.
-            let (_, path) = labels.text.iter().find(|(value, _)| value.ends_with("Reports")).unwrap();
+            let paths: Vec<_> = labels
+                .text
+                .iter()
+                .filter(|(value, bounds)| {
+                    bounds.y + bounds.height <= input.y
+                        && !matches!(value.as_str(), "Alt+←" | "Back" | "Ctrl+R" | "Refresh")
+                })
+                .collect();
+            assert_eq!(paths.len(), 1, "expected one folder label at {width}px: {:?}", labels.text);
+            let (value, path) = paths[0];
+            assert!(!value.is_empty(), "folder label disappeared at {width}px");
             assert!(path.x >= 90.0 && path.x + path.width < width - 90.0);
         }
     }
