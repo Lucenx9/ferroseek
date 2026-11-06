@@ -5939,7 +5939,7 @@ mod tests {
                 assert!(bounds.y >= PAD && bounds.y + bounds.height <= PAD + INPUT_HEIGHT + 0.5, "{bounds:?}");
             }
             // The measured path must not consume the Back/Refresh hit areas.
-            let (_, path) = labels.text.iter().find(|(value, _)| value.starts_with('/')).unwrap();
+            let (_, path) = labels.text.iter().find(|(value, _)| value.ends_with("Reports")).unwrap();
             assert!(path.x >= 90.0 && path.x + path.width < width - 90.0);
         }
     }
