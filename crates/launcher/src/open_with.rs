@@ -104,7 +104,7 @@ impl Panel {
     pub fn loaded(&mut self, result: Result<Vec<ApplicationChoice>, String>, icons: &mut Icons) {
         match result {
             Ok(apps) => {
-                self.icons = apps.iter().map(|app| icons.get(&app.icon, &["application-x-executable"])).collect();
+                self.icons = apps.iter().map(|app| icons.get(&app.icon, &["applications-other"])).collect();
                 self.state = State::Ready(apps);
             }
             Err(error) => {
@@ -186,7 +186,7 @@ impl Panel {
     /// Fit rows after reserving the header, input, footer and feedback headroom.
     /// Error text can wrap.
     pub fn resize(&mut self, height: u32, opening: bool) {
-        let reserved = 200
+        let reserved = 208
             + if self.error.is_some() {
                 100
             } else if opening {
@@ -203,7 +203,7 @@ impl Panel {
     }
 
     pub fn view(&self, opening: bool) -> Element<'_, Event> {
-        let mut reload = button(ui::hint("Ctrl+R", "Reload")).style(ui::status_button_style);
+        let mut reload = button(ui::hint("Ctrl+R", "Refresh")).padding([6, 8]).style(ui::status_button_style);
         if !opening && !matches!(self.state, State::Loading) {
             reload = reload.on_press(Event::Reload);
         }
@@ -247,7 +247,7 @@ impl Panel {
                 body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
                     iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
                 }));
-                body = body.push(text("Use Reload to try again, or Esc to return to search.").size(12).style(
+                body = body.push(text("Use Refresh to try again, or Esc to return to search.").size(12).style(
                     move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
                 ));
             }
@@ -338,6 +338,8 @@ impl Panel {
                 iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
             }));
         }
+        let body = container(body)
+            .padding(iced::padding::left(if self.apps().is_empty() || self.filtered().is_empty() { 16 } else { 0 }));
         let back = button(ui::hint("Esc", if self.query.is_empty() { "Back to search" } else { "Clear filter" }))
             .on_press(Event::Back)
             .style(ui::status_button_style);
@@ -355,7 +357,11 @@ impl Panel {
                     let status = if filtered.is_empty() {
                         "0 applications".into()
                     } else {
-                        format!("{}–{} / {} applications", window.start + 1, window.end, filtered.len())
+                        if window.start == 0 && window.end == filtered.len() {
+                            format!("{} application{}", filtered.len(), if filtered.len() == 1 { "" } else { "s" })
+                        } else {
+                            format!("{}–{} of {} applications", window.start + 1, window.end, filtered.len())
+                        }
                     };
                     (status, palette::DIM)
                 }
@@ -378,10 +384,11 @@ impl Panel {
         .align_y(Vertical::Center);
         container(
             column![
-                container(column![title, container(target).width(Length::Fill).clip(true)].spacing(7))
-                    .padding([10, 16]),
+                ui::page_header(title),
+                ui::divider(),
+                container(target).width(Length::Fill).clip(true).padding([4, 16]),
                 container(input).padding([0, 16]),
-                container(body).padding([10, 0]).height(Length::Fill),
+                container(body).padding([4, 0]).height(Length::Fill),
                 container(footer)
                     .height(crate::layout::FOOTER_HEIGHT)
                     .padding(iced::padding::left(16).right(10))

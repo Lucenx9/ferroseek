@@ -53,7 +53,7 @@ This installs `ferroseek-launcher`, the indexing daemon and the CLI under your
 user account, without sudo. Existing configuration and indexes are preserved;
 installation does not start or restart indexing. On first launch, choose your
 search folders and use **Save & apply** before file search starts. Existing
-configurations are retained; use **Folders** or Ctrl+, to review them.
+configurations are retained; use **Search folders** or Ctrl+, to review them.
 
 ```sh
 ferroseek-launcher

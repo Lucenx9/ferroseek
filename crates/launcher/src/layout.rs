@@ -2,7 +2,7 @@
 //! Logical surface geometry. Saved presets remain independent of output limits.
 use ferroseek_config::appearance::{Position, Preferences};
 pub const ROW_HEIGHT: f32 = 48.0;
-pub const INPUT_HEIGHT: f32 = 58.0;
+pub const INPUT_HEIGHT: f32 = 72.0;
 pub const FOOTER_HEIGHT: f32 = 34.0;
 pub const PAD: f32 = 8.0;
 const EDGE: u32 = 16;
@@ -19,7 +19,7 @@ pub struct Geometry {
 pub fn calculate(preferences: Preferences, bounds: Option<(u32, u32)>, compact: bool, preview: bool) -> Geometry {
     let desired = preferences.width.pixels() + if preview { PREVIEW_EXTRA } else { 0 };
     let width = bounds.map_or(desired, |(w, _)| desired.min(w.saturating_sub(2 * EDGE).max(1)));
-    let header_extra = if width < 640 { 30 } else { 0 };
+    let header_extra = if width < 512 { 30 } else { 0 };
     let base = (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32 + header_extra;
     let available = bounds.map_or(u32::MAX, |(_, h)| h.saturating_sub(2 * EDGE).max(1));
     let rows = ((available.saturating_sub(base + PAD as u32) / (ROW_HEIGHT as u32)) as usize)

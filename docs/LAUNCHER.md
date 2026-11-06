@@ -96,8 +96,9 @@ both at an observed 1× scale.
 or centered placement. The default remains Standard and Upper. The side preview
 adds 260 logical pixels when space permits. Width is capped to the entered
 output minus 16 pixels on each side; short outputs show fewer result/action rows
-and the header wraps below 640 pixels. Upper placement stays stable as results
-expand; centering follows the current surface height. **Restore default layout**
+and the header uses a third row below 512 pixels. The search field has its own
+full-width row and the same focus outline as the other editable fields. Upper
+placement stays stable as results expand; centering follows the current surface height. **Restore default layout**
 previews Standard and Upper without changing themes or material. Save keeps the
 reset; Back and discard restore the last saved settings.
 
@@ -163,7 +164,7 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 **Copy path** and Ctrl+Shift+C copy a lossless file URL when the selected file
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
-Choose **All**, **Applications** or **Files** beside the search field to narrow
+Choose **All**, **Applications** or **Files** below the search field to narrow
 results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
 cycles backward. The choice lasts for this launcher session. Applications mode
 makes no file-search requests; Files shows indexed files and recent file
@@ -219,9 +220,12 @@ that space. Paths and numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
 preview. File names keep both ends so their extension remains visible; application
 names, application descriptions and calculator expressions shorten at the end.
-Paths keep both ends. Result paths, folder headers, the application chooser and
-the preview abbreviate the home directory as `~`. Header and preview path
-tooltips retain the absolute location; copying a path still uses the absolute
+File names retain a whole final word where space permits, including the
+extension. Path labels prioritize the final component and shorten ancestors;
+component boundaries are used when they retain most of the available text. Result paths, folder headers, settings, search status, the application
+chooser and the preview abbreviate the home directory as `~`. Direct folder
+children omit the repeated parent path; recursive results show a relative parent.
+Header and preview path tooltips retain the absolute location; copying a path still uses the absolute
 path or lossless file URL. File details retain the full location.
 Empty file-search states separate the existing recovery actions from the help
 text with more spacing and stronger text: accent on opaque surfaces, primary
@@ -320,9 +324,9 @@ records file usage and closes the launcher.
 
 ## File search status
 
-Click **Index status** beside the search filters, or press Ctrl+I, to check the
+Click **Search status** to the right of the search filters, or press Ctrl+I, to check the
 search service without leaving the launcher. Empty file searches and search
-errors also offer **Check file search status**. Esc or **Back to search** returns
+errors also offer **Check search status**. Esc or **Back to search** returns
 to the same query, filter and selected result.
 
 ![File search status with synthetic indexed folders](assets/launcher-index-status.png)
@@ -345,7 +349,7 @@ is not displayed as zero. Applications and calculations remain usable.
 Status calls time out after three seconds so a stalled diagnostic reply cannot
 hold up later file searches or open actions indefinitely. Refresh can retry.
 
-This view does not edit configuration or pause/resume indexing. Use **Folders**
+This view does not edit configuration or pause/resume indexing. Use **Search folders**
 or Ctrl+, to choose search locations. Install or update the launcher and daemon
 together to use the status and folder interfaces.
 
@@ -362,13 +366,13 @@ folders disables file indexing. Esc closes an unsaved first-run screen without
 creating a configuration or starting the service. CLI and explicitly enabled
 services retain their existing configuration/default behavior.
 
-Later, open **Folders** in the search header or press Ctrl+,. Empty file results
+Later, open **Search folders** in the search header or press Ctrl+,. Empty file results
 also offer **Choose folders**. Type an absolute path or `~/Documents` and press
 Enter to add it; use Up/Down to select a folder and Ctrl+D or **Remove** to remove
 it. New folders must exist, be readable directories and not be symbolic links;
 existing offline locations can be retained. Adding a folder inside or around a
-listed one says which folder already covers it. A shortened folder shows its full
-path below the list. Page Up/Down, Ctrl+Home/End and the wheel scroll the details.
+listed one says which folder already covers it. A selected folder shows its full location below its label only when that label
+is shortened. Page Up/Down, Ctrl+Home/End and the wheel scroll the details.
 One line summarizes what indexing skips (from the running service, otherwise the
 saved file) and names the configuration file to edit; a warning appears when the
 service uses a different file. Viewing this screen does not activate the service.
@@ -459,8 +463,9 @@ Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
 or a click. Typing filters application names and desktop IDs; the ID beneath
 its name helps distinguish similarly named apps. Page Up/Down, Ctrl+Home/End
 and the mouse wheel navigate longer lists.
-The footer shows the visible application range or current loading/opening/error
-status on the left, with Enter and the contextual Esc action on the right.
+Use **Refresh** or Ctrl+R to rescan the available applications.
+The footer shows the application count, the visible range for longer lists, or
+the current loading/opening/error status on the left, with Enter and the contextual Esc action on the right.
 
 The chooser stays bound to the original file while results finish loading.
 Esc clears a nonempty application filter; Esc again returns to the same search
@@ -561,8 +566,9 @@ for the selected file and returns its text to the top. A metadata failure does
 not discard successfully loaded text.
 
 The sidebar's **Copy path**, or Ctrl+Shift+C outside Actions, copies its location;
-when the path contains non-UTF-8 bytes it copies the lossless file URL. Hover over
-the shortened location to see it in full. The preview has no editor or content-copy
+when the path contains non-UTF-8 bytes it copies the lossless file URL. The name
+and parent folder are shown separately; hover over the folder to see the complete
+file location. The preview has no editor or content-copy
 command. Enter and the normal file actions remain available with the sidebar open;
 only a confirmed open records launch history.
 
@@ -674,7 +680,7 @@ and `us-layout-1.5x` (960×640 logical, 1440×960 native). These run functional
 layout cases instead of latency trials: three width presets, upper/centered
 placement measured from native screenshots, live reset/discard, save/restart,
 side preview and typing after returning to results, in all three renderer modes.
-A separate `us-short-1x` (640×360) case exercises Page Up/Down and numbered
+A separate `us-short-1x` (640×332) case exercises Page Up/Down and numbered
 application dispatch when the chooser fits one row; each page still moves at
 least one application. The existing US/AZERTY/1.5× latency workloads are unchanged.
 See `layout.json`

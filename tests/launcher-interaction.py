@@ -329,8 +329,8 @@ def multimonitor(binary, out, helper):
         assert all(mode in MODES for mode in mode_names)
         for mode in mode_names:
             configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\ndark_theme="slate"\nwidth="wide"\nposition="centered"\n')
-            for index, bounds, rectangle in [(0,(1280,800,880,501),(200,149.5,880,501)),
-                                              (1,(853,533,821,501),(16,16,821,501))]:
+            for index, bounds, rectangle in [(0,(1280,800,880,515),(200,142.5,880,515)),
+                                              (1,(853,533,821,467),(16,33,821,467))]:
                 focus(index)
                 p, log = launch(mode, str(index), bounds)
                 keys(14,-14,20,-20)  # Backspace + t proves main input owns focus.
@@ -346,8 +346,8 @@ def multimonitor(binary, out, helper):
                     target = selected_path(previous=first_target)
                     saved_before_scale = configuration.read_bytes()
                     apply(f"dense-{mode}", dense, f"output.{names[1]}.scale.2")
-                    wait_bounds(log, (640,400,608,339), p)
-                    capture(f"{mode}-scale-2", (16,30.5,608,339), 2)
+                    wait_bounds(log, (640,400,608,323), p)
+                    capture(f"{mode}-scale-2", (16,38.5,608,323), 2)
                     assert_query()
                     assert selected_path(expected=target) == target
                     assert configuration.read_bytes() == saved_before_scale
@@ -364,7 +364,7 @@ def multimonitor(binary, out, helper):
                     capture(f"{mode}-preview", rectangle, 1.5)
                 close(p,index)
             focus(1)
-            p, log = launch(mode,"disconnect",(853,533,821,501))
+            p, log = launch(mode,"disconnect",(853,533,821,467))
             saved = configuration.read_bytes()
             keys(29,42,51,-51,-42,-29)
             wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded before output removal", process=p)
@@ -384,12 +384,12 @@ def multimonitor(binary, out, helper):
             second_probe.terminate()
             second_probe.wait(timeout=5)
             focus(0)
-            p,log = launch(mode,"remaining",(1280,800,880,501))
+            p,log = launch(mode,"remaining",(1280,800,880,515))
             close(p,0)
             apply(f"enabled-{mode}",both,f"output.{names[1]}.enable",f"output.{names[1]}.position.1280,0",f"output.{names[1]}.scale.1.5")
             second_probe = start_probe(1)
             focus(1)
-            p,log = launch(mode,"reconnected",(853,533,821,501))
+            p,log = launch(mode,"reconnected",(853,533,821,467))
             close(p,1)
             cases.append({"mode":mode,"renderer":observed_renderer(log),"validation":"passed"})
         (out / "multimonitor.json").write_text(json.dumps({"topology":snapshots,"cases":cases,"validation":"passed"},indent=2)+"\n")
@@ -443,7 +443,7 @@ def main():
     assert screen_count == ["1"] and len(geometries) == len(scales) == 1, "expected exactly one observed output"
     geometry = [int(value) for value in geometries[0]]
     observed_scale = float(scales[0])
-    expected_geometry = ([0, 0, 640, 360] if profile == "us-short-1x" else
+    expected_geometry = ([0, 0, 640, 332] if profile == "us-short-1x" else
                          [0, 0, 640, 480] if profile == "us-layout-1x" else
                          [0, 0, 960, 640] if profile == "us-layout-1.5x" else [0, 0, 1280, 800])
     assert geometry == expected_geometry, "unexpected logical output geometry"
@@ -542,27 +542,32 @@ def main():
                     f"MimeType=text/plain;\nExec={handler} {index} %f\n")
             # Worked examples in logical pixels, independent of the production calculator.
             small = geometry[2] == 640
-            height, upper, centered = (435, 29, 22.5) if small else (501, 123, 69.5)
+            height, upper, centered = (419, 45, 30.5) if small else (515, 109, 62.5)
             widths = [608, 608, 608] if small else [640, 720, 880]
 
             def rectangle(name, width, top):
-                capture(name)
-                image = QImage(str(out / name))
-                def dark(x, y):
-                    color = image.pixelColor(round(x * observed_scale), round(y * observed_scale))
-                    return max(color.red(), color.green(), color.blue()) < 150
-                # The maximized input probe is light; the launcher is dark. Ignore
-                # text and rounded corners by requiring most of a scanline to agree.
-                ys = [y for y in range(geometry[3])
-                      if sum(dark(x, y) for x in range(0, geometry[2], 4)) > width * 0.75 / 4]
-                assert ys, "no dark launcher rectangle in native capture"
-                xs = [x for x in range(geometry[2])
-                      if sum(dark(x, y) for y in range(round(top + 40), round(top + height - 40), 8))
-                      > (height - 80) / 8 * 0.7]
-                actual = [min(xs), min(ys), max(xs) + 1, max(ys) + 1]
-                expected = [(geometry[2] - width) / 2, top, (geometry[2] + width) / 2, top + height]
-                assert all(abs(a - e) <= 3 for a, e in zip(actual, expected)), (name, actual, expected)
-                return actual
+                # A redraw notification can precede the compositor's position update.
+                def visible():
+                    capture(name)
+                    image = QImage(str(out / name))
+                    def dark(x, y):
+                        color = image.pixelColor(round(x * observed_scale), round(y * observed_scale))
+                        return max(color.red(), color.green(), color.blue()) < 150
+                    # The maximized input probe is light; the launcher is dark. Ignore
+                    # text and rounded corners by requiring most of a scanline to agree.
+                    ys = [y for y in range(geometry[3])
+                          if sum(dark(x, y) for x in range(0, geometry[2], 4)) > width * 0.75 / 4]
+                    if not ys:
+                        return None
+                    xs = [x for x in range(geometry[2])
+                          if sum(dark(x, y) for y in range(round(top + 40), round(top + height - 40), 8))
+                          > (height - 80) / 8 * 0.7]
+                    if not xs:
+                        return None
+                    actual = [min(xs), min(ys), max(xs) + 1, max(ys) + 1]
+                    expected = [(geometry[2] - width) / 2, top, (geometry[2] + width) / 2, top + height]
+                    return actual if all(abs(a - e) <= 3 for a, e in zip(actual, expected)) else None
+                return wait_for(visible, f"presented rectangle for {name}", process=process)
 
             for mode in mode_names:
                 configuration.write_bytes(original + b'\n[appearance]\nmode="dark"\nmaterial="glass"\ndark_theme="slate"\n')
@@ -633,7 +638,7 @@ def main():
                         chord(29, 2)  # First visible numbered choice, after scrolling to the last.
                         selected = wait_for(lambda: selected_handler.read_text() if selected_handler.exists() else None,
                                             "visible chooser application dispatched")
-                        assert selected == ("2" if small else "1"), "chooser dispatched a row outside its constrained window"
+                        assert selected == ("3" if small else "1"), "chooser dispatched a row outside its constrained window"
                         # A successful Open with closes the launcher itself.
                         assert process.wait(timeout=5) == 0
                         wait_for(lambda: not owner(), "layout restart closed")
@@ -652,7 +657,7 @@ def main():
                              "appearance page rendered before pointer input", process=process)
                     # Pointer uses the same tab as Ctrl+Tab; coordinates are logical.
                     left = (geometry[2] - widths[1]) / 2
-                    subprocess.run([str(helper), "--double-click", str(round(left + 235)), str(round(upper + 20))],
+                    subprocess.run([str(helper), "--double-click", str(round(left + 235)), str(round(upper + 44))],
                                    check=True, timeout=5)
 
                     def choose(index):
@@ -1154,7 +1159,9 @@ def main():
             assert renderer == ("tiny_skia" if mode == "software" else "wgpu"), "material control renderer differs"
             material_samples[mode] = {"mean": mean(values), "stddev": pstdev(values), "renderer": renderer}
             if mode in ["opaque", "software"]:
-                assert set(values) == {0x17}, "opaque mode must not expose the backdrop"
+                # The two renderers round the faint well's solid blend one level apart.
+                assert len(set(values)) == 1 and abs(values[0] - 0x1c) <= 1, \
+                    "opaque result well must not expose the backdrop"
                 if mode == "opaque":
                     assert not any(r.get("event") == "material_blur_requested" for r in records(log))
             else:
@@ -1181,7 +1188,8 @@ def main():
                                      [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
                          "expanded preview surface observed", process=launcher)
                 capture("material-preview.png")
-                expanded = pixels("material-preview.png", 1040, 580, 60, 20)
+                # Sample blank text space, away from the metadata and its controls.
+                expanded = pixels("material-preview.png", 1040, 470, 60, 20)
                 assert 0x17 + 5 < mean(expanded) < 60 and pstdev(expanded) < 3, \
                     "blur must extend into the expanded preview surface"
                 resizes = len([r for r in records(log) if r.get("event") == "surface_resized"])
@@ -1191,8 +1199,8 @@ def main():
                                      [r for r in records(log) if r.get("event") == "surface_resized"][resizes:]),
                          "restored result surface observed", process=launcher)
                 capture("material-preview-closed.png")
-                assert pixels("material-preview-closed.png", 1040, 580, 60, 20) == \
-                    pixels("material-backdrop.png", 1040, 580, 60, 20), "closing preview must restore the smaller surface"
+                assert pixels("material-preview-closed.png", 1040, 470, 60, 20) == \
+                    pixels("material-backdrop.png", 1040, 470, 60, 20), "closing preview must restore the smaller surface"
             subprocess.run([str(binary)], check=True, timeout=5)
             launcher.wait(timeout=5)
             assert launcher.returncode == 0

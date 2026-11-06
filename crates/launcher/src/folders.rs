@@ -78,9 +78,6 @@ pub struct Panel {
     revision: u64,
 }
 
-/// Folder rows show at most this many characters; longer paths repeat in full below.
-const ROW_PATH: usize = 40;
-
 pub fn input_id() -> Id {
     Id::new("folder-path")
 }
@@ -372,15 +369,20 @@ impl Panel {
         if !self.busy() && self.phase != Phase::Loading {
             reload = reload.on_press(Event::Reload);
         }
-        let header =
-            container(row![text("Search folders").size(20), space::horizontal(), reload].align_y(Vertical::Center))
-                .height(58)
-                .padding(iced::padding::left(16).right(8))
-                .align_y(Vertical::Center);
+        let header = ui::page_header(
+            row![text("Search folders").size(20), space::horizontal(), reload].align_y(Vertical::Center),
+        );
         let mut body = column![].spacing(10).padding(16);
         if self.phase == Phase::Loading {
             body = body.push(text("Loading folder settings…").size(16));
         } else {
+            if !self.exit_on_cancel {
+                body = body.push(
+                    text("Choose where FerroSeek searches for files.")
+                        .size(13)
+                        .style(|theme: &iced::Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                );
+            }
             if self.exit_on_cancel {
                 body = body.push(text("Review your folders, then save to start file search.").size(14));
             }
@@ -428,13 +430,41 @@ impl Panel {
                 let content = container(
                     row![
                         ui::selection_bar(selected, 24.0),
-                        row![text(ui::ellipsize_middle(path, ROW_PATH)).size(14), space::horizontal(), remove]
-                            .padding(iced::padding::left(9).right(8))
-                            .align_y(Vertical::Center)
+                        row![
+                            widget::responsive(move |size| {
+                                let display = home_relative(path);
+                                let shortened = ui::label_for_width(&display, size.width, 15.0, true);
+                                let clipped = shortened != display;
+                                let label = widget::tooltip(
+                                    text(shortened).size(15).wrapping(text::Wrapping::None),
+                                    container(text(path).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                                        .padding(8)
+                                        .max_width(560)
+                                        .style(ui::surface_style),
+                                    widget::tooltip::Position::Bottom,
+                                );
+                                let mut labels = column![label].spacing(4);
+                                if selected && clipped {
+                                    labels = labels.push(
+                                        text(display).size(12).wrapping(text::Wrapping::WordOrGlyph).style(
+                                            |theme: &iced::Theme| text::Style {
+                                                color: Some(palette::DIM.resolve(theme)),
+                                            },
+                                        ),
+                                    );
+                                }
+                                labels.into()
+                            })
+                            .height(Length::Shrink),
+                            remove
+                        ]
+                        .spacing(12)
+                        .padding(iced::padding::left(9).right(8))
+                        .align_y(Vertical::Center)
                     ]
                     .align_y(Vertical::Center),
                 )
-                .height(48)
+                .padding([12, 0])
                 .align_y(Vertical::Center)
                 .style(move |theme| container::Style {
                     background: selected.then_some(iced::Background::Color(palette::SELECTED.resolve(theme))),
@@ -442,16 +472,6 @@ impl Panel {
                     ..Default::default()
                 });
                 body = body.push(mouse_area(content).on_press(Event::Select(path.clone())));
-            }
-            if let Some(path) = self.roots.get(self.cursor.selected).filter(|path| path.chars().count() > ROW_PATH) {
-                body = body.push(
-                    text(path)
-                        .size(12)
-                        .style(move |theme: &iced::Theme| iced::widget::text::Style {
-                            color: Some(palette::DIM.resolve(theme)),
-                        })
-                        .wrapping(text::Wrapping::WordOrGlyph),
-                );
             }
             if self.roots.len() > 4 {
                 let window = self.cursor.window(self.roots.len());
@@ -504,7 +524,7 @@ impl Panel {
             );
         }
         let mut save = button(ui::hint("Ctrl+S", "Save & apply")).padding([4, 8]).style(ui::status_button_style);
-        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" }))
+        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back to search" }))
             .padding([4, 8])
             .style(ui::status_button_style);
         if self.phase == Phase::Ready && self.document.is_some() && self.pending.is_none() {
@@ -516,7 +536,8 @@ impl Panel {
         let footer = container(row![back, space::horizontal(), save].align_y(Vertical::Center))
             .height(34)
             .padding([0, 8])
-            .align_y(Vertical::Center);
+            .align_y(Vertical::Center)
+            .style(ui::footer_style);
         let body = scrollable(body).id(scroll_id()).height(Length::Fill);
         container(column![header, ui::divider(), body, ui::divider(), footer])
             .padding(8)
