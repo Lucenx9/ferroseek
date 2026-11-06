@@ -153,6 +153,59 @@ fn reconciliation_refreshes_internal_exclusions_after_a_root_alias_is_retargeted
 }
 
 #[test]
+fn replacing_an_indexing_root_with_a_non_directory_retires_its_tree_and_watches() {
+    for mode in [Mode::Quick, Mode::Full] {
+        for symlink in [false, true] {
+            let mut f = fx();
+            touch(&f.p("nested/old-report.txt"));
+            f.scan(Mode::Full);
+            let outside = f._t.path().join("outside");
+            fs::rename(&f.root, &outside).unwrap();
+            if symlink {
+                std::os::unix::fs::symlink(&outside, &f.root).unwrap();
+            } else {
+                fs::write(&f.root, "not a directory").unwrap();
+            }
+            f.scan(mode);
+            f.settle();
+            touch(&outside.join("new-report.txt"));
+            touch(&outside.join("nested/new-report.txt"));
+            f.settle();
+            assert!(f.find("new-report").is_empty(), "retired root watches must not index external files");
+            assert_eq!(f.ix.watched_dirs(), 0);
+            assert_eq!(f.count(), 0, "a known non-directory must not retain its old indexed tree");
+
+            fs::remove_file(&f.root).unwrap();
+            touch(&f.p("restored-report.txt"));
+            f.scan(mode);
+            assert_eq!(f.find("report"), ["restored-report.txt"]);
+            touch(&f.p("later-report.txt"));
+            f.settle();
+            assert_eq!(f.find("later-report"), ["later-report.txt"]);
+        }
+    }
+}
+
+#[test]
+fn an_unavailable_root_retains_its_index_and_recovers_when_restored() {
+    let mut f = fx();
+    touch(&f.p("old-report.txt"));
+    f.scan(Mode::Full);
+    let outside = f._t.path().join("offline");
+    fs::rename(&f.root, &outside).unwrap();
+    for mode in [Mode::Quick, Mode::Full] {
+        f.scan(mode);
+        assert_eq!(f.find("report"), ["old-report.txt"]);
+        assert_eq!(f.count(), 2);
+    }
+    fs::rename(&outside, &f.root).unwrap();
+    touch(&f.p("new-report.txt"));
+    f.scan(Mode::Quick);
+    f.settle();
+    assert_eq!(f.find("report"), ["new-report.txt", "old-report.txt"]);
+}
+
+#[test]
 fn initial_scan_respects_exclusions() {
     let mut f = fx();
     touch(&f.p("docs/report.txt"));
