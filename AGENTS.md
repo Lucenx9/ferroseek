@@ -6,6 +6,12 @@ launcher reliability. Keep the engine/CLI independently usable and MCP optional,
 sharing one index. Noctalia/KRunner adapters are removed; historical research
 is in `docs/RESEARCH.md`.
 
+Read [DESIGN.md](DESIGN.md) at the start of every task. It is the design contract
+for UI, interactions, user-facing copy and product presentation. Apply its rules
+and review checklist to affected work; preserve its product constraints in
+engine-only tasks without expanding their scope. Update the guide in the same
+change when intentionally changing a design rule or baseline.
+
 ## Change discipline
 
 - Solve the current user-visible problem with the smallest coherent change.

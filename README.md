@@ -126,6 +126,7 @@ AI clients. Install it with `--mcp`; registration is separate. Desktop launcher 
 ## Documentation and development
 
 - [Launcher](docs/LAUNCHER.md): requirements, controls, history and limits.
+- [Design](DESIGN.md): visual language, interaction rules and contributor checklist.
 - [Installation](docs/INSTALLATION.md): components, upgrades and removal.
 - [Architecture](docs/ARCHITECTURE.md): launcher, daemon, search and index.
 - [Roadmap](docs/ROADMAP.md): implemented features and priorities.
