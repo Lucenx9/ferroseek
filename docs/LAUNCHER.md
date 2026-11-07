@@ -50,7 +50,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
 with the tiny-skia renderer and synthetic data. The refreshed search, folder
-browser, application chooser and text-preview images use the same setup. These captures do not extend
+browser, action panel, application chooser and text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
@@ -192,6 +192,8 @@ the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
 
+![Searchable actions for a synthetic application](assets/launcher-actions.png)
+
 Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
 applies the command and focuses the current field before delivering later input
 from the same event batch. Native text editing, selection and clipboard handling
@@ -204,6 +206,7 @@ keyboard focus, keystrokes still belong to the previously focused application.
 
 Click a result once to select it; double-click or press Enter to open it.
 Hover highlights the pointed row without moving the keyboard selection.
+Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**
 in the footer. A click on a result that disappears while results update is
 ignored rather than opening a different row. Action clicks also keep the target
@@ -220,7 +223,8 @@ stronger text in the result and application-chooser footers. Result types appear
 as plain secondary labels, except beside the preview, where names and paths use
 that space. Paths and numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
-preview. File names keep both ends so their extension remains visible; application
+preview. Action labels and target titles also shorten to keep shortcuts visible.
+File names keep both ends so their extension remains visible; application
 names, application descriptions and calculator expressions shorten at the end.
 File names retain a whole final word where space permits, including the
 extension. Path labels prioritize the final component and shorten ancestors;
