@@ -166,7 +166,8 @@ while the file service is busy or unavailable.
 
 Filter actions without rewriting the main query or changing the captured target.
 Visible numbers identify the currently displayed actions, including after
-filtering or scrolling. Keep primary commands easy to find, and explain an
+filtering or scrolling. Short outputs show fewer commands so the target, filter
+and return hint remain visible. Keep primary commands easy to find, and explain an
 unavailable operation rather than leaving a plausible-looking dead control.
 
 Escape unwinds the active context: clear the action filter before closing its
