@@ -1966,15 +1966,36 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .id(search_id())
         .on_input(move |query| Message::ContextQuery { generation: scope_generation, query })
         .size(if s.search_folder.is_some() { 15 } else { 20 })
-        .padding([4, 8])
+        .padding(padding::top(4).bottom(4).left(36).right(8))
         .style(field_style);
+    let search_icon = svg(svg::Handle::from_memory(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4.5 4.5"/></g></svg>"#,
+    ))
+    .width(18)
+    .height(18)
+    .style(|theme: &Theme, _| svg::Style { color: Some(palette::DIM.resolve(theme)) });
+    // A decorative overlay keeps the entire field clickable, including the lens.
+    // Bound its layer so software redraws do not damage the rest of the surface.
+    let input =
+        stack![input, container(search_icon).height(Length::Fill).align_y(Vertical::Center).padding(padding::left(10))]
+            .clip(true);
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
         let selected = s.scope == scope;
         choices.push(
-            button(text(scope.to_string()).size(12))
-                .on_press(Message::Scope(scope))
-                .padding([4, 8])
-                .style(move |theme, status| tab_style(theme, status, selected)),
+            button(
+                column![
+                    text(scope.to_string()).size(12),
+                    container(space().width(14)).height(2).style(move |theme| container::Style {
+                        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
+                        border: Border { radius: 1.0.into(), ..Default::default() },
+                        ..Default::default()
+                    })
+                ]
+                .spacing(2),
+            )
+            .on_press(Message::Scope(scope))
+            .padding([4, 8])
+            .style(move |theme, status| tab_style(theme, status, selected)),
         )
     });
     let index_status = button(text("Search status").size(12))
@@ -2149,9 +2170,17 @@ pub(crate) fn field_style(theme: &Theme, status: text_input::Status) -> text_inp
 
 pub(crate) fn status_button_style(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
-        background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-            .then_some(Background::Color(palette::FAINT.resolve(theme))),
-        text_color: palette::DIM.resolve(theme),
+        background: match status {
+            button::Status::Pressed => Some(Background::Color(palette::SELECTED.resolve(theme))),
+            button::Status::Hovered => Some(Background::Color(palette::FAINT.resolve(theme))),
+            _ => None,
+        },
+        text_color: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            palette::TEXT
+        } else {
+            palette::DIM
+        }
+        .resolve(theme),
         border: Border { radius: 5.0.into(), ..Default::default() },
         ..Default::default()
     }
@@ -2488,14 +2517,10 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             hints = hints.push(hint("Alt+→", "Browse here"));
         }
         hints = hints.push(
-            button(hint("Ctrl+K", "Actions")).on_press(Message::Cmd(Command::ToggleActions)).padding([3, 6]).style(
-                |theme, status| button::Style {
-                    background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-                        .then_some(Background::Color(palette::FAINT.resolve(theme))),
-                    text_color: palette::TEXT.resolve(theme),
-                    ..Default::default()
-                },
-            ),
+            button(hint("Ctrl+K", "Actions"))
+                .on_press(Message::Cmd(Command::ToggleActions))
+                .padding([3, 6])
+                .style(status_button_style),
         );
     } else {
         // Same inset as the Actions button, so the last hint keeps the right edge.
@@ -2614,27 +2639,26 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     for (slot, i) in p.cursor.window(actions.len()).enumerate() {
         let a = actions[i];
         let selected = i == p.cursor.selected;
-        let r = container(
-            row![
-                text(ellipsize_end(p.label(a), 32)).size(14),
-                space::horizontal(),
-                text(a.shortcut()).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(palette::DIM.resolve(theme)),
-                }),
-                numbered_hint(slot, true),
-            ]
-            .spacing(10)
-            .align_y(Vertical::Center)
-            .padding([0, 10]),
-        )
-        .height(34)
-        .width(Length::Fill)
+        let content = row![
+            text(ellipsize_end(p.label(a), 32)).size(14),
+            space::horizontal(),
+            text(a.shortcut()).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
+                color: Some(palette::DIM.resolve(theme)),
+            }),
+            numbered_hint(slot, selected),
+        ]
+        .spacing(10)
         .align_y(Vertical::Center)
-        .style(move |theme| container::Style {
-            background: selected.then_some(Background::Color(palette::SELECTED.resolve(theme))),
-            border: Border { radius: 7.0.into(), ..Default::default() },
-            ..Default::default()
-        });
+        .padding(padding::left(3).right(10));
+        let r = container(row![selection_bar(selected, 18.0), content].align_y(Vertical::Center))
+            .height(34)
+            .width(Length::Fill)
+            .align_y(Vertical::Center)
+            .style(move |theme| container::Style {
+                background: selected.then_some(Background::Color(palette::SELECTED.resolve(theme))),
+                border: Border { radius: 7.0.into(), ..Default::default() },
+                ..Default::default()
+            });
         col = col.push(
             mouse_area(r)
                 .on_press(Message::PanelClicked { target: target.clone(), action: a })
