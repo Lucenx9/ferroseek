@@ -63,7 +63,13 @@ pub mod palette {
                 Self::Surface => alpha(p.background, 1.0),
                 Self::Border => alpha(p.text, 0.18),
                 Self::Text => p.text,
-                Self::Dim => super::rgb(if dark { 0xc0c2ca } else { 0x434852 }),
+                // Glass needs stronger secondary text over unpredictable backdrops.
+                Self::Dim => super::rgb(match (dark, p.background.a < 1.0) {
+                    (true, true) => 0xc0c2ca,
+                    (true, false) => 0xaeb1bc,
+                    (false, true) => 0x434852,
+                    (false, false) => 0x555b66,
+                }),
                 Self::Faint => alpha(p.text, 0.06),
                 Self::Accent => p.primary,
                 Self::Selected => alpha(p.primary, 0.18),

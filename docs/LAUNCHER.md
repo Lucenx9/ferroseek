@@ -165,7 +165,8 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
 Choose **All**, **Applications** or **Files** below the search field to narrow
-results without rewriting the query. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
+results without rewriting the query. An accent underline marks the active filter
+alongside its background highlight. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
 cycles backward. The choice lasts for this launcher session. Applications mode
 makes no file-search requests; Files shows indexed files and recent file
 suggestions. Calculator expressions without `=` appear only in All; an explicit
@@ -213,7 +214,8 @@ to another command.
 
 Numbered shortcuts stay visible on every result and application choice. The
 selected row keeps its keycap; other rows use quieter text with the same spacing.
-Footer and action-menu shortcuts keep their keycaps. The Enter action uses
+The action panel uses the same numbering treatment and an accent bar for its
+highlighted command. Footer shortcuts keep their keycaps. The Enter action uses
 stronger text in the result and application-chooser footers. Result types appear
 as plain secondary labels, except beside the preview, where names and paths use
 that space. Paths and numbered shortcuts remain visible in both layouts.
