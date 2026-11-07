@@ -631,7 +631,7 @@ impl Launcher {
         self.cursor.visible = geometry.rows;
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
-            panel.cursor.visible = geometry.rows;
+            panel.cursor.visible = action_rows(geometry.height).min(geometry.rows);
             let actions = panel.filtered_actions().len();
             panel.cursor.move_by(0, actions);
         }
@@ -773,7 +773,7 @@ impl Launcher {
 
     fn panel_for(&self, item: &Item) -> Panel {
         let mut panel = Panel::new(item, self.is_favorite(&item.target));
-        panel.cursor.visible = self.cursor.visible;
+        panel.cursor.visible = action_rows(self.window_height).min(self.cursor.visible);
         if let Target::App(i) = item.target
             && let Some(app) = self.apps.get(i)
         {
@@ -2615,6 +2615,12 @@ fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>, prominent: bool) -> Eleme
 
 pub(crate) fn numbered_hint<M: 'static>(slot: usize, selected: bool) -> Element<'static, M> {
     if slot < model::NUMBERED_SLOTS { keycap(format!("Ctrl+{}", slot + 1), selected) } else { space().into() }
+}
+
+fn action_rows(height: u32) -> usize {
+    // Reserve surface margins, panel padding, title, query and return hint.
+    // Each command needs its 34 px row and the 2 px gap between rows.
+    (height.saturating_sub(208) / 36).clamp(1, model::NUMBERED_SLOTS as u32) as usize
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
@@ -6157,5 +6163,41 @@ mod tests {
     fn heights_fit_the_rows() {
         assert!(full_height() > compact_height());
         assert!(full_height() as f32 >= compact_height() as f32 + ROW_HEIGHT * VISIBLE_ROWS as f32);
+    }
+
+    #[test]
+    fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
+        let mut state = application_actions(&["New window", "Other window"]);
+        state.panel = None;
+        state.output_bounds = Some((640, 332));
+        let _ = state.resize();
+        let _ = command(&mut state, Command::OpenActions);
+        for bounds in [(640, 332), (640, 480), (1280, 800), (320, 332), (640, 332)] {
+            let _ = command(&mut state, Command::Last);
+            let expected = state.panel.as_ref().unwrap().cursor.selected;
+            state.output_bounds = Some(bounds);
+            let _ = state.resize();
+            let panel = state.panel.as_ref().unwrap();
+            assert_eq!(panel.cursor.selected, expected);
+            let target = &state.selected().unwrap().target;
+            let labels = rendered_labels(
+                action_panel(panel, target),
+                iced::Size::new(state.window_width as f32, state.window_height as f32),
+            );
+            for name in ["Esc", "Close actions"] {
+                let (_, rect) = labels.text.iter().find(|(value, _)| value == name).unwrap();
+                assert!(rect.height >= 14.0, "{name} is clipped on {bounds:?}: {rect:?}");
+            }
+            let actions = panel.filtered_actions();
+            for (slot, index) in panel.cursor.window(actions.len()).enumerate() {
+                let name = panel.label(actions[index]);
+                assert!(labels.text.iter().any(|(value, rect)| value == name && rect.height >= 18.0));
+                let number = format!("Ctrl+{}", slot + 1);
+                assert!(labels.text.iter().any(|(value, rect)| value == &number && rect.height >= 14.0));
+                assert_eq!(panel.action_for_command(Command::ActivateVisible(slot)), Some(actions[index]));
+            }
+        }
+        let _ = command(&mut state, Command::Back);
+        assert!(state.panel.is_none());
     }
 }

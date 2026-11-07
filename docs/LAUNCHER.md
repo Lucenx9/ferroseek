@@ -187,7 +187,8 @@ shortcuts remain available while filtering. After copying, the launcher stays
 open and returns focus to the main search field. Clicking the main field and
 typing closes actions and starts the new search.
 
-The panel shows up to eight actions at a time. Up/Down and the mouse wheel move
+The panel shows up to eight actions at a time, with fewer on short outputs to
+leave room for its target, search field and return hint. Up/Down and the mouse wheel move
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
