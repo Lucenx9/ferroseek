@@ -625,6 +625,10 @@ if another instance is updating history, retry after it finishes.
 
 ## Design
 
+The [design guide](../DESIGN.md) defines visual language, shared styling,
+interaction rules and the review checklist for UI changes. The architecture
+below describes how the launcher implements those workflows.
+
 ```text
 ferroseek-launcher
  ├─ UI thread: iced (WGPU; tiny-skia fallback) on a wlr-layer-shell overlay
