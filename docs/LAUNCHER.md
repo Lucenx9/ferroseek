@@ -192,6 +192,10 @@ leave room for its target, search field and return hint. Up/Down and the mouse w
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
+The target name above the filter uses primary text. Pointer hover highlights a
+command without moving the keyboard selection. The footer shows Enter to run
+the selected matching action alongside the current Escape step. With no matches,
+it suggests another action name and omits the Enter hint.
 
 ![Searchable actions for a synthetic application](assets/launcher-actions.png)
 

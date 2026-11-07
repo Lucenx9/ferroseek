@@ -2634,10 +2634,10 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let file_title = matches!(target, Target::File(_));
     let title = container(
         widget::responsive(move |size| {
-            text(label_for_width(&p.title, size.width, 12.0, file_title))
-                .size(12)
+            text(label_for_width(&p.title, size.width, 13.0, file_title))
+                .size(13)
                 .wrapping(text::Wrapping::None)
-                .style(move |theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) })
+                .style(move |theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) })
                 .into()
         })
         .height(Length::Shrink),
@@ -2648,9 +2648,15 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let actions = p.filtered_actions();
     if actions.is_empty() {
         list = list.push(
-            container(text("No matching actions").size(13).style(move |theme: &iced::Theme| {
-                iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-            }))
+            container(
+                column![
+                    text("No matching actions").size(13),
+                    text("Try another action name.")
+                        .size(12)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                ]
+                .spacing(4),
+            )
             .padding(12),
         );
     }
@@ -2680,8 +2686,13 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 border: Border { radius: 7.0.into(), ..Default::default() },
                 ..Default::default()
             });
+        let hover = container(space()).width(Length::Fill).height(Length::Fill).style(move |theme| container::Style {
+            background: (!selected).then_some(Background::Color(palette::FAINT.resolve(theme))),
+            border: Border { radius: 7.0.into(), ..Default::default() },
+            ..Default::default()
+        });
         list = list.push(
-            mouse_area(r)
+            mouse_area(widget::hover(r, hover))
                 .on_press(Message::PanelClicked { target: target.clone(), action: a })
                 .interaction(mouse::Interaction::Pointer),
         );
@@ -2689,6 +2700,9 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let mut footer = row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })]
         .align_y(Vertical::Center)
         .padding([4, 12]);
+    if !actions.is_empty() {
+        footer = footer.push(space::horizontal()).push(primary_hint("Enter", "Run"));
+    }
     if actions.len() > p.cursor.visible {
         let window = p.cursor.window(actions.len());
         footer = footer.push(space::horizontal()).push(
@@ -6184,9 +6198,10 @@ mod tests {
                 action_panel(panel, target),
                 iced::Size::new(state.window_width as f32, state.window_height as f32),
             );
-            for name in ["Esc", "Close actions"] {
+            for name in ["Esc", "Close actions", "Run"] {
                 let (_, rect) = labels.text.iter().find(|(value, _)| value == name).unwrap();
                 assert!(rect.height >= 14.0, "{name} is clipped on {bounds:?}: {rect:?}");
+                assert!(rect.x >= 0.0 && rect.x + rect.width <= state.window_width as f32, "{name}: {rect:?}");
             }
             let actions = panel.filtered_actions();
             for (slot, index) in panel.cursor.window(actions.len()).enumerate() {

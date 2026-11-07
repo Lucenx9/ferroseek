@@ -97,6 +97,7 @@ Current sizes in [ui.rs](crates/launcher/src/ui.rs) are logical pixels:
 | Main query and page title | 20; scoped query uses 15 |
 | Result title | 15 |
 | Action label | 14 |
+| Action panel target | 13, primary text |
 | Supporting explanation | 13 |
 | Result subtitle, navigation and footer | 12 |
 | Shortcut badge and result type | 11 |
@@ -169,6 +170,10 @@ Visible numbers identify the currently displayed actions, including after
 filtering or scrolling. Short outputs show fewer commands so the target, filter
 and return hint remain visible. Keep primary commands easy to find, and explain an
 unavailable operation rather than leaving a plausible-looking dead control.
+The target title uses primary text above the action filter. Command hover uses
+the same neutral fill as result hover and preserves keyboard selection. The
+panel footer shows Enter to run a matching action and the current Escape step;
+an empty filter result offers a next step and omits the run hint.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve
