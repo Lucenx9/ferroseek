@@ -903,7 +903,8 @@ def main():
                 wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log)), "appearance keyboard focus", process=process)
                 if restart:
                     capture(f"appearance-restored-{mode}.png")
-                    color = QImage(str(out / f"appearance-restored-{mode}.png")).pixelColor(round(640*observed_scale), round(210*observed_scale))
+                    # Sample the surface above the field; header spacing can move its border.
+                    color = QImage(str(out / f"appearance-restored-{mode}.png")).pixelColor(round(640*observed_scale), round(204*observed_scale))
                     assert max(abs(actual-expected) for actual,expected in zip((color.red(),color.green(),color.blue()),(239,243,248))) <= 2, "saved Slate Light theme did not draw on restart"
                 burst(29,42,51,-51,-42,-29)  # Ctrl+Shift+physical Comma.
                 wait_for(lambda: any(r.get("event") == "appearance_ready" for r in records(log)), "appearance loaded", process=process)

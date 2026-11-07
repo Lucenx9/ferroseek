@@ -1979,7 +1979,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let input =
         stack![input, container(search_icon).height(Length::Fill).align_y(Vertical::Center).padding(padding::left(10))]
             .clip(true);
-    let scopes = Scope::ALL.into_iter().fold(row![].spacing(3), |choices, scope| {
+    let scopes = Scope::ALL.into_iter().fold(row![].spacing(4), |choices, scope| {
         let selected = s.scope == scope;
         choices.push(
             button(
@@ -1994,21 +1994,24 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
                 .spacing(2),
             )
             .on_press(Message::Scope(scope))
-            .padding([4, 8])
+            .padding([3, 8])
             .style(move |theme, status| tab_style(theme, status, selected)),
         )
     });
     let index_status = button(text("Search status").size(12))
         .on_press(Message::ShowSearchStatus)
         .padding([4, 8])
+        .height(24)
         .style(status_button_style);
     let folders = button(text("Search folders").size(12))
         .on_press(Message::ShowFolders)
         .padding([4, 8])
+        .height(24)
         .style(status_button_style);
     let appearance = button(text("Appearance").size(12))
         .on_press(Message::ShowAppearance)
         .padding([4, 8])
+        .height(24)
         .style(status_button_style);
     let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
@@ -2045,11 +2048,11 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
-        let navigation = row![index_status, folders, appearance].spacing(2).align_y(Vertical::Center);
+        let navigation = row![index_status, folders, appearance].spacing(4).align_y(Vertical::Center);
         if header_extra > 0 {
-            column![input, row![scopes, space::horizontal()], row![space::horizontal(), navigation]].spacing(6).into()
+            column![input, row![scopes, space::horizontal()], row![space::horizontal(), navigation]].spacing(8).into()
         } else {
-            column![input, row![scopes, space::horizontal(), navigation].align_y(Vertical::Center)].spacing(6).into()
+            column![input, row![scopes, space::horizontal(), navigation].align_y(Vertical::Center)].spacing(8).into()
         }
     };
     let header = container(header).padding([0, 8]).height(INPUT_HEIGHT + header_extra as f32).align_y(Vertical::Center);
@@ -2440,11 +2443,11 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     if s.panel.is_none() {
         content = content.push(numbered_hint(slot, selected));
     }
-    let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(16));
-    // A capsule inset from the row's rounded edge; 4 + 3 + 9 px keeps the icon on the 24 px gutter.
+    let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(12));
+    // With the row's 4 px inset, 4 + 3 + 9 px keeps the icon on the 28 px gutter.
     let bar = selection_bar(selected, ROW_HEIGHT / 2.0);
     let row = container(row![bar, content].align_y(Vertical::Center))
-        .height(ROW_HEIGHT)
+        .height(ROW_HEIGHT - 4.0)
         .width(Length::Fill)
         .align_y(Vertical::Center)
         .style(move |theme| container::Style {
@@ -2457,7 +2460,8 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
     });
-    mouse_area(widget::hover(row, hover))
+    // Keep the full navigation slot clickable around the inset selection.
+    mouse_area(container(widget::hover(row, hover)).padding([2, 4]).height(ROW_HEIGHT).clip(true))
         .on_press(Message::Selected(item.target.clone()))
         .on_double_click(Message::Clicked(item.target.clone()))
         .on_right_press(Message::ContextMenu(item.target.clone()))
@@ -2506,7 +2510,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             n => (format!("{n} results"), palette::DIM.resolve(theme)),
         },
     };
-    let mut hints = row![].spacing(14).align_y(Vertical::Center);
+    let mut hints = row![].spacing(12).align_y(Vertical::Center);
     if let Some(item) = s.selected() {
         let acts = s.actions_for(&item.target);
         hints = hints.push(primary_hint("Enter", acts[0].label()));
@@ -2520,6 +2524,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             button(hint("Ctrl+K", "Actions"))
                 .on_press(Message::Cmd(Command::ToggleActions))
                 .padding([3, 6])
+                .height(24)
                 .style(status_button_style),
         );
     } else {
@@ -2617,39 +2622,49 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .id(actions_id())
         .on_input(Message::ActionQuery)
         .size(14)
-        .padding([8, 10])
+        .padding([8, 12])
         .style(field_style);
-    // Title, field, rows and footer share the rows' 10 px text inset.
+    // Title, field, rows and footer share a 12 px text inset.
+    let file_title = matches!(target, Target::File(_));
     let title = container(
-        text(ellipsize_end(&p.title, 32))
-            .size(12)
-            .style(move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }),
+        widget::responsive(move |size| {
+            text(label_for_width(&p.title, size.width, 12.0, file_title))
+                .size(12)
+                .wrapping(text::Wrapping::None)
+                .style(move |theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) })
+                .into()
+        })
+        .height(Length::Shrink),
     )
-    .padding([0, 10]);
-    let mut col = column![title, input].spacing(4);
+    .padding([0, 12]);
+    let header = column![title, input].spacing(8);
+    let mut list = column![].spacing(2);
     let actions = p.filtered_actions();
     if actions.is_empty() {
-        col = col.push(
+        list = list.push(
             container(text("No matching actions").size(13).style(move |theme: &iced::Theme| {
                 iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
             }))
-            .padding(10),
+            .padding(12),
         );
     }
     for (slot, i) in p.cursor.window(actions.len()).enumerate() {
         let a = actions[i];
         let selected = i == p.cursor.selected;
+        let label = widget::responsive(move |size| {
+            text(label_for_width(p.label(a), size.width, 14.0, false)).size(14).wrapping(text::Wrapping::None).into()
+        })
+        .height(Length::Shrink);
         let content = row![
-            text(ellipsize_end(p.label(a), 32)).size(14),
-            space::horizontal(),
+            label,
             text(a.shortcut()).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::DIM.resolve(theme)),
             }),
             numbered_hint(slot, selected),
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Vertical::Center)
-        .padding(padding::left(3).right(10));
+        .padding(padding::left(5).right(12));
         let r = container(row![selection_bar(selected, 18.0), content].align_y(Vertical::Center))
             .height(34)
             .width(Length::Fill)
@@ -2659,7 +2674,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 border: Border { radius: 7.0.into(), ..Default::default() },
                 ..Default::default()
             });
-        col = col.push(
+        list = list.push(
             mouse_area(r)
                 .on_press(Message::PanelClicked { target: target.clone(), action: a })
                 .interaction(mouse::Interaction::Pointer),
@@ -2667,7 +2682,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     }
     let mut footer = row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })]
         .align_y(Vertical::Center)
-        .padding([4, 10]);
+        .padding([4, 12]);
     if actions.len() > p.cursor.visible {
         let window = p.cursor.window(actions.len());
         footer = footer.push(space::horizontal()).push(
@@ -2676,7 +2691,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
             ),
         );
     }
-    col = col.push(footer);
+    let col = column![header, list, footer].spacing(8);
     let panel = container(col).width(360).padding(8).style(|theme| container::Style {
         background: Some(Background::Color(palette::RAISED.resolve(theme))),
         border: Border { color: palette::BORDER.resolve(theme), width: 1.0, radius: 10.0.into() },
@@ -4584,7 +4599,8 @@ mod tests {
         assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[1].id);
         let messages = pointer_messages(
             &s,
-            iced::Point::new(120.0, 95.0),
+            // The empty inset around the first row remains part of its hit target.
+            iced::Point::new(PAD + 1.0, PAD + INPUT_HEIGHT + 1.0 + PAD / 2.0 + 1.0),
             vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
         );
         assert!(messages.iter().any(|message| matches!(message, Message::Selected(_))));
