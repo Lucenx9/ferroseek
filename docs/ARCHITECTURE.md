@@ -204,8 +204,11 @@ D-Bus (zbus zruntime helper thread) ── control iface ───┘
 - **Score**, stage 1 (name only): exact name > exact stem > prefix >
   word-boundary match (`_ - . space`, camelCase) > inner substring, plus a
   coverage bonus and a penalty for dotfiles.
-- **Score**, stage 2 (top 3×limit, with paths): a depth penalty, a penalty
-  for hidden ancestors, and a recency bonus.
+- **Score**, stage 2 (with paths): a depth penalty, a penalty for hidden
+  ancestors, and a recency bonus. Unscoped searches that include hidden entries
+  stop only when the remaining name scores plus the maximum recency bonus
+  cannot enter the final top-k. Other searches process all retained candidates;
+  there is no fixed top-3×limit truncation before path scoring.
 
 ## Launcher and engine boundaries
 
@@ -428,6 +431,13 @@ before the last slash. It then follows the existing `entries_parent_name`
 index, never materializing full paths in persistent storage. Raw paths are
 still constructed and checked for every accepted candidate. There is no
 new schema, persistent index, or directory-rename write amplification.
+
+One- and two-character directory components use a literal `instr` predicate
+over directory keys because trigrams cannot represent them. A matching root
+is detected before this probe and retains the broad fallback. Multiple short
+filename tokens also use bounded SQL `instr` predicates to reject rows before
+decoding them in Rust. The candidate collector checks any remaining tokens and
+all access filters before applying budgets; the SQL predicates never cap rows scanned.
 
 Scope selection falls back to the original strategy for root anchors or
 more than 256 seed/descendant directories. Recursive traversal explicitly

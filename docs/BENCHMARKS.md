@@ -849,3 +849,17 @@ The snapshot keeps first-process and repeated samples separate and records actua
 renderers, focus, result readiness, redraw intervals and live memory. It refreshes
 the diagnostic baseline; different runner hardware and Rust prevent a speed-gain
 comparison with section 14. Physical display presentation remains unmeasured.
+
+## 16. Short-token search diagnostic — 2026-11-13
+
+[Method, raw samples and reproduction](benchmarks/search-short-tokens-2026-11-13/README.md)
+measure the unchanged index library at `25602fc` on an Intel N95 with Rust 1.94.0.
+On 100,000 synthetic file rows, warm median searches took 45.698 ms for `zz/`
+and 67.899 ms for `re zz`, both with no matches. These query shapes use the
+full-entry fallback despite a result limit of 15. A longer absent path anchor,
+`missing/`, took 0.081 ms through the existing directory probe.
+
+All 120 measured responses across 10,000/100,000-file indexes matched the
+fixture's expected results. This is one process with fifteen samples per case,
+on tmpfs; it excludes D-Bus, live filesystem checks and UI/rendering. It identifies
+a scaling concern, not an optimization gain or a physical-desktop latency claim.

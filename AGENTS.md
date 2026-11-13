@@ -82,6 +82,14 @@ Update inaccurate screenshots and affected setup/limits after code or dependency
 - Keep mechanically checkable invariants in tests or CI. Report the checks run,
   their results and any verification that remains incomplete.
 
+### CodeScene
+
+After changing code, run CodeScene MCP `code_health_review` on the changed files.
+If Code Health drops, fix the issues, review again and use `code_health_score`
+to confirm the result. Before finishing code changes, run
+`pre_commit_code_health_safeguard` and resolve any reported degradation.
+Report unavailable checks and distinguish staged-file coverage from unstaged work.
+
 ```sh
 cargo fmt --all --check
 cargo test -p ferroseek-launcher --locked  # replace the package for other modules

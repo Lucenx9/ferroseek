@@ -331,6 +331,7 @@ fn multiple_short_tokens_match_substrings_in_any_order() {
             tx.upsert(folder, format!("noise-{i}.txt").as_bytes(), file(i + 3)).unwrap();
         }
         tx.upsert(folder, b"quarterly-z.txt", file(unrelated + 3)).unwrap();
+        tx.upsert(folder, "[x]'_ΟΣ%.txt".as_bytes(), file(unrelated + 4)).unwrap();
         tx.commit().unwrap();
 
         let reader = Reader::open(&db).unwrap();
@@ -340,6 +341,13 @@ fn multiple_short_tokens_match_substrings_in_any_order() {
                 let hits = reader.search(&Query::parse(query), &options).unwrap();
                 assert_eq!(names(&hits), ["quarterly-z.txt"], "query {query:?}, {options:?}, {unrelated}");
             }
+            for query in ["' σ", "σ %", "% _", "' [", "ΟΣ '"] {
+                let hits = reader.search(&Query::parse(query), &options).unwrap();
+                assert_eq!(names(&hits), ["[x]'_ΟΣ%.txt"], "query {query:?}, {options:?}, {unrelated}");
+            }
+            let repeated = format!("{}z", "q ".repeat(1100));
+            let hits = reader.search(&Query::parse(&repeated), &options).unwrap();
+            assert_eq!(names(&hits), ["quarterly-z.txt"]);
             assert!(reader.search(&Query::parse("z"), &options).unwrap().is_empty());
         }
     }
@@ -554,6 +562,49 @@ fn path_only_queries_find_descendants_without_requiring_parent_name_in_filename(
     assert_eq!(names(&search(&db, "r/src/")), ["main.rs"]);
 }
 
+fn check_path_queries(db: &Path, expected_paths: &[PathBuf]) {
+    let reader = Reader::open(db).unwrap();
+    for query in [
+        "src/",
+        "project-src/",
+        "outside/",
+        "root/project",
+        "ünicode's/",
+        "src/main",
+        ".hidden/",
+        "missing/",
+        "ide's/raw",
+        "s/",
+        "c/",
+        "rc/main",
+        "'s/",
+        "de/",
+        "//",
+    ] {
+        for include_hidden in [false, true] {
+            let opts = SearchOptions { limit: 10000, include_hidden, ..Default::default() };
+            let mut actual: Vec<_> = reader
+                .search(&Query::parse(query), &opts)
+                .unwrap()
+                .into_iter()
+                .filter(|h| h.kind != Kind::Dir)
+                .map(|h| h.path)
+                .collect();
+            let mut expected: Vec<_> = expected_paths
+                .iter()
+                .filter(|p| {
+                    p.to_string_lossy().to_lowercase().contains(query)
+                        && (include_hidden || !p.components().any(|c| c.as_os_str().as_bytes().first() == Some(&b'.')))
+                })
+                .cloned()
+                .collect();
+            actual.sort();
+            expected.sort();
+            assert_eq!(actual, expected, "query={query}, hidden={include_hidden}");
+        }
+    }
+}
+
 #[test]
 fn path_scoping_matches_independent_paths_across_tree_mutations() {
     let (_t, db) = setup();
@@ -578,57 +629,18 @@ fn path_scoping_matches_independent_paths_across_tree_mutations() {
     tx.upsert(nested, b"raw-\xff.txt", file(9)).unwrap();
     paths.push(Path::new("/outside/Root/project-src/Ünicode's").join(OsStr::from_bytes(b"raw-\xff.txt")));
     tx.commit().unwrap();
-    let check = |expected_paths: &[PathBuf]| {
-        let reader = Reader::open(&db).unwrap();
-        for query in [
-            "src/",
-            "project-src/",
-            "outside/",
-            "root/project",
-            "ünicode's/",
-            "src/main",
-            ".hidden/",
-            "missing/",
-            "ide's/raw",
-            "s/",
-            "//",
-        ] {
-            for include_hidden in [false, true] {
-                let opts = SearchOptions { limit: 10000, include_hidden, ..Default::default() };
-                let mut actual: Vec<_> = reader
-                    .search(&Query::parse(query), &opts)
-                    .unwrap()
-                    .into_iter()
-                    .filter(|h| h.kind != Kind::Dir)
-                    .map(|h| h.path)
-                    .collect();
-                let mut expected: Vec<_> = expected_paths
-                    .iter()
-                    .filter(|p| {
-                        p.to_string_lossy().to_lowercase().contains(query)
-                            && (include_hidden
-                                || !p.components().any(|c| c.as_os_str().as_bytes().first() == Some(&b'.')))
-                    })
-                    .cloned()
-                    .collect();
-                actual.sort();
-                expected.sort();
-                assert_eq!(actual, expected, "query={query}, hidden={include_hidden}");
-            }
-        }
-    };
-    check(&paths);
+    check_path_queries(&db, &paths);
     let mut tx = w.transaction().unwrap();
     tx.rename(parent, root, b"moved-src").unwrap();
     tx.commit().unwrap();
     for p in &mut paths {
         *p = Path::new("/outside/Root/moved-src").join(p.strip_prefix("/outside/Root/project-src").unwrap());
     }
-    check(&paths);
+    check_path_queries(&db, &paths);
     let mut tx = w.transaction().unwrap();
     tx.delete(parent).unwrap();
     tx.commit().unwrap();
-    check(&[]);
+    check_path_queries(&db, &[]);
 }
 
 #[test]

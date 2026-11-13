@@ -1267,85 +1267,11 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         timing::frame(at, s.generation, visible);
         return Task::none();
     }
-    if s.appearance.is_some() {
-        match message {
-            Message::Appearance { generation, event } if generation == s.appearance_generation => {
-                return s.appearance_event(event);
-            }
-            Message::Cmd(command) => {
-                let (task, close) = s.appearance.as_mut().unwrap().command(command);
-                return s.finish_appearance(task, close);
-            }
-            Message::FolderShortcut(folders::Shortcut::Save) => return s.appearance_event(appearance::Event::Save),
-            Message::FolderShortcut(folders::Shortcut::Remove) => {
-                return s.appearance_event(appearance::Event::Discard);
-            }
-            Message::RefreshSearchStatus => return s.appearance_event(appearance::Event::Reload),
-            Message::ShowAppearance => return s.appearance_event(appearance::Event::Back),
-            Message::Ui(_)
-            | Message::FocusLost
-            | Message::Files { .. }
-            | Message::FolderListed { .. }
-            | Message::PreviewLoaded { .. }
-            | Message::DetailsLoaded { .. }
-            | Message::ApplicationsLoaded { .. }
-            | Message::SearchStatusLoaded { .. }
-            | Message::Opened(_)
-            | Message::ApplicationOpened { .. } => {}
-            _ => return Task::none(),
-        }
-    }
-    if (s.application_picker.is_some() || s.file_details.is_some())
-        && matches!(
-            message,
-            Message::Query(_)
-                | Message::ContextQuery { .. }
-                | Message::Scope(_)
-                | Message::ActionQuery(_)
-                | Message::FolderBack { .. }
-                | Message::Selected(_)
-                | Message::Clicked(_)
-                | Message::ContextMenu(_)
-                | Message::PanelClicked { .. }
-                | Message::ShowSearchStatus
-                | Message::ShowFolders
-                | Message::ResultsWheel(_)
-        )
-    {
-        return Task::none();
-    }
-    if s.folder_settings.is_some()
-        && matches!(
-            message,
-            Message::Query(_)
-                | Message::ContextQuery { .. }
-                | Message::Scope(_)
-                | Message::ActionQuery(_)
-                | Message::FolderBack { .. }
-                | Message::Selected(_)
-                | Message::Clicked(_)
-                | Message::ContextMenu(_)
-                | Message::PanelClicked { .. }
-                | Message::ShowSearchStatus
-        )
-    {
-        return Task::none();
-    }
-    // Queued input from the search view must not act through the status view.
-    if s.search_status.is_some()
-        && matches!(
-            message,
-            Message::Query(_)
-                | Message::ContextQuery { .. }
-                | Message::Scope(_)
-                | Message::ActionQuery(_)
-                | Message::FolderBack { .. }
-                | Message::Selected(_)
-                | Message::Clicked(_)
-                | Message::ContextMenu(_)
-                | Message::PanelClicked { .. }
-        )
-    {
+    if s.appearance.is_some() { update_appearance(s, message) } else { update_content(s, message) }
+}
+
+fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
+    if blocks_search_input(s, &message) {
         return Task::none();
     }
     match message {
@@ -1373,20 +1299,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let effect = panel.event(event);
             s.preview_effect(effect)
         }
-        Message::RefreshSearchStatus
-            if s.search_folder.is_some()
-                && s.file_details.is_none()
-                && s.application_picker.is_none()
-                && s.folder_settings.is_none()
-                && s.appearance.is_none()
-                && s.search_status.is_none() =>
-        {
-            s.refresh_folder()
-        }
-        Message::RefreshSearchStatus if s.preview_visible() && s.text_preview.is_some() => {
-            let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
-            s.preview_effect(effect)
-        }
+        Message::RefreshSearchStatus => refresh_current_view(s),
         Message::Wheel(_) if s.preview_visible() && s.panel.is_none() => Task::none(),
         Message::ResultsWheel(_) if !s.preview_visible() => Task::none(),
         Message::ResultsWheel(dy) => move_results(s, dy),
@@ -1413,10 +1326,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let effect = panel.event(event);
             s.details_effect(effect)
         }
-        Message::RefreshSearchStatus if s.file_details.is_some() => {
-            let effect = s.file_details.as_mut().unwrap().event(details::Event::Refresh);
-            s.details_effect(effect)
-        }
         Message::Wheel(_) if s.file_details.is_some() => Task::none(),
         Message::ApplicationsLoaded { generation, result } => {
             if generation == s.application_generation
@@ -1441,9 +1350,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             let effect = panel.event(event);
             s.application_effect(effect)
-        }
-        Message::RefreshSearchStatus if s.application_picker.is_some() => {
-            s.application_effect(open_with::Effect::Reload)
         }
         Message::ShowAppearance
             if s.opening.is_none()
@@ -1489,11 +1395,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let (task, effect) = panel.update(event, s.backend.clone());
             s.finish_folders(task, effect)
         }
-        Message::RefreshSearchStatus if s.folder_settings.is_some() => {
-            let panel = s.folder_settings.as_mut().unwrap();
-            let (task, effect) = panel.update(folders::Event::Reload, s.backend.clone());
-            s.finish_folders(task, effect)
-        }
         Message::ShowSearchStatus => {
             if s.search_status.is_some() {
                 return update(s, Message::CloseSearchStatus);
@@ -1506,8 +1407,6 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let load = s.refresh_search_status();
             Task::batch([load, s.resize()])
         }
-        Message::RefreshSearchStatus if s.search_status.is_some() => s.refresh_search_status(),
-        Message::RefreshSearchStatus => Task::none(),
         Message::CloseSearchStatus => {
             s.search_status = None;
             Task::batch([s.resize(), crate::input::focus(search_id())])
@@ -1528,38 +1427,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 Task::none()
             }
         }
-        Message::Query(q) => {
-            if s.preview_enabled {
-                s.cancel_preview(true);
-            }
-            s.clicks = ClickTracker::default();
-            // Editing the main field leaves the action panel and starts a new search.
-            s.panel = None;
-            s.query = q;
-            s.generation += 1;
-            timing::begin(s.generation);
-            let (usage, now) = (&s.usage, usage::now());
-            let q = s.query.as_str();
-            // An explicit calculator query stays in that mode while incomplete.
-            let calculator = s.search_folder.is_none() && calc::is_explicit(q);
-            s.app_hits = if calculator || !s.scope.includes_apps() {
-                Vec::new()
-            } else {
-                model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
-            };
-            let file_query = s.file_query();
-            // Results of the previous query must not stay actionable while
-            // this one is searched.
-            s.files.clear();
-            s.folder_more = false;
-            s.status = if file_query { Status::Searching } else { Status::Idle };
-            s.rebuild(false);
-            if !file_query {
-                timing::ready(s.generation, s.items.len(), s.files.len(), true);
-            }
-            let search = if file_query { s.request_files() } else { Task::none() };
-            Task::batch([search, s.resize()])
-        }
+        Message::Query(q) => query_changed(s, q),
         Message::Scope(_) if s.search_folder.is_some() => Task::none(),
         Message::Scope(scope) => {
             s.panel = None;
@@ -1589,34 +1457,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             });
             update(s, Message::Files { generation, result })
         }
-        Message::Files { generation, result } => {
-            if generation != s.generation {
-                return Task::none(); // a newer query is in flight
-            }
-            let success = result.is_ok();
-            match result {
-                Ok(Some(files)) => {
-                    s.files = files;
-                    if matches!(s.status, Status::Searching | Status::Idle) {
-                        s.status = Status::Idle;
-                    }
-                }
-                Ok(None) => return Task::none(),
-                Err(e) => {
-                    s.files.clear();
-                    s.status = Status::Error(if s.search_folder.is_some() {
-                        e
-                    } else {
-                        format!("File search unavailable: {e}")
-                    });
-                }
-            }
-            let had_panel = s.panel.is_some();
-            s.rebuild(true);
-            timing::ready(generation, s.items.len(), s.files.len(), success);
-            let focus = if had_panel && s.panel.is_none() { crate::input::focus(search_id()) } else { Task::none() };
-            Task::batch([s.resize(), focus, s.sync_preview()])
-        }
+        Message::Files { generation, result } => files_loaded(s, generation, result),
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => {
             s.clicks = ClickTracker::default();
@@ -1673,50 +1514,8 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
                 .map(|_| action);
             a.map_or_else(Task::none, |a| s.perform(a))
         }
-        Message::ApplicationOpened { id, result } => {
-            if s.opening.as_ref().is_none_or(|(pending, _)| *pending != id) {
-                return Task::none();
-            }
-            let (_, query) = s.opening.take().unwrap();
-            s.launch_task = None;
-            match result {
-                Ok(()) => {
-                    s.usage.record(Kind::App, &id, &query, usage::now());
-                    iced::exit()
-                }
-                Err(error) => {
-                    s.status = Status::Error(error);
-                    s.resize()
-                }
-            }
-        }
-        Message::Opened(Ok(())) => {
-            if let Some((id, query)) = s.opening.take() {
-                s.launch_task = None;
-                s.usage.record(Kind::File, &id, &query, usage::now());
-                return iced::exit();
-            }
-            Task::none()
-        }
-        Message::Opened(Err(e)) => {
-            if s.opening.take().is_none() {
-                return Task::none();
-            }
-            s.launch_task = None;
-            s.status = match e {
-                RunError::Failed(message) => Status::Error(format!("Cannot open: {message}")),
-                RunError::Unconfirmed(_) => {
-                    s.unconfirmed_open = true;
-                    Status::Error(UNCONFIRMED_OPEN.into())
-                }
-            };
-            if let Some(panel) = &mut s.application_picker
-                && let Status::Error(error) = &s.status
-            {
-                panel.failed(error.clone());
-            }
-            s.resize()
-        }
+        Message::ApplicationOpened { id, result } => application_opened(s, id, result),
+        Message::Opened(result) => file_opened(s, result),
         Message::Ui(UiEvent::Toggle) => {
             s.launch_task = None;
             iced::exit()
@@ -1738,6 +1537,191 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         // by the runtime before they reach here.
         _ => Task::none(),
     }
+}
+
+fn query_changed(s: &mut Launcher, q: String) -> Task<Message> {
+    if s.preview_enabled {
+        s.cancel_preview(true);
+    }
+    s.clicks = ClickTracker::default();
+    // Editing the main field leaves the action panel and starts a new search.
+    s.panel = None;
+    s.query = q;
+    s.generation += 1;
+    timing::begin(s.generation);
+    let (usage, now) = (&s.usage, usage::now());
+    let q = s.query.as_str();
+    // An explicit calculator query stays in that mode while incomplete.
+    let calculator = s.search_folder.is_none() && calc::is_explicit(q);
+    s.app_hits = if calculator || !s.scope.includes_apps() {
+        Vec::new()
+    } else {
+        model::match_apps(&s.apps, q, |a| usage.boost(Kind::App, &a.id, q, now))
+    };
+    let file_query = s.file_query();
+    // Results of the previous query must not stay actionable while
+    // this one is searched.
+    s.files.clear();
+    s.folder_more = false;
+    s.status = if file_query { Status::Searching } else { Status::Idle };
+    s.rebuild(false);
+    if !file_query {
+        timing::ready(s.generation, s.items.len(), s.files.len(), true);
+    }
+    let search = if file_query { s.request_files() } else { Task::none() };
+    Task::batch([search, s.resize()])
+}
+
+fn files_loaded(s: &mut Launcher, generation: u64, result: Result<Option<Vec<FileHit>>, String>) -> Task<Message> {
+    if generation != s.generation {
+        return Task::none(); // a newer query is in flight
+    }
+    let success = result.is_ok();
+    match result {
+        Ok(Some(files)) => {
+            s.files = files;
+            if matches!(s.status, Status::Searching | Status::Idle) {
+                s.status = Status::Idle;
+            }
+        }
+        Ok(None) => return Task::none(),
+        Err(e) => {
+            s.files.clear();
+            s.status =
+                Status::Error(if s.search_folder.is_some() { e } else { format!("File search unavailable: {e}") });
+        }
+    }
+    let had_panel = s.panel.is_some();
+    s.rebuild(true);
+    timing::ready(generation, s.items.len(), s.files.len(), success);
+    let focus = if had_panel && s.panel.is_none() { crate::input::focus(search_id()) } else { Task::none() };
+    Task::batch([s.resize(), focus, s.sync_preview()])
+}
+
+fn application_opened(s: &mut Launcher, id: String, result: Result<(), String>) -> Task<Message> {
+    if s.opening.as_ref().is_none_or(|(pending, _)| *pending != id) {
+        return Task::none();
+    }
+    let (_, query) = s.opening.take().unwrap();
+    s.launch_task = None;
+    match result {
+        Ok(()) => {
+            s.usage.record(Kind::App, &id, &query, usage::now());
+            iced::exit()
+        }
+        Err(error) => {
+            s.status = Status::Error(error);
+            s.resize()
+        }
+    }
+}
+
+fn file_opened(s: &mut Launcher, result: Result<(), RunError>) -> Task<Message> {
+    match result {
+        Ok(()) => {
+            if let Some((id, query)) = s.opening.take() {
+                s.launch_task = None;
+                s.usage.record(Kind::File, &id, &query, usage::now());
+                return iced::exit();
+            }
+            Task::none()
+        }
+        Err(e) => {
+            if s.opening.take().is_none() {
+                return Task::none();
+            }
+            s.launch_task = None;
+            s.status = match e {
+                RunError::Failed(message) => Status::Error(format!("Cannot open: {message}")),
+                RunError::Unconfirmed(_) => {
+                    s.unconfirmed_open = true;
+                    Status::Error(UNCONFIRMED_OPEN.into())
+                }
+            };
+            if let Some(panel) = &mut s.application_picker
+                && let Status::Error(error) = &s.status
+            {
+                panel.failed(error.clone());
+            }
+            s.resize()
+        }
+    }
+}
+
+fn update_appearance(s: &mut Launcher, message: Message) -> Task<Message> {
+    match message {
+        Message::Appearance { generation, event } if generation == s.appearance_generation => s.appearance_event(event),
+        Message::Cmd(command) => {
+            let (task, close) = s.appearance.as_mut().unwrap().command(command);
+            s.finish_appearance(task, close)
+        }
+        Message::FolderShortcut(folders::Shortcut::Save) => s.appearance_event(appearance::Event::Save),
+        Message::FolderShortcut(folders::Shortcut::Remove) => s.appearance_event(appearance::Event::Discard),
+        Message::RefreshSearchStatus => s.appearance_event(appearance::Event::Reload),
+        Message::ShowAppearance => s.appearance_event(appearance::Event::Back),
+        Message::Ui(_)
+        | Message::FocusLost
+        | Message::Files { .. }
+        | Message::FolderListed { .. }
+        | Message::PreviewLoaded { .. }
+        | Message::DetailsLoaded { .. }
+        | Message::ApplicationsLoaded { .. }
+        | Message::SearchStatusLoaded { .. }
+        | Message::Opened(_)
+        | Message::ApplicationOpened { .. } => update_content(s, message),
+        _ => Task::none(),
+    }
+}
+
+// Queued search input must not act through a modal view. Each view retains
+// its own entry points for closing, refreshing and asynchronous completion.
+fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
+    let file_panel = s.application_picker.is_some() || s.file_details.is_some();
+    match message {
+        Message::Query(_)
+        | Message::ContextQuery { .. }
+        | Message::Scope(_)
+        | Message::ActionQuery(_)
+        | Message::FolderBack { .. }
+        | Message::Selected(_)
+        | Message::Clicked(_)
+        | Message::ContextMenu(_)
+        | Message::PanelClicked { .. } => file_panel || s.folder_settings.is_some() || s.search_status.is_some(),
+        Message::ShowSearchStatus => file_panel || s.folder_settings.is_some(),
+        Message::ShowFolders | Message::ResultsWheel(_) => file_panel,
+        _ => false,
+    }
+}
+
+fn refresh_current_view(s: &mut Launcher) -> Task<Message> {
+    if s.search_folder.is_some()
+        && s.file_details.is_none()
+        && s.application_picker.is_none()
+        && s.folder_settings.is_none()
+        && s.appearance.is_none()
+        && s.search_status.is_none()
+    {
+        return s.refresh_folder();
+    }
+    if s.preview_visible() && s.text_preview.is_some() {
+        let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
+        return s.preview_effect(effect);
+    }
+    if let Some(panel) = &mut s.file_details {
+        let effect = panel.event(details::Event::Refresh);
+        return s.details_effect(effect);
+    }
+    if s.application_picker.is_some() {
+        return s.application_effect(open_with::Effect::Reload);
+    }
+    if let Some(panel) = &mut s.folder_settings {
+        let (task, effect) = panel.update(folders::Event::Reload, s.backend.clone());
+        return s.finish_folders(task, effect);
+    }
+    if s.search_status.is_some() {
+        return s.refresh_search_status();
+    }
+    Task::none()
 }
 
 fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
