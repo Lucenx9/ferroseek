@@ -52,6 +52,16 @@ impl Query {
     pub fn is_empty(&self) -> bool {
         self.name_tokens.is_empty() && self.path_tokens.iter().all(|t| t.chars().all(|c| c == '/'))
     }
+    fn path_anchor(&self) -> Option<&str> {
+        self.path_tokens
+            .iter()
+            .flat_map(|p| {
+                let (dirs, _) = p.rsplit_once('/').unwrap();
+                dirs.split('/')
+            })
+            .filter(|p| !p.is_empty())
+            .max_by_key(|p| p.chars().count())
+    }
 }
 
 /// A caller-supplied predicate on full paths (e.g. an access policy).
@@ -186,62 +196,107 @@ fn name_score(key: &str, name: &[u8], tokens: &[String]) -> f32 {
     s
 }
 
+struct Candidates<'a> {
+    query: &'a Query,
+    remaining_tokens: &'a [String],
+    options: &'a SearchOptions,
+    paths: PathCache<'a>,
+    entries: HashMap<Id, Cand>,
+}
+
+impl Candidates<'_> {
+    fn accepts(&mut self, c: &Cand) -> Result<bool> {
+        if !self.remaining_tokens.iter().all(|t| c.key.contains(t.as_str()))
+            || self.options.kind.is_some_and(|k| k != c.kind)
+        {
+            return Ok(false);
+        }
+        let Some(parent) = c.parent else { return Ok(false) };
+        if !self.query.path_tokens.is_empty()
+            || self.options.within.is_some()
+            || !self.options.include_hidden
+            || self.options.accept.is_some()
+        {
+            let Some(dir) = self.paths.dir(parent)? else { return Ok(false) };
+            let path = PathBuf::from(OsStr::from_bytes(&dir.path)).join(OsStr::from_bytes(&c.name));
+            if !path_matches(&path, dir.hidden || c.name.first() == Some(&b'.'), self.query, self.options) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn add_rows(
+        &mut self,
+        st: &mut rusqlite::CachedStatement<'_>,
+        params: &[&dyn rusqlite::ToSql],
+        cap: usize,
+    ) -> Result<()> {
+        let mut accepted = 0;
+        let mut rows = st.query(params)?;
+        while let Some(r) = rows.next()? {
+            let id: Id = r.get(0)?;
+            let c = Cand {
+                parent: r.get(1)?,
+                name: r.get(2)?,
+                key: r.get(3)?,
+                kind: Kind::from_i64(r.get(4)?),
+                size: r.get::<_, i64>(5)? as u64,
+                mtime: r.get(6)?,
+                score: 0.0,
+            };
+            if !self.accepts(&c)? {
+                continue;
+            }
+            // An earlier stage's candidate is not new; it must not use this budget.
+            if let std::collections::hash_map::Entry::Vacant(slot) = self.entries.entry(id) {
+                slot.insert(c);
+                accepted += 1;
+            }
+            if accepted >= cap {
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Filter short tokens in SQLite and return the tokens still requiring a
+/// Rust check. `instr` matches folded keys literally, including SQL wildcards.
+fn short_name_filter(q: &Query) -> (String, &[String]) {
+    if q.name_tokens.len() < 2 || q.name_tokens.iter().any(|t| t.chars().count() >= 3) {
+        return (String::new(), &q.name_tokens);
+    }
+    // Bound SQL expression depth without limiting the query's token count.
+    let (checked, remaining) = q.name_tokens.split_at(q.name_tokens.len().min(8));
+    let sql = checked.iter().map(|t| format!(" AND instr(e.key, '{}') > 0", t.replace('\'', "''"))).collect();
+    (sql, remaining)
+}
+
 pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<Vec<Hit>> {
     if q.is_empty() || opts.limit == 0 {
         return Ok(Vec::new());
     }
     let scope = directory_scope(conn, q, opts)?;
     let restriction = scope.map(|s| format!(" AND e.parent IN ({s})")).unwrap_or_default();
-    let mut cands: HashMap<Id, Cand> = HashMap::new();
-    let mut candidate_paths = PathCache::new(conn);
-    let mut add_rows =
-        |st: &mut rusqlite::CachedStatement<'_>, params: &[&dyn rusqlite::ToSql], cap: usize| -> Result<()> {
-            let mut accepted = 0;
-            let mut rows = st.query(params)?;
-            while let Some(r) = rows.next()? {
-                let id: Id = r.get(0)?;
-                let c = Cand {
-                    parent: r.get(1)?,
-                    name: r.get(2)?,
-                    key: r.get(3)?,
-                    kind: Kind::from_i64(r.get(4)?),
-                    size: r.get::<_, i64>(5)? as u64,
-                    mtime: r.get(6)?,
-                    score: 0.0,
-                };
-                if !q.name_tokens.iter().all(|t| c.key.contains(t.as_str())) || opts.kind.is_some_and(|k| k != c.kind) {
-                    continue;
-                }
-                let Some(parent) = c.parent else { continue };
-                if !q.path_tokens.is_empty() || opts.within.is_some() || !opts.include_hidden || opts.accept.is_some() {
-                    let Some(dir) = candidate_paths.dir(parent)? else { continue };
-                    let path = PathBuf::from(OsStr::from_bytes(&dir.path)).join(OsStr::from_bytes(&c.name));
-                    if !path_matches(&path, dir.hidden || c.name.first() == Some(&b'.'), q, opts) {
-                        continue;
-                    }
-                }
-                // An earlier stage's candidate is not new; it must not use this budget.
-                if let std::collections::hash_map::Entry::Vacant(slot) = cands.entry(id) {
-                    slot.insert(c);
-                    accepted += 1;
-                }
-                if accepted >= cap {
-                    break;
-                }
-            }
-            Ok(())
-        };
+    let (name_filter, remaining_tokens) = short_name_filter(q);
+    let mut candidates =
+        Candidates { query: q, remaining_tokens, options: opts, paths: PathCache::new(conn), entries: HashMap::new() };
     const COLS: &str = "e.id, e.parent, e.name, e.key, e.kind, e.size, e.mtime";
 
     let long: Vec<&String> = q.name_tokens.iter().filter(|t| t.chars().count() >= 3).collect();
     let fts_cap = FTS_CANDIDATES.max(opts.limit.saturating_mul(4));
     let prefix_cap = PREFIX_CANDIDATES.max(opts.limit);
-    let small_scope = if !restriction.is_empty() {
+    // Short-component scopes only narrow the existing stages. Direct
+    // enumeration would change their prefix/streaming candidate budgets.
+    let allow_direct = opts.within.is_some() || q.path_anchor().is_some_and(|a| a.chars().count() >= 3);
+    let small_scope = if allow_direct && !restriction.is_empty() {
         let sql = format!("SELECT count(*) FROM (SELECT 1 FROM entries e WHERE 1{restriction} LIMIT 4097)");
         conn.query_row(&sql, [], |r| r.get::<_, i64>(0))? <= 4096
     } else {
         false
     };
+    let restriction = format!("{restriction}{name_filter}");
     if small_scope {
         let prefix = if q.name_tokens.len() == 1 && long.is_empty() {
             q.name_tokens
@@ -256,7 +311,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         } else {
             String::new()
         };
-        add_rows(
+        candidates.add_rows(
             &mut conn
                 .prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE 1{restriction}{prefix} ORDER BY e.id"))?,
             &[],
@@ -266,7 +321,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         if let Some(first) = q.name_tokens.first() {
             // Fetch exact and prefix candidates separately using index ranges.
             let joined = q.name_tokens.join(" ");
-            add_rows(
+            candidates.add_rows(
                 &mut conn.prepare_cached(&format!(
                     "SELECT {COLS} FROM entries e WHERE e.key = ?1{restriction} ORDER BY e.id"
                 ))?,
@@ -279,7 +334,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             if let Some(upper) = &upper {
                 params.push(upper);
             }
-            add_rows(
+            candidates.add_rows(
                 &mut conn.prepare_cached(&format!(
                     "SELECT {COLS} FROM entries e WHERE e.key >= ?1{upper_clause}{restriction} ORDER BY e.key, e.id"
                 ))?,
@@ -291,7 +346,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             // Full-path substrings and multiple short name tokens have no
             // mandatory name prefix or trigram to narrow the candidate source.
             // Stream rows and retain only the bounded set passing path filters.
-            add_rows(
+            candidates.add_rows(
                 &mut conn
                     .prepare_cached(&format!("SELECT {COLS} FROM entries e WHERE 1{restriction} ORDER BY e.id"))?,
                 &[],
@@ -299,7 +354,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
             )?;
         }
         if !long.is_empty() {
-            add_rows(
+            candidates.add_rows(
                 &mut conn.prepare_cached(&format!(
                     "SELECT {COLS} FROM names JOIN entries e ON e.id = names.rowid
                  WHERE names MATCH ?1{restriction} ORDER BY names.rowid"
@@ -310,13 +365,10 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         }
     }
 
-    // Verify every name token (FTS is exact for trigrams, but short tokens
-    // and the prefix/exact fetches need it) and score by name.
-    let mut ranked: Vec<(Id, Cand)> = cands
+    // All token, kind and path checks precede insertion into the candidate set.
+    let mut ranked: Vec<(Id, Cand)> = candidates
+        .entries
         .into_iter()
-        .filter(|(_, c)| q.name_tokens.iter().all(|t| c.key.contains(t.as_str())))
-        .filter(|(_, c)| opts.kind.is_none_or(|k| k == c.kind))
-        .filter(|(_, c)| c.parent.is_some()) // roots are not results
         .map(|(id, mut c)| {
             c.score = name_score(&c.key, &c.name, &q.name_tokens);
             (id, c)
@@ -334,7 +386,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     // Min-heap of the best `limit` final scores so far (bounded path).
     let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TotalF32>> = std::collections::BinaryHeap::new();
     // Reuse the directory paths resolved while collecting candidates.
-    let mut paths = candidate_paths;
+    let mut paths = candidates.paths;
     let now_ns =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
@@ -386,6 +438,10 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
 /// Restrict candidates to descendants of a necessary directory component.
 /// Full path verification still runs: this is a superset, not the matcher.
 fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<Option<String>> {
+    if opts.within.is_none() && q.path_tokens.is_empty() {
+        return Ok(None);
+    }
+    let roots = crate::tree::roots(conn)?;
     let seed = if let Some(within) = &opts.within {
         let mut ids = Vec::new();
         if let Some((id, meta)) = crate::tree::lookup_path(conn, within)?
@@ -393,9 +449,9 @@ fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result
         {
             ids.push(id);
         }
-        for (id, path) in crate::tree::roots(conn)? {
+        for (id, path) in &roots {
             if path.starts_with(within) {
-                ids.push(id);
+                ids.push(*id);
             }
         }
         if ids.is_empty() {
@@ -406,28 +462,14 @@ fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result
             ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
         )
     } else {
-        let anchor = q
-            .path_tokens
-            .iter()
-            .flat_map(|p| {
-                let (dirs, _) = p.rsplit_once('/').unwrap();
-                dirs.split('/')
-            })
-            .filter(|p| p.chars().count() >= 3)
-            .max_by_key(|p| p.chars().count());
-        let Some(anchor) = anchor else { return Ok(None) };
-        // Quote separately for the FTS phrase grammar and SQL string grammar.
-        let phrase = format!("\"{}\"", anchor.replace('"', "\"\""));
-        format!(
-            "SELECT e.id FROM names JOIN entries e ON e.id=names.rowid WHERE names MATCH '{}' AND e.kind=1",
-            phrase.replace('\'', "''")
-        )
+        let Some(seed) = path_seed(q, &roots) else { return Ok(None) };
+        seed
     };
     // Do not expand a root or a broad set of directories just to discard
     // the scope later. These cases retain the original streaming strategy.
     let mut seeds = conn.prepare(&format!("{seed} LIMIT 257"))?;
     let ids: Vec<Id> = seeds.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-    if ids.len() > 256 || crate::tree::roots(conn)?.iter().any(|(id, _)| ids.contains(id)) {
+    if ids.len() > 256 || roots.iter().any(|(id, _)| ids.contains(id)) {
         return Ok(None);
     }
     if ids.is_empty() {
@@ -446,6 +488,27 @@ fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result
         "SELECT id FROM entries WHERE id IN ({})",
         dirs.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
     )))
+}
+
+fn path_seed(q: &Query, roots: &[(Id, PathBuf)]) -> Option<String> {
+    let anchor = q.path_anchor()?;
+    // A matching root requires the broad fallback anyway. In particular, do
+    // not scan every entry for a short component just to discover that root.
+    if roots.iter().any(|(_, path)| fold(path.as_os_str().as_bytes()).contains(anchor)) {
+        return None;
+    }
+    Some(if anchor.chars().count() < 3 {
+        // Short components cannot use trigrams. Check directory names in
+        // SQLite before decoding and resolving every file candidate.
+        format!("SELECT e.id FROM entries e WHERE e.kind=1 AND instr(e.key, '{}') > 0", anchor.replace('\'', "''"))
+    } else {
+        // Quote separately for the FTS phrase grammar and SQL string grammar.
+        let phrase = format!("\"{}\"", anchor.replace('"', "\"\""));
+        format!(
+            "SELECT e.id FROM names JOIN entries e ON e.id=names.rowid WHERE names MATCH '{}' AND e.kind=1",
+            phrase.replace('\'', "''")
+        )
+    })
 }
 
 /// `f32` ordered by `total_cmp`, for the top-k heap.

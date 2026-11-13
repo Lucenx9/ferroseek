@@ -650,6 +650,11 @@ ferroseek-launcher
   channels. Consecutive pending searches are coalesced; every reply carries
   the query generation and outdated ones are dropped. A new query clears the
   previous file rows, and late results keep the selected row.
+- In `ui.rs`, runtime observations precede appearance routing and the shared
+  modal-input guard. Query changes, file replies, open completions and view
+  refreshes have separate handlers. Background replies still pass through
+  while appearance is open; refactoring this order must preserve generation
+  checks, captured targets and the preview/focus synchronization around updates.
 - The whole stack is Rust (iced, iced_layershell, zbus, freedesktop-icons);
   it builds no C code. It uses only system protocol libraries:
   libwayland-client and libxkbcommon (the latter must be present at build
