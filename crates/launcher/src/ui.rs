@@ -1387,7 +1387,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
             let effect = s.text_preview.as_mut().unwrap().event(preview::Event::Refresh);
             s.preview_effect(effect)
         }
-        Message::Wheel(_) if s.preview_visible() => Task::none(),
+        Message::Wheel(_) if s.preview_visible() && s.panel.is_none() => Task::none(),
         Message::ResultsWheel(_) if !s.preview_visible() => Task::none(),
         Message::ResultsWheel(dy) => move_results(s, dy),
         Message::FolderBack { generation } => {
@@ -1741,6 +1741,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
+    if dy == 0.0 {
+        return Task::none();
+    }
     let delta = if dy > 0.0 { -1 } else { 1 };
     if let Some(panel) = &mut s.panel {
         panel.cursor.move_by(delta, panel.filtered_actions().len());
@@ -2719,6 +2722,13 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         // No shadow: iced_tiny_skia 0.14 paints it unclipped on partial redraws
         // (cursor blink), darkening the panel. RAISED and the border lift it.
         ..Default::default()
+    });
+    let panel = mouse_area(panel).on_scroll(|delta| {
+        let y = match delta {
+            ScrollDelta::Lines { y, .. } => y,
+            ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
+        };
+        Message::Wheel(y)
     });
     container(panel)
         .width(Length::Fill)
@@ -4631,6 +4641,54 @@ mod tests {
         assert_eq!(s.text_preview.as_ref().unwrap().file.id, files[0].id);
         assert!(s.opening.is_none(), "one click selects without opening");
         assert!(s.usage.recent(usage::now(), 8).is_empty());
+    }
+
+    #[test]
+    fn action_panel_owns_wheel_events_with_and_without_a_preview() {
+        for preview in [false, true] {
+            let mut s = search_state();
+            let _ = update(&mut s, Message::Scope(Scope::Files));
+            let _ = update(&mut s, Message::Query("report".into()));
+            let generation = s.generation;
+            let files = file_hits();
+            let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+            if preview {
+                let _ = s.perform(Action::Preview);
+                let generation = s.preview_generation;
+                let _ = update(
+                    &mut s,
+                    Message::PreviewLoaded { generation, result: preview_data(&"synthetic line\n".repeat(100)) },
+                );
+            }
+            let _ = command(&mut s, Command::OpenActions);
+            let _ = update(&mut s, Message::ActionQuery("copy".into()));
+            let generation = s.preview_generation;
+            for (label, delta, expected) in [
+                ("Copy name", ScrollDelta::Lines { x: 0.0, y: -1.0 }, Action::CopyName),
+                ("report.txt", ScrollDelta::Pixels { x: 0.0, y: ROW_HEIGHT }, Action::CopyPath),
+                ("Run", ScrollDelta::Lines { x: 1.0, y: 0.0 }, Action::CopyPath),
+            ] {
+                let labels = rendered_labels(view(&s), iced::Size::new(s.window_width as f32, full_height() as f32));
+                let (_, label) = labels.text.iter().rev().find(|(value, _)| value == label).unwrap();
+                let messages = pointer_messages(&s, label.center(), vec![mouse::Event::WheelScrolled { delta }]);
+                assert!(matches!(&messages[..], [Message::Wheel(_)]), "preview={preview}: {messages:?}");
+                for message in messages {
+                    let _ = update(&mut s, message);
+                }
+                let panel = s.panel.as_ref().unwrap();
+                assert_eq!(panel.action_for_command(Command::Activate), Some(expected), "preview={preview}");
+                assert_eq!(panel.query, "copy");
+            }
+            assert_eq!(s.preview_generation, generation);
+            assert_eq!(s.selected().unwrap().target, Target::File(files[0].clone()));
+            assert_eq!(s.query, "report");
+            assert!(s.opening.is_none());
+            let _ = command(&mut s, Command::Back);
+            assert!(s.panel.as_ref().unwrap().query.is_empty());
+            let _ = command(&mut s, Command::Back);
+            assert!(s.panel.is_none());
+            assert_eq!(s.preview_visible(), preview);
+        }
     }
 
     #[test]
