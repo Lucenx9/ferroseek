@@ -863,3 +863,23 @@ All 120 measured responses across 10,000/100,000-file indexes matched the
 fixture's expected results. This is one process with fifteen samples per case,
 on tmpfs; it excludes D-Bus, live filesystem checks and UI/rendering. It identifies
 a scaling concern, not an optimization gain or a physical-desktop latency claim.
+
+
+## 17. Short-query optimization — 2026-11-13
+
+[Paired results, raw samples and reproduction](benchmarks/short-query-optimization-2026-11-13/README.md)
+compare `25602fc` with `e0ebc35` on the same Intel N95, Rust 1.94.0 release profile
+and tmpfs fixture. Five alternating process pairs cover eleven query shapes at
+10k and 100k files; all 3,300 result counts and ordered path/score fingerprints agree.
+
+At 100k files, the median of process medians drops from 44.815 to 4.614 ms for
+`zz/` and from 65.284 to 24.811 ms for `re zz`. Both exceed the declared 20%
+relative improvement gate and observed run-to-run variance. Directory-only short
+path probes and early literal-token filtering avoid decoding rejected file rows.
+Candidate budgets, access filters, ranking and one read snapshot are preserved.
+
+The matching-token control `re po` costs about 0.09 ms more (3.1%); this is a
+measured tradeoff, not a universal speedup. Ordinary controls mostly overlap.
+The linked dataset records ranges, rejected experiments and limitations. These
+warm-cache library timings exclude live filesystem checks, D-Bus and rendering;
+physical-desktop and opening-to-results improvements remain unmeasured.

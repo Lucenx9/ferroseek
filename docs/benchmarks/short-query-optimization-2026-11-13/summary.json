@@ -1,0 +1,354 @@
+[
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "exact",
+    "median_ms": 0.504475,
+    "min_ms": 0.497046,
+    "max_ms": 0.511757
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "long-path-miss",
+    "median_ms": 0.054121,
+    "min_ms": 0.051255,
+    "max_ms": 0.054871
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "mixed-hit",
+    "median_ms": 0.25626299999999996,
+    "min_ms": 0.25362799999999996,
+    "max_ms": 0.259921
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "ordinary-miss",
+    "median_ms": 0.0335,
+    "min_ms": 0.032536,
+    "max_ms": 0.034747
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "ordinary-prefix",
+    "median_ms": 2.875873,
+    "min_ms": 2.87106,
+    "max_ms": 2.93848
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "path-hit",
+    "median_ms": 0.263212,
+    "min_ms": 0.259129,
+    "max_ms": 0.265993
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "short-path-hit",
+    "median_ms": 1.4216710000000001,
+    "min_ms": 1.418584,
+    "max_ms": 1.547921
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "short-path-miss",
+    "median_ms": 0.357931,
+    "min_ms": 0.347161,
+    "max_ms": 0.36521800000000004
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "short-root-hit",
+    "median_ms": 2.471317,
+    "min_ms": 2.470957,
+    "max_ms": 2.523462
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "short-tokens-hit",
+    "median_ms": 2.871846,
+    "min_ms": 2.8566689999999997,
+    "max_ms": 2.9647550000000003
+  },
+  {
+    "variant": "after",
+    "files": 10000,
+    "case": "short-tokens-miss",
+    "median_ms": 2.353029,
+    "min_ms": 2.261681,
+    "max_ms": 2.4530459999999996
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "exact",
+    "median_ms": 0.900466,
+    "min_ms": 0.8921549999999999,
+    "max_ms": 0.9161860000000001
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "long-path-miss",
+    "median_ms": 0.08208199999999999,
+    "min_ms": 0.08155899999999999,
+    "max_ms": 0.083524
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "mixed-hit",
+    "median_ms": 4.303192,
+    "min_ms": 4.270231,
+    "max_ms": 4.358356
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "ordinary-miss",
+    "median_ms": 0.059491,
+    "min_ms": 0.058986,
+    "max_ms": 0.07380800000000001
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "ordinary-prefix",
+    "median_ms": 3.069579,
+    "min_ms": 3.0296060000000002,
+    "max_ms": 3.156275
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "path-hit",
+    "median_ms": 4.2628,
+    "min_ms": 4.19531,
+    "max_ms": 4.307131
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "short-path-hit",
+    "median_ms": 37.897876,
+    "min_ms": 37.631285000000005,
+    "max_ms": 38.071106
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "short-path-miss",
+    "median_ms": 4.614388,
+    "min_ms": 4.534125,
+    "max_ms": 4.6875990000000005
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "short-root-hit",
+    "median_ms": 2.543,
+    "min_ms": 2.493208,
+    "max_ms": 2.570181
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "short-tokens-hit",
+    "median_ms": 2.9613229999999997,
+    "min_ms": 2.898628,
+    "max_ms": 2.981458
+  },
+  {
+    "variant": "after",
+    "files": 100000,
+    "case": "short-tokens-miss",
+    "median_ms": 24.81079,
+    "min_ms": 24.466036,
+    "max_ms": 25.440149
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "exact",
+    "median_ms": 0.504853,
+    "min_ms": 0.487743,
+    "max_ms": 0.508601
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "long-path-miss",
+    "median_ms": 0.052427,
+    "min_ms": 0.052031,
+    "max_ms": 0.05674
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "mixed-hit",
+    "median_ms": 0.25762599999999997,
+    "min_ms": 0.256141,
+    "max_ms": 0.260354
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "ordinary-miss",
+    "median_ms": 0.034482,
+    "min_ms": 0.032113,
+    "max_ms": 0.039375999999999994
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "ordinary-prefix",
+    "median_ms": 2.9118359999999996,
+    "min_ms": 2.890996,
+    "max_ms": 2.940328
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "path-hit",
+    "median_ms": 0.270993,
+    "min_ms": 0.265793,
+    "max_ms": 0.273343
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "short-path-hit",
+    "median_ms": 4.822302,
+    "min_ms": 4.766662999999999,
+    "max_ms": 5.03116
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "short-path-miss",
+    "median_ms": 4.388459,
+    "min_ms": 4.304054,
+    "max_ms": 4.49058
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "short-root-hit",
+    "median_ms": 2.4953760000000003,
+    "min_ms": 2.485711,
+    "max_ms": 2.5197089999999998
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "short-tokens-hit",
+    "median_ms": 2.773072,
+    "min_ms": 2.7574270000000003,
+    "max_ms": 2.861404
+  },
+  {
+    "variant": "before",
+    "files": 10000,
+    "case": "short-tokens-miss",
+    "median_ms": 6.1926369999999995,
+    "min_ms": 6.163702,
+    "max_ms": 6.272499
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "exact",
+    "median_ms": 0.9098630000000001,
+    "min_ms": 0.8911079999999999,
+    "max_ms": 0.9409930000000001
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "long-path-miss",
+    "median_ms": 0.085191,
+    "min_ms": 0.08285899999999999,
+    "max_ms": 0.089717
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "mixed-hit",
+    "median_ms": 4.276839,
+    "min_ms": 4.257555999999999,
+    "max_ms": 4.405819999999999
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "ordinary-miss",
+    "median_ms": 0.059128,
+    "min_ms": 0.058862000000000005,
+    "max_ms": 0.060847
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "ordinary-prefix",
+    "median_ms": 3.095389,
+    "min_ms": 3.061052,
+    "max_ms": 3.148474
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "path-hit",
+    "median_ms": 4.233981,
+    "min_ms": 4.215167999999999,
+    "max_ms": 4.3202560000000005
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "short-path-hit",
+    "median_ms": 50.1313,
+    "min_ms": 49.730039,
+    "max_ms": 50.512286
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "short-path-miss",
+    "median_ms": 44.814926,
+    "min_ms": 44.472336999999996,
+    "max_ms": 45.445748
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "short-root-hit",
+    "median_ms": 2.5333229999999998,
+    "min_ms": 2.5303519999999997,
+    "max_ms": 2.608054
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "short-tokens-hit",
+    "median_ms": 2.8711100000000003,
+    "min_ms": 2.827076,
+    "max_ms": 2.8954299999999997
+  },
+  {
+    "variant": "before",
+    "files": 100000,
+    "case": "short-tokens-miss",
+    "median_ms": 65.28414699999999,
+    "min_ms": 64.83268,
+    "max_ms": 65.779618
+  }
+]
