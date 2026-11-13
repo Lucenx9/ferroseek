@@ -442,8 +442,11 @@ all access filters before applying budgets; the SQL predicates never cap rows sc
 Scope selection falls back to the original strategy for root anchors or
 more than 256 seed/descendant directories. Recursive traversal explicitly
 uses the parent index: SQLite otherwise chose an expensive automatic index
-in profiling. Scopes with at most 4096 entries are searched directly; larger
-scopes combine the existing filename strategy with SQL parent filtering.
+in profiling. Explicit folder and trigram-derived scopes with at most 4096
+entries are searched directly; larger scopes combine the existing filename
+strategy with SQL parent filtering. Short-component scopes retain the original
+candidate stages and budgets even when small, so narrowing the SQL source does
+not change which ranked candidates are eligible.
 Prefix candidates retain key/id ordering before their budget is applied.
 The entire search holds one SQLite read snapshot.
 

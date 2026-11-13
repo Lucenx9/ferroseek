@@ -644,6 +644,28 @@ fn path_scoping_matches_independent_paths_across_tree_mutations() {
 }
 
 #[test]
+fn short_path_scopes_preserve_candidate_budgets() {
+    let (_t, db) = setup();
+    let (mut w, _) = Writer::open(&db).unwrap();
+    let mut tx = w.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/root"), dir(1)).unwrap();
+    let folder = tx.upsert(root, b"x", dir(2)).unwrap().0;
+    for i in 0..2000 {
+        tx.upsert(folder, format!("az-{i:04}.txt").as_bytes(), file(i + 3)).unwrap();
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as i64;
+    tx.upsert(folder, b"azzzz-later.txt", Meta { mtime_ns: now - 86_400_000_000_000, ..file(2003) }).unwrap();
+    tx.commit().unwrap();
+    let reader = Reader::open(&db).unwrap();
+    let opts = SearchOptions { limit: 15, ..Default::default() };
+    let expected: Vec<_> = (0..15).map(|i| format!("az-{i:04}.txt")).collect();
+    for query in ["x/", "x/ az"] {
+        let hits = reader.search(&Query::parse(query), &opts).unwrap();
+        assert_eq!(names(&hits), expected, "query {query:?}: preserve the streaming/prefix budget");
+    }
+}
+
+#[test]
 fn within_above_roots_and_large_scoped_results() {
     let (_t, db) = setup();
     let (mut w, _) = Writer::open(&db).unwrap();

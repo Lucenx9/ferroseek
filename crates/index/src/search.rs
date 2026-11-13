@@ -52,6 +52,16 @@ impl Query {
     pub fn is_empty(&self) -> bool {
         self.name_tokens.is_empty() && self.path_tokens.iter().all(|t| t.chars().all(|c| c == '/'))
     }
+    fn path_anchor(&self) -> Option<&str> {
+        self.path_tokens
+            .iter()
+            .flat_map(|p| {
+                let (dirs, _) = p.rsplit_once('/').unwrap();
+                dirs.split('/')
+            })
+            .filter(|p| !p.is_empty())
+            .max_by_key(|p| p.chars().count())
+    }
 }
 
 /// A caller-supplied predicate on full paths (e.g. an access policy).
@@ -277,7 +287,10 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     let long: Vec<&String> = q.name_tokens.iter().filter(|t| t.chars().count() >= 3).collect();
     let fts_cap = FTS_CANDIDATES.max(opts.limit.saturating_mul(4));
     let prefix_cap = PREFIX_CANDIDATES.max(opts.limit);
-    let small_scope = if !restriction.is_empty() {
+    // Short-component scopes only narrow the existing stages. Direct
+    // enumeration would change their prefix/streaming candidate budgets.
+    let allow_direct = opts.within.is_some() || q.path_anchor().is_some_and(|a| a.chars().count() >= 3);
+    let small_scope = if allow_direct && !restriction.is_empty() {
         let sql = format!("SELECT count(*) FROM (SELECT 1 FROM entries e WHERE 1{restriction} LIMIT 4097)");
         conn.query_row(&sql, [], |r| r.get::<_, i64>(0))? <= 4096
     } else {
@@ -478,16 +491,7 @@ fn directory_scope(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result
 }
 
 fn path_seed(q: &Query, roots: &[(Id, PathBuf)]) -> Option<String> {
-    let anchor = q
-        .path_tokens
-        .iter()
-        .flat_map(|p| {
-            let (dirs, _) = p.rsplit_once('/').unwrap();
-            dirs.split('/')
-        })
-        .filter(|p| !p.is_empty())
-        .max_by_key(|p| p.chars().count());
-    let anchor = anchor?;
+    let anchor = q.path_anchor()?;
     // A matching root requires the broad fallback anyway. In particular, do
     // not scan every entry for a short component just to discover that root.
     if roots.iter().any(|(_, path)| fold(path.as_os_str().as_bytes()).contains(anchor)) {
