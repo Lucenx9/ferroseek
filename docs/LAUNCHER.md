@@ -651,7 +651,9 @@ ferroseek-launcher
   the query generation and outdated ones are dropped. A new query clears the
   previous file rows, and late results keep the selected row.
 - In `ui.rs`, runtime observations precede appearance routing and the shared
-  modal-input guard. Query changes, file replies, open completions and view
+  modal-input guard. `ui/views.rs` owns secondary-view transitions and reply
+  handlers, including generation checks, while the parent keeps event ordering
+  and input eligibility. Query changes, file replies, open completions and view
   refreshes have separate handlers. Background replies still pass through
   while appearance is open; refactoring this order must preserve generation
   checks, captured targets and the preview/focus synchronization around updates.
@@ -872,7 +874,10 @@ is not compositor acknowledgement or a presented-frame measurement.
 iced's open/resize event and updates the material region to that observed extent.
 It does not acknowledge compositor presentation.
 `backend_ready`, `applications_ready` and `ui_starting` distinguish session-bus
-startup, application discovery and entry into the graphical runtime.
+startup, completion of the application-scan join and entry into the graphical
+runtime. Discovery runs concurrently with bus startup: the interval between
+`backend_ready` and `applications_ready` is the residual join/logging interval,
+not the full scan duration. See the [startup breakdown](benchmarks/launcher-startup-2026-11-13/README.md).
 
 The isolated harness exports schema 3 in `latency.json`. Each sample includes
 the requested mode, observed renderer, first keyboard-focus notification and
