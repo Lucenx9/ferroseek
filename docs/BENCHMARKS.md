@@ -883,3 +883,20 @@ measured tradeoff, not a universal speedup. Ordinary controls mostly overlap.
 The linked dataset records ranges, rejected experiments and limitations. These
 warm-cache library timings exclude live filesystem checks, D-Bus and rendering;
 physical-desktop and opening-to-results improvements remain unmeasured.
+
+## 18. Launcher startup breakdown — 2026-11-13
+
+[Samples, environment and reproduction](benchmarks/launcher-startup-2026-11-13/README.md)
+analyze 60 verified US 1× launches from the successful graphical CI run for
+`a8523c9`, with Rust 1.100.0, virtual KWin 5.27.11 and software rendering on a
+hosted AMD EPYC runner. This is a diagnostic of the existing implementation,
+not a measurement of the later view-handler refactoring.
+
+Across the 19 repeats per mode, median entry into the UI runtime is below
+0.8 ms. The residual interval after bus readiness until the application-scan
+join returns is at most 0.033 ms. Discovery overlaps bus startup, so this is
+not its full duration; the small synthetic catalog does not represent a large
+real desktop catalog. No discovery optimization is justified by this workload.
+Most observed time precedes the first redraw inside the graphical runtime,
+which needs finer profiling before any change. The dataset separates first
+processes, redraw and focus; neither callback measures physical presentation.

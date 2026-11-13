@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
+mod views;
+
 use std::sync::Mutex;
 
 use iced::alignment::{Horizontal, Vertical};
@@ -1275,30 +1277,8 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
         return Task::none();
     }
     match message {
-        Message::PreviewLoaded { generation, result } => {
-            if generation == s.preview_generation
-                && let Some(panel) = &mut s.text_preview
-            {
-                panel.loaded(result);
-                s.preview_request = None;
-                timing::event("preview_loaded");
-            }
-            Task::none()
-        }
-        Message::Preview { generation, event } => {
-            if generation != s.preview_generation {
-                return Task::none();
-            }
-            if !s.preview_visible() {
-                return Task::none();
-            }
-            if matches!(event, preview::Event::Back) {
-                return s.preview_effect(preview::Effect::Close);
-            }
-            let Some(panel) = &mut s.text_preview else { return Task::none() };
-            let effect = panel.event(event);
-            s.preview_effect(effect)
-        }
+        Message::PreviewLoaded { generation, result } => s.preview_loaded(generation, result),
+        Message::Preview { generation, event } => s.preview_event(generation, event),
         Message::RefreshSearchStatus => refresh_current_view(s),
         Message::Wheel(_) if s.preview_visible() && s.panel.is_none() => Task::none(),
         Message::ResultsWheel(_) if !s.preview_visible() => Task::none(),
@@ -1310,116 +1290,29 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
                 Task::none()
             }
         }
-        Message::DetailsLoaded { generation, result } => {
-            if generation == s.details_generation
-                && let Some(panel) = &mut s.file_details
-            {
-                panel.loaded(result);
-            }
-            Task::none()
-        }
-        Message::Details { generation, event } => {
-            if generation != s.details_generation {
-                return Task::none();
-            }
-            let Some(panel) = &mut s.file_details else { return Task::none() };
-            let effect = panel.event(event);
-            s.details_effect(effect)
-        }
+        Message::DetailsLoaded { generation, result } => s.details_loaded(generation, result),
+        Message::Details { generation, event } => s.details_event(generation, event),
         Message::Wheel(_) if s.file_details.is_some() => Task::none(),
-        Message::ApplicationsLoaded { generation, result } => {
-            if generation == s.application_generation
-                && let Some(panel) = &mut s.application_picker
-            {
-                panel.loaded(result, &mut s.icons);
-                timing::event("applications_loaded");
-                return Task::batch([s.resize(), crate::input::focus(open_with::input_id())]);
-            }
-            Task::none()
-        }
-        Message::OpenWith { generation, event } => {
-            if generation != s.application_generation {
-                return Task::none();
-            }
-            if s.opening.is_some() && !matches!(event, open_with::Event::Back) {
-                return Task::none();
-            }
-            let Some(panel) = &mut s.application_picker else { return Task::none() };
-            if matches!(event, open_with::Event::Query(_)) {
-                timing::event("application_input");
-            }
-            let effect = panel.event(event);
-            s.application_effect(effect)
-        }
+        Message::ApplicationsLoaded { generation, result } => s.applications_loaded(generation, result),
+        Message::OpenWith { generation, event } => s.open_with_event(generation, event),
         Message::ShowAppearance
             if s.opening.is_none()
                 && s.folder_settings.is_none()
                 && s.file_details.is_none()
                 && s.application_picker.is_none() =>
         {
-            s.panel = None;
-            s.search_status = None;
-            s.clicks = ClickTracker::default();
-            s.appearance_generation += 1;
-            let generation = s.appearance_generation;
-            let panel = appearance::Panel::new(s.settings_path.clone(), s.preferences);
-            let load = panel.load().map(move |event| Message::Appearance { generation, event });
-            s.appearance = Some(panel);
-            timing::event("appearance_opened");
-            Task::batch([load, s.resize()])
+            s.show_appearance()
         }
         Message::Ui(UiEvent::DesktopAppearance(dark)) => {
             s.system_dark = dark;
             Task::none()
         }
-        Message::ShowFolders => {
-            if let Some(panel) = &mut s.folder_settings {
-                let (task, effect) = panel.update(folders::Event::Back, s.backend.clone());
-                s.finish_folders(task, effect)
-            } else if s.opening.is_some() {
-                Task::none()
-            } else {
-                s.show_folders(false)
-            }
-        }
-        Message::FolderShortcut(shortcut) => {
-            let Some(panel) = &mut s.folder_settings else { return Task::none() };
-            let (task, effect) = panel.shortcut(shortcut, s.backend.clone());
-            s.finish_folders(task, effect)
-        }
-        Message::Folder { generation, event } => {
-            if generation != s.folder_generation {
-                return Task::none();
-            }
-            let Some(panel) = &mut s.folder_settings else { return Task::none() };
-            let (task, effect) = panel.update(event, s.backend.clone());
-            s.finish_folders(task, effect)
-        }
-        Message::ShowSearchStatus => {
-            if s.search_status.is_some() {
-                return update(s, Message::CloseSearchStatus);
-            }
-            if s.opening.is_some() {
-                return Task::none();
-            }
-            s.clicks = ClickTracker::default();
-            s.panel = None;
-            let load = s.refresh_search_status();
-            Task::batch([load, s.resize()])
-        }
-        Message::CloseSearchStatus => {
-            s.search_status = None;
-            Task::batch([s.resize(), crate::input::focus(search_id())])
-        }
-        Message::SearchStatusLoaded { generation, result } => {
-            if generation == s.status_generation && s.search_status.is_some() {
-                s.search_status = Some(match result {
-                    Ok(status) => SearchStatusPanel::Ready(status),
-                    Err(error) => SearchStatusPanel::Error(error),
-                });
-            }
-            Task::none()
-        }
+        Message::ShowFolders => s.toggle_folders(),
+        Message::FolderShortcut(shortcut) => s.folder_shortcut(shortcut),
+        Message::Folder { generation, event } => s.folder_event(generation, event),
+        Message::ShowSearchStatus => s.toggle_search_status(),
+        Message::CloseSearchStatus => s.close_search_status(),
+        Message::SearchStatusLoaded { generation, result } => s.search_status_loaded(generation, result),
         Message::ContextQuery { generation, query } => {
             if generation == s.scope_generation {
                 update(s, Message::Query(query))
