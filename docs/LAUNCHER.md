@@ -192,6 +192,8 @@ leave room for its target, search field and return hint. Up/Down and the mouse w
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
+Scrolling over the action panel affects only its actions, including while a
+text preview is open. Horizontal scrolling leaves the selection unchanged.
 The target name above the filter uses primary text. Pointer hover highlights a
 command without moving the keyboard selection. The footer shows Enter to run
 the selected matching action alongside the current Escape step. With no matches,
