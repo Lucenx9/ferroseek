@@ -50,7 +50,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
 with the tiny-skia renderer and synthetic data. The refreshed search, folder
-browser, action panel, application chooser and text-preview images use the same setup. These captures do not extend
+browser, application chooser and text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
@@ -188,7 +188,8 @@ open and returns focus to the main search field. Clicking the main field and
 typing closes actions and starts the new search.
 
 The panel shows up to eight actions at a time, with fewer on short outputs to
-leave room for its target, search field and return hint. Up/Down and the mouse wheel move
+leave room for its target, search field and return hint. The filter and return
+hint stay in place as matches change. Up/Down and the mouse wheel move
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
 the first/last action. A range indicator appears for longer menus. Numbers
 always refer to the currently visible actions.
@@ -200,6 +201,9 @@ the selected matching action alongside the current Escape step. With no matches,
 it suggests another action name and omits the Enter hint.
 
 ![Searchable actions for a synthetic application](assets/launcher-actions.png)
+
+Native capture at 1× using Compact, Iron and Solid with tiny-skia in an isolated
+KWin 6.3.6 session nested in Xvfb.
 
 Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
 applies the command and focuses the current field before delivering later input
@@ -215,7 +219,8 @@ Click a result once to select it; double-click or press Enter to open it.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**
-in the footer. A click on a result that disappears while results update is
+in the footer. Click **Close actions** in the same place to return to search.
+A click on a result that disappears while results update is
 ignored rather than opening a different row. Action clicks also keep the target
 and action they were drawn for; changing a filter cannot redirect a queued click
 to another command.
