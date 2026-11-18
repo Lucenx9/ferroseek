@@ -44,6 +44,10 @@ pub const WIDTH: u32 = 720;
 const PREVIEW_WIDTH: u32 = 980;
 const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
 const ICON_SIZE: f32 = 28.0;
+const KEYCAP_SIZE: f32 = 11.0;
+const KEYCAP_INSET: f32 = 6.0;
+const ACTION_ROW_HEIGHT: f32 = 34.0;
+const ACTION_ROW_GAP: f32 = 2.0;
 /// Below this, file search is not run (the daemon needs two characters).
 const MIN_FILE_QUERY: usize = 2;
 const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
@@ -2320,9 +2324,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
                 color: Some(palette::DIM.resolve(theme)),
             }));
     }
-    if s.panel.is_none() {
-        content = content.push(numbered_hint(slot, selected));
-    }
+    content = content.push(numbered_slot(slot, selected, s.panel.is_none()));
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(12));
     // With the row's 4 px inset, 4 + 3 + 9 px keeps the icon on the 28 px gutter.
     let bar = selection_bar(selected, ROW_HEIGHT / 2.0);
@@ -2350,7 +2352,6 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
-    let theme = &s.appearance_theme(false);
     if s.unconfirmed_open {
         return container(text(UNCONFIRMED_OPEN).size(12).style(move |theme: &iced::Theme| {
             iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
@@ -2363,84 +2364,84 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         .into();
     }
     let (msg, color) = match &s.status {
-        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR.resolve(theme)),
-        Status::Notice(n) => (n.clone(), palette::ACCENT.resolve(theme)),
+        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
+        Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
-            ("Loading folder…".into(), palette::DIM.resolve(theme))
+            ("Loading folder…".into(), palette::DIM)
         }
-        Status::Searching => ("Searching…".to_string(), palette::DIM.resolve(theme)),
+        Status::Searching => ("Searching…".to_string(), palette::DIM),
         Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
             if s.folder_more {
                 format!("First {} indexed items · Type to search", s.items.len())
             } else {
                 format!("{} indexed items", s.items.len())
             },
-            palette::DIM.resolve(theme),
+            palette::DIM,
         ),
         Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
-            ("Calculator".to_string(), palette::DIM.resolve(theme))
+            ("Calculator".to_string(), palette::DIM)
         }
-        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => {
-            ("No results".to_string(), palette::DIM.resolve(theme))
-        }
-        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM.resolve(theme)),
-        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM.resolve(theme)),
+        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
+        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
+        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
         Status::Idle => match s.items.len() {
-            1 => ("1 result".to_string(), palette::DIM.resolve(theme)),
-            n => (format!("{n} results"), palette::DIM.resolve(theme)),
+            1 => ("1 result".to_string(), palette::DIM),
+            n => (format!("{n} results"), palette::DIM),
         },
     };
-    let mut hints = row![].spacing(12).align_y(Vertical::Center);
-    if let Some(item) = s.selected() {
-        let acts = s.actions_for(&item.target);
-        hints = hints.push(primary_hint("Enter", acts[0].label()));
-        if let Some(action) = model::secondary_action(&acts).filter(|_| s.window_width >= 640) {
+    let status = widget::responsive(move |size| {
+        text(label_for_width(&msg, size.width, 12.0, false))
+            .size(12)
+            .style(move |theme: &Theme| text::Style { color: Some(color.resolve(theme)) })
+            .wrapping(text::Wrapping::None)
+            .into()
+    })
+    .height(Length::Shrink);
+    container(row![status, search_hints(s)].spacing(12).align_y(Vertical::Center).padding(padding::left(16).right(10)))
+        .height(FOOTER_HEIGHT)
+        .align_y(Vertical::Center)
+        .style(footer_style)
+        .into()
+}
+
+fn search_hints(s: &Launcher) -> Element<'_, Message> {
+    if s.panel.is_some() {
+        return button(primary_hint("Ctrl+K", "Close actions"))
+            .on_press(Message::Cmd(Command::ToggleActions))
+            .padding([3, 6])
+            .height(24)
+            .style(status_button_style)
+            .into();
+    }
+    let Some(item) = s.selected() else {
+        // Same inset as the Actions button, so the last hint keeps the right edge.
+        let label = match (s.preview_visible(), s.query.is_empty(), s.search_folder.is_some()) {
+            (true, _, _) => "Hide preview",
+            (_, false, _) => "Clear search",
+            (_, _, true) => "Previous search",
+            _ => "Close",
+        };
+        return container(hint("Esc", label)).padding([3, 6]).into();
+    };
+    let acts = s.actions_for(&item.target);
+    let mut hints = row![primary_hint("Enter", acts[0].label())].spacing(12).align_y(Vertical::Center);
+    if s.window_width >= 640 {
+        if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
         }
-        if s.window_width >= 640 && acts.contains(&Action::BrowseFolder) {
+        if acts.contains(&Action::BrowseFolder) {
             hints = hints.push(hint("Alt+→", "Browse here"));
         }
-        hints = hints.push(
+    }
+    hints
+        .push(
             button(hint("Ctrl+K", "Actions"))
                 .on_press(Message::Cmd(Command::ToggleActions))
                 .padding([3, 6])
                 .height(24)
                 .style(status_button_style),
-        );
-    } else {
-        // Same inset as the Actions button, so the last hint keeps the right edge.
-        hints = hints.push(
-            container(hint(
-                "Esc",
-                if s.preview_visible() {
-                    "Hide preview"
-                } else if !s.query.is_empty() {
-                    "Clear search"
-                } else if s.search_folder.is_some() {
-                    "Previous search"
-                } else {
-                    "Close"
-                },
-            ))
-            .padding([3, 6]),
-        );
-    }
-    container(
-        row![
-            text(ellipsize_end(&msg, if s.window_width < 640 { 42 } else { 70 }))
-                .width(Length::Fill)
-                .size(12)
-                .color(color)
-                .wrapping(text::Wrapping::None),
-            hints
-        ]
-        .align_y(Vertical::Center)
-        .padding(padding::left(16).right(10)),
-    )
-    .height(FOOTER_HEIGHT)
-    .align_y(Vertical::Center)
-    .style(footer_style)
-    .into()
+        )
+        .into()
 }
 
 pub(crate) fn footer_style(theme: &Theme) -> container::Style {
@@ -2477,10 +2478,10 @@ pub(crate) fn primary_hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'
 }
 
 fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>, prominent: bool) -> Element<'a, M> {
-    container(text(key).size(11).wrapping(text::Wrapping::None).style(move |theme: &iced::Theme| {
+    container(text(key).size(KEYCAP_SIZE).wrapping(text::Wrapping::None).style(move |theme: &iced::Theme| {
         iced::widget::text::Style { color: Some(if prominent { palette::TEXT } else { palette::DIM }.resolve(theme)) }
     }))
-    .padding([1, 6])
+    .padding([1.0, KEYCAP_INSET])
     .style(move |theme| container::Style {
         background: prominent.then_some(Background::Color(palette::FAINT.resolve(theme))),
         border: Border {
@@ -2494,13 +2495,27 @@ fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>, prominent: bool) -> Eleme
 }
 
 pub(crate) fn numbered_hint<M: 'static>(slot: usize, selected: bool) -> Element<'static, M> {
-    if slot < model::NUMBERED_SLOTS { keycap(format!("Ctrl+{}", slot + 1), selected) } else { space().into() }
+    numbered_slot(slot, selected, true)
+}
+
+fn numbered_slot<M: 'static>(slot: usize, selected: bool, available: bool) -> Element<'static, M> {
+    if slot >= model::NUMBERED_SLOTS {
+        return space().into();
+    }
+    let label = format!("Ctrl+{}", slot + 1);
+    if available {
+        keycap(label, selected)
+    } else {
+        // Action shortcuts take over without changing the result's text width.
+        space().width(text_width(&label, KEYCAP_SIZE) + 2.0 * KEYCAP_INSET).into()
+    }
 }
 
 fn action_rows(height: u32) -> usize {
     // Reserve surface margins, panel padding, title, query and return hint.
     // Each command needs its 34 px row and the 2 px gap between rows.
-    (height.saturating_sub(208) / 36).clamp(1, model::NUMBERED_SLOTS as u32) as usize
+    (height.saturating_sub(208) / (ACTION_ROW_HEIGHT + ACTION_ROW_GAP) as u32).clamp(1, model::NUMBERED_SLOTS as u32)
+        as usize
 }
 
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
@@ -2514,8 +2529,8 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let file_title = matches!(target, Target::File(_));
     let title = container(
         widget::responsive(move |size| {
-            text(label_for_width(&p.title, size.width, 13.0, file_title))
-                .size(13)
+            text(label_for_width(&p.title, size.width, 15.0, file_title))
+                .size(15)
                 .wrapping(text::Wrapping::None)
                 .style(move |theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) })
                 .into()
@@ -2524,8 +2539,54 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     )
     .padding([0, 12]);
     let header = column![title, input].spacing(8);
-    let mut list = column![].spacing(2);
     let actions = p.filtered_actions();
+    let list = action_list(p, target, &actions);
+    let mut run = row![].spacing(12).align_y(Vertical::Center);
+    if actions.len() > p.cursor.visible {
+        let window = p.cursor.window(actions.len());
+        run = run.push(
+            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len()))
+                .size(11)
+                .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+        );
+    }
+    if !actions.is_empty() {
+        run = run.push(primary_hint("Enter", "Run"));
+    }
+    let footer =
+        row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" }), space::horizontal(), run]
+            .align_y(Vertical::Center)
+            .padding([4, 12]);
+    let col = column![header, list, footer].spacing(8);
+    let panel = container(col).width(360).padding(8).style(|theme| container::Style {
+        background: Some(Background::Color(palette::RAISED.resolve(theme))),
+        border: Border { color: palette::BORDER.resolve(theme), width: 1.0, radius: 10.0.into() },
+        text_color: Some(palette::TEXT.resolve(theme)),
+        // No shadow: iced_tiny_skia 0.14 paints it unclipped on partial redraws
+        // (cursor blink), darkening the panel. RAISED and the border lift it.
+        ..Default::default()
+    });
+    let panel = mouse_area(panel)
+        // A click between commands keeps the panel and restores its field focus.
+        .on_press(Message::Cmd(Command::OpenActions))
+        .on_scroll(|delta| {
+            let y = match delta {
+                ScrollDelta::Lines { y, .. } => y,
+                ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
+            };
+            Message::Wheel(y)
+        });
+    container(widget::opaque(panel))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Horizontal::Right)
+        .align_y(Vertical::Bottom)
+        .padding([FOOTER_HEIGHT + PAD + 4.0, PAD + 8.0])
+        .into()
+}
+
+fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element<'a, Message> {
+    let mut list = column![].spacing(ACTION_ROW_GAP);
     if actions.is_empty() {
         list = list.push(
             container(
@@ -2537,7 +2598,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 ]
                 .spacing(4),
             )
-            .padding(12),
+            .padding(padding::top(4).left(12).right(12)),
         );
     }
     for (slot, i) in p.cursor.window(actions.len()).enumerate() {
@@ -2558,7 +2619,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .align_y(Vertical::Center)
         .padding(padding::left(5).right(12));
         let r = container(row![selection_bar(selected, 18.0), content].align_y(Vertical::Center))
-            .height(34)
+            .height(ACTION_ROW_HEIGHT)
             .width(Length::Fill)
             .align_y(Vertical::Center)
             .style(move |theme| container::Style {
@@ -2577,65 +2638,33 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
                 .interaction(mouse::Interaction::Pointer),
         );
     }
-    let mut footer = row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" })]
-        .align_y(Vertical::Center)
-        .padding([4, 12]);
-    if !actions.is_empty() {
-        footer = footer.push(space::horizontal()).push(primary_hint("Enter", "Run"));
-    }
-    if actions.len() > p.cursor.visible {
-        let window = p.cursor.window(actions.len());
-        footer = footer.push(space::horizontal()).push(
-            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len())).size(11).style(
-                move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
-            ),
-        );
-    }
-    let col = column![header, list, footer].spacing(8);
-    let panel = container(col).width(360).padding(8).style(|theme| container::Style {
-        background: Some(Background::Color(palette::RAISED.resolve(theme))),
-        border: Border { color: palette::BORDER.resolve(theme), width: 1.0, radius: 10.0.into() },
-        text_color: Some(palette::TEXT.resolve(theme)),
-        // No shadow: iced_tiny_skia 0.14 paints it unclipped on partial redraws
-        // (cursor blink), darkening the panel. RAISED and the border lift it.
-        ..Default::default()
-    });
-    let panel = mouse_area(panel).on_scroll(|delta| {
-        let y = match delta {
-            ScrollDelta::Lines { y, .. } => y,
-            ScrollDelta::Pixels { y, .. } => y / ROW_HEIGHT,
-        };
-        Message::Wheel(y)
-    });
-    container(panel)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Horizontal::Right)
-        .align_y(Vertical::Bottom)
-        .padding([FOOTER_HEIGHT + PAD + 4.0, PAD + 8.0])
-        .into()
+    // Reserve the unfiltered list's room so the focused field stays under the caret.
+    let slots = p.actions.len().min(p.cursor.visible) as f32;
+    let list_height = (slots * (ACTION_ROW_HEIGHT + ACTION_ROW_GAP) - ACTION_ROW_GAP).max(44.0);
+    container(list).height(list_height).into()
 }
 
-pub(crate) fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
+fn text_width(content: &str, size: f32) -> f32 {
     use iced::advanced::text::{Paragraph, Renderer};
 
     // Measure the same default font and shaping as the labels; character counts
     // cannot predict wide glyphs or the space left by icons, tags and the sidebar.
-    let fits = |content: &str| {
-        <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
-            content,
-            bounds: iced::Size::INFINITE,
-            size: iced::Pixels(size),
-            line_height: Default::default(),
-            font: iced::Font::DEFAULT,
-            align_x: Default::default(),
-            align_y: Vertical::Top,
-            shaping: Default::default(),
-            wrapping: text::Wrapping::None,
-        })
-        .min_width()
-            <= width
-    };
+    <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
+        content,
+        bounds: iced::Size::INFINITE,
+        size: iced::Pixels(size),
+        line_height: Default::default(),
+        font: iced::Font::DEFAULT,
+        align_x: Default::default(),
+        align_y: Vertical::Top,
+        shaping: Default::default(),
+        wrapping: text::Wrapping::None,
+    })
+    .min_width()
+}
+
+pub(crate) fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
+    let fits = |content: &str| text_width(content, size) <= width;
     if fits(value) {
         return value.to_string();
     }
@@ -6149,5 +6178,31 @@ mod tests {
         }
         let _ = command(&mut state, Command::Back);
         assert!(state.panel.is_none());
+    }
+
+    #[test]
+    fn filtering_actions_keeps_the_field_and_return_hint_in_place() {
+        let mut state = application_actions(&["New window", "Other window"]);
+        for bounds in [(320, 332), (640, 332), (640, 480), (1280, 800)] {
+            state.output_bounds = Some(bounds);
+            let _ = state.resize();
+            let snapshot = |state: &Launcher| {
+                let panel = state.panel.as_ref().unwrap();
+                rendered_labels(
+                    action_panel(panel, &state.selected().unwrap().target),
+                    iced::Size::new(state.window_width as f32, state.window_height as f32),
+                )
+            };
+            let before = snapshot(&state);
+            let escape = |labels: &RenderedLabels| labels.text.iter().find(|(value, _)| value == "Esc").unwrap().1;
+            for query in ["other window", "no matching command"] {
+                let _ = update(&mut state, Message::ActionQuery(query.into()));
+                let after = snapshot(&state);
+                assert_eq!(after.inputs, before.inputs, "the focused field moved after filtering at {bounds:?}");
+                assert_eq!(escape(&after).y, escape(&before).y, "the return hint moved at {bounds:?}");
+                assert_eq!(after.text.iter().any(|(value, _)| value == "Run"), query == "other window");
+            }
+            let _ = command(&mut state, Command::Back);
+        }
     }
 }
