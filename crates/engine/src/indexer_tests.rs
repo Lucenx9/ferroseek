@@ -228,6 +228,44 @@ fn replacing_a_root_directory_stops_events_from_the_old_inode() {
 }
 
 #[test]
+fn replacing_a_directory_with_an_unwatchable_one_retires_the_old_watch() {
+    let mut surviving = Vec::new();
+    for (relative, scan) in [("", true), ("nested", true), ("nested", false)] {
+        let mut f = fx();
+        let replacement = f.p(relative);
+        touch(&replacement.join("old-child/keep.txt"));
+        f.scan(Mode::Quick);
+        let outside = f._t.path().join("outside");
+        fs::rename(&replacement, &outside).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o100)).unwrap();
+        let probe = Inotify::new().unwrap().add_watch(&replacement, crate::inotify::DIR_MASK);
+        if probe.is_ok() {
+            // A process with CAP_DAC_OVERRIDE can still watch this directory.
+            fs::set_permissions(&replacement, fs::Permissions::from_mode(0o700)).unwrap();
+            return;
+        }
+        assert_eq!(probe.unwrap_err().raw_os_error(), Some(libc::EACCES));
+
+        if scan {
+            f.scan(Mode::Quick);
+        }
+        f.settle();
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(f.find("keep").len(), 1, "an unreadable replacement preserves cached entries");
+
+        touch(&outside.join("outside-report.txt"));
+        touch(&outside.join("old-child/outside-report.txt"));
+        let mut events = Vec::new();
+        f.ix.st.ino.as_ref().unwrap().read_available(&mut [0; 4096], &mut events).unwrap();
+        if events.iter().any(|event| event.name == b"outside-report.txt") {
+            surviving.push((relative, scan));
+        }
+    }
+    assert!(surviving.is_empty(), "old watches still delivered events for {surviving:?}");
+}
+
+#[test]
 fn initial_scan_respects_exclusions() {
     let mut f = fx();
     touch(&f.p("docs/report.txt"));

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
-use ferroseek_index::{Change, Id, Kind, Meta, Txn, Writer};
+use ferroseek_index::{Change, Child, Id, Kind, Meta, Txn, Writer};
 
 use crate::config::{Rules, has_cachedir_tag};
 use crate::inotify::{self, Inotify, RawEvent};
@@ -329,37 +329,43 @@ impl State {
         std::mem::take(&mut self.retry)
     }
 
-    fn watch(&mut self, path: &Path, id: Id) {
+    fn watch(&mut self, path: &Path, directory: Child) {
         let Some(ino) = &self.ino else { return };
+        let id = directory.id;
         match ino.add_watch(path, inotify::DIR_MASK) {
-            Ok(wd) => {
-                if let Some(prev) = self.watches.insert(wd, id)
-                    && prev != id
-                    && self.by_id.get(&prev) == Some(&wd)
-                {
-                    self.by_id.remove(&prev);
-                }
-                if let Some(old) = self.by_id.insert(id, wd)
-                    && old != wd
-                    && self.watches.get(&old) == Some(&id)
-                {
-                    self.watches.remove(&old);
-                    // A replaced directory can still exist at another path.
-                    let _ = ino.rm_watch(old);
-                }
+            Ok(wd) if self.by_id.get(&id) != Some(&wd) => {
+                self.unwatch(id);
+                self.forget_wd(wd);
+                self.watches.insert(wd, id);
+                self.by_id.insert(id, wd);
             }
-            Err(e) if e.raw_os_error() == Some(libc::ENOSPC) => {
-                if !self.watch_limit_hit {
-                    log::warn!(
-                        "inotify watch limit reached (fs.inotify.max_user_watches); \
-                         further directories are only covered by periodic reconciliation"
-                    );
-                }
-                self.watch_limit_hit = true;
-                self.status.watch_limit_hit.store(true, Relaxed);
-            }
-            Err(e) => log::debug!("cannot watch {}: {e}", path.display()),
+            Ok(_) => {}
+            Err(e) => self.watch_failed(path, directory, e),
         }
+    }
+
+    fn watch_failed(&mut self, path: &Path, directory: Child, error: io::Error) {
+        let id = directory.id;
+        let limit_hit = error.raw_os_error() == Some(libc::ENOSPC);
+        if self.by_id.contains_key(&id) && self.metadata(path).is_ok_and(|md| md.ino() != directory.meta.ino) {
+            self.unwatch(id);
+            if limit_hit {
+                // Releasing the old watch can free the slot for the replacement.
+                return self.watch(path, directory);
+            }
+        }
+        if !limit_hit {
+            log::debug!("cannot watch {}: {error}", path.display());
+            return;
+        }
+        if !self.watch_limit_hit {
+            log::warn!(
+                "inotify watch limit reached (fs.inotify.max_user_watches); \
+                 further directories are only covered by periodic reconciliation"
+            );
+        }
+        self.watch_limit_hit = true;
+        self.status.watch_limit_hit.store(true, Relaxed);
     }
 
     fn unwatch(&mut self, id: Id) {
@@ -380,10 +386,16 @@ impl State {
         }
     }
 
-    fn drop_subtree(&mut self, tx: &mut Txn<'_>, id: Id) -> Result<()> {
-        for d in tx.subtree_dirs(id)? {
-            self.unwatch(d);
+    fn unwatch_descendants(&mut self, tx: &Txn<'_>, id: Id) -> Result<()> {
+        for dir in tx.subtree_dirs(id)?.into_iter().filter(|&dir| dir != id) {
+            self.unwatch(dir);
         }
+        Ok(())
+    }
+
+    fn drop_subtree(&mut self, tx: &mut Txn<'_>, id: Id) -> Result<()> {
+        self.unwatch_descendants(tx, id)?;
+        self.unwatch(id);
         tx.delete(id)?;
         Ok(())
     }
@@ -392,6 +404,21 @@ impl State {
         for (_, c) in tx.children(id)? {
             self.drop_subtree(tx, c.id)?;
         }
+        Ok(())
+    }
+
+    fn retire_replaced_directory(&mut self, tx: &mut Txn<'_>, previous: &Child, replacement: Meta) -> Result<()> {
+        if previous.meta.kind != Kind::Dir {
+            return Ok(());
+        }
+        if replacement.kind != Kind::Dir {
+            self.drop_children(tx, previous.id)?;
+        } else if replacement.ino != previous.meta.ino {
+            self.unwatch_descendants(tx, previous.id)?;
+        } else {
+            return Ok(());
+        }
+        self.unwatch(previous.id);
         Ok(())
     }
 
@@ -407,40 +434,56 @@ impl State {
             && !self.roots.iter().any(|r| r == path)
     }
 
+    fn prepare_directory_listing(
+        &mut self,
+        tx: &mut Txn<'_>,
+        path: &Path,
+        directory: Child,
+    ) -> Result<Option<(fs::Metadata, u32)>> {
+        let Child { id, meta: stored } = directory;
+        let depth = self.depth(path);
+        if depth > self.rules.max_depth {
+            self.drop_children(tx, id)?;
+            self.unwatch(id);
+            return Ok(None);
+        }
+        // Watch before listing, so nothing created after the listing is
+        // missed.
+        self.watch(path, directory);
+        let md = match self.metadata(path) {
+            Ok(md) if md.is_dir() => md,
+            // Gone or replaced by a non-directory: removal is the parent's
+            // (or an event's) job, keyed by name.
+            Ok(_) => return Ok(None),
+            Err(e) => {
+                log::debug!("cannot stat {}: {e}", path.display());
+                self.status.errors.fetch_add(1, Relaxed);
+                tx.mark_dir_reconciled(id, 0, stored.ino)?;
+                return Ok(None);
+            }
+        };
+        if md.ino() != stored.ino {
+            self.unwatch_descendants(tx, id)?;
+        }
+        if self.rules.respect_cachedir_tag && has_cachedir_tag(path) {
+            self.drop_children(tx, id)?;
+            // Tag contents can change without changing the directory mtime.
+            tx.mark_dir_reconciled(id, 0, md.ino())?;
+            return Ok(None);
+        }
+        Ok(Some((md, depth)))
+    }
+
     fn reconcile_dir(&mut self, tx: &mut Txn<'_>, id: Id, mode: Mode) -> Result<()> {
         let Some(path) = tx.path(id)? else { return Ok(()) };
         let Some(stored) = tx.meta(id)? else { return Ok(()) };
         if stored.kind != Kind::Dir {
             return Ok(());
         }
-        let depth = self.depth(&path);
-        if depth > self.rules.max_depth {
-            self.drop_children(tx, id)?;
-            self.unwatch(id);
+        let Some((md, depth)) = self.prepare_directory_listing(tx, &path, Child { id, meta: stored })? else {
             return Ok(());
-        }
-        // Watch before listing, so nothing created after the listing is
-        // missed.
-        self.watch(&path, id);
-        let md = match self.metadata(&path) {
-            Ok(m) if m.is_dir() => m,
-            // Gone or replaced by a non-directory: removal is the parent's
-            // (or an event's) job, keyed by name.
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                log::debug!("cannot stat {}: {e}", path.display());
-                self.status.errors.fetch_add(1, Relaxed);
-                tx.mark_dir_reconciled(id, 0, stored.ino)?;
-                return Ok(());
-            }
         };
         let cur = Meta::from_metadata(&md);
-        if self.rules.respect_cachedir_tag && has_cachedir_tag(&path) {
-            self.drop_children(tx, id)?;
-            // Tag contents can change without changing the directory mtime.
-            tx.mark_dir_reconciled(id, 0, cur.ino)?;
-            return Ok(());
-        }
         if mode == Mode::Quick && stored.mtime_ns != 0 && stored.mtime_ns == cur.mtime_ns && stored.ino == cur.ino {
             if depth < self.rules.max_depth {
                 for (cid, _) in tx.child_dirs(id)? {
@@ -470,7 +513,7 @@ impl State {
             })
             .collect::<Vec<_>>()
             .into_iter();
-        let mut stored_children: HashMap<Vec<u8>, ferroseek_index::Child> = tx.children(id)?.into_iter().collect();
+        let mut stored_children: HashMap<Vec<u8>, Child> = tx.children(id)?.into_iter().collect();
         let mut complete = true;
         for ent in rd {
             let ent = match ent {
@@ -507,12 +550,12 @@ impl State {
             };
             let cid = match (&old, unchanged) {
                 (Some(o), true) => o.id,
-                (Some(o), false) if o.meta.kind == Kind::Dir && meta.kind != Kind::Dir => {
-                    self.drop_children(tx, o.id)?;
-                    self.unwatch(o.id);
+                _ => {
+                    if let Some(o) = &old {
+                        self.retire_replaced_directory(tx, o, meta)?;
+                    }
                     tx.upsert(id, &name, meta)?.0
                 }
-                _ => tx.upsert(id, &name, meta)?.0,
             };
             if meta.kind == Kind::Dir {
                 if self.is_foreign_mount(md.dev(), &cmd, &full) {
@@ -566,12 +609,8 @@ impl State {
         match self.metadata(&full) {
             Ok(md) => {
                 let meta = Meta::from_metadata(&md);
-                if let Some(c) = &existing
-                    && c.meta.kind == Kind::Dir
-                    && meta.kind != Kind::Dir
-                {
-                    self.drop_children(tx, c.id)?;
-                    self.unwatch(c.id);
+                if let Some(c) = &existing {
+                    self.retire_replaced_directory(tx, c, meta)?;
                 }
                 let (id, change) = tx.upsert(dir, name, meta)?;
                 if meta.kind == Kind::Dir {
