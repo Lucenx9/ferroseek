@@ -34,7 +34,7 @@ pub fn evaluate(input: &str) -> Option<f64> {
         None => (s, false),
     };
     let tokens = lex(s)?;
-    let interesting = tokens.iter().any(|t| matches!(t, Tok::Op(_) | Tok::Ident(_)))
+    let interesting = tokens.iter().any(|t| matches!(t, Tok::Op(_) | Tok::Ident(_) | Tok::LParen))
         && !matches!(
             tokens.as_slice(),
             [Tok::Num(_) | Tok::Ident(_)] | [Tok::Op('-' | '+'), Tok::Num(_) | Tok::Ident(_)]
@@ -293,6 +293,7 @@ mod tests {
 
     #[test]
     fn arithmetic_and_precedence() {
+        assert_eq!(ev("(42)").as_deref(), Some("42"));
         assert_eq!(ev("2+3*4").as_deref(), Some("14"));
         assert_eq!(ev("(2+3)*4").as_deref(), Some("20"));
         assert_eq!(ev("2^3^2").as_deref(), Some("512"), "right-associative");
