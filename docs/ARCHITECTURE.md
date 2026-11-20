@@ -121,6 +121,8 @@ it is idempotent, and races between the scan and events converge.
   instead of deleting data.
 - **Replaced roots.** Reconciliation drops a configured root's indexed tree
   and watches when its path is a file, symlink or another non-directory.
+  When a different directory takes the same path, reconciliation retires
+  the old tree's watches even if the replacement cannot be watched or listed.
   Inaccessible roots retain their cached index so offline disks remain searchable.
   Restoring a directory at the configured path allows indexing to resume on the
   next reconciliation.
