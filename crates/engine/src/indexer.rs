@@ -344,6 +344,8 @@ impl State {
                     && self.watches.get(&old) == Some(&id)
                 {
                     self.watches.remove(&old);
+                    // A replaced directory can still exist at another path.
+                    let _ = ino.rm_watch(old);
                 }
             }
             Err(e) if e.raw_os_error() == Some(libc::ENOSPC) => {

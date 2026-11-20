@@ -206,6 +206,28 @@ fn an_unavailable_root_retains_its_index_and_recovers_when_restored() {
 }
 
 #[test]
+fn replacing_a_root_directory_stops_events_from_the_old_inode() {
+    let mut f = fx();
+    f.scan(Mode::Quick);
+
+    let outside = f._t.path().join("outside");
+    fs::rename(&f.root, &outside).unwrap();
+    fs::create_dir(&f.root).unwrap();
+    f.scan(Mode::Quick);
+    f.settle();
+
+    touch(&outside.join("outside-report.txt"));
+    touch(&f.p("inside-report.txt"));
+    let mut events = Vec::new();
+    f.ix.st.ino.as_ref().unwrap().read_available(&mut [0; 4096], &mut events).unwrap();
+    assert!(events.iter().any(|event| event.name == b"inside-report.txt"), "the new root must remain watched");
+    assert!(events.iter().all(|event| event.name != b"outside-report.txt"), "the moved root still delivers events");
+
+    f.ix.apply_events(events).unwrap();
+    assert_eq!(f.find("report"), ["inside-report.txt"]);
+}
+
+#[test]
 fn initial_scan_respects_exclusions() {
     let mut f = fx();
     touch(&f.p("docs/report.txt"));
