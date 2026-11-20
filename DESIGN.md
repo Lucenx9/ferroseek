@@ -233,7 +233,7 @@ settings or desktop accessibility support.
 
 Maintain at least 4.5:1 contrast for small essential text against its actual
 composited background. Preserve the existing palette contrast regression in
-[ui.rs](crates/launcher/src/ui.rs), covering all palettes, both modes and
+[ui/tests.rs](crates/launcher/src/ui/tests.rs), covering all palettes, both modes and
 materials. Inspect focus, selection and error indicators separately; passing
 text checks does not certify every control or assistive-technology workflow.
 Use labels and shapes as well as color. Keep text selection and native editing
