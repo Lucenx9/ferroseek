@@ -52,6 +52,8 @@ struct State {
     #[cfg(test)]
     stat_failures: HashMap<PathBuf, i32>,
     #[cfg(test)]
+    watch_failures: HashMap<PathBuf, i32>,
+    #[cfg(test)]
     listing_failure: Option<(PathBuf, usize)>,
     rules: Rules,
     roots: Vec<PathBuf>,
@@ -77,6 +79,8 @@ impl Indexer {
             st: State {
                 #[cfg(test)]
                 stat_failures: HashMap::new(),
+                #[cfg(test)]
+                watch_failures: HashMap::new(),
                 #[cfg(test)]
                 listing_failure: None,
                 rules,
@@ -329,32 +333,27 @@ impl State {
         std::mem::take(&mut self.retry)
     }
 
-    fn watch(&mut self, path: &Path, directory: Child) {
-        let Some(ino) = &self.ino else { return };
-        let id = directory.id;
-        match ino.add_watch(path, inotify::DIR_MASK) {
-            Ok(wd) if self.by_id.get(&id) != Some(&wd) => {
-                self.unwatch(id);
-                self.forget_wd(wd);
-                self.watches.insert(wd, id);
-                self.by_id.insert(id, wd);
-            }
-            Ok(_) => {}
-            Err(e) => self.watch_failed(path, directory, e),
+    fn watch(&mut self, path: &Path, id: Id) -> io::Result<()> {
+        let Some(ino) = &self.ino else { return Ok(()) };
+        #[cfg(not(test))]
+        let result = ino.add_watch(path, inotify::DIR_MASK);
+        #[cfg(test)]
+        let result = self
+            .watch_failures
+            .remove(path)
+            .map_or_else(|| ino.add_watch(path, inotify::DIR_MASK), |errno| Err(io::Error::from_raw_os_error(errno)));
+        let wd = result?;
+        if self.by_id.get(&id) != Some(&wd) {
+            self.unwatch(id);
+            self.forget_wd(wd);
+            self.watches.insert(wd, id);
+            self.by_id.insert(id, wd);
         }
+        Ok(())
     }
 
-    fn watch_failed(&mut self, path: &Path, directory: Child, error: io::Error) {
-        let id = directory.id;
-        let limit_hit = error.raw_os_error() == Some(libc::ENOSPC);
-        if self.by_id.contains_key(&id) && self.metadata(path).is_ok_and(|md| md.ino() != directory.meta.ino) {
-            self.unwatch(id);
-            if limit_hit {
-                // Releasing the old watch can free the slot for the replacement.
-                return self.watch(path, directory);
-            }
-        }
-        if !limit_hit {
+    fn report_watch_failure(&mut self, path: &Path, error: io::Error) {
+        if error.raw_os_error() != Some(libc::ENOSPC) {
             log::debug!("cannot watch {}: {error}", path.display());
             return;
         }
@@ -434,6 +433,28 @@ impl State {
             && !self.roots.iter().any(|r| r == path)
     }
 
+    fn watch_and_stat(&mut self, tx: &Txn<'_>, path: &Path, directory: Child) -> Result<io::Result<fs::Metadata>> {
+        let id = directory.id;
+        // Install the watch before sampling the listing's mtime.
+        let mut watch = self.watch(path, id);
+        let mut metadata = self.metadata(path);
+        if metadata.as_ref().is_ok_and(|md| md.ino() != directory.meta.ino) {
+            self.unwatch_descendants(tx, id)?;
+            if let Err(error) = &watch {
+                self.unwatch(id);
+                if error.raw_os_error() == Some(libc::ENOSPC) {
+                    // Retiring the old subtree can free a slot for the replacement.
+                    watch = self.watch(path, id);
+                    metadata = self.metadata(path);
+                }
+            }
+        }
+        if let Err(error) = watch {
+            self.report_watch_failure(path, error);
+        }
+        Ok(metadata)
+    }
+
     fn prepare_directory_listing(
         &mut self,
         tx: &mut Txn<'_>,
@@ -447,10 +468,7 @@ impl State {
             self.unwatch(id);
             return Ok(None);
         }
-        // Watch before listing, so nothing created after the listing is
-        // missed.
-        self.watch(path, directory);
-        let md = match self.metadata(path) {
+        let md = match self.watch_and_stat(tx, path, directory)? {
             Ok(md) if md.is_dir() => md,
             // Gone or replaced by a non-directory: removal is the parent's
             // (or an event's) job, keyed by name.
@@ -462,9 +480,6 @@ impl State {
                 return Ok(None);
             }
         };
-        if md.ino() != stored.ino {
-            self.unwatch_descendants(tx, id)?;
-        }
         if self.rules.respect_cachedir_tag && has_cachedir_tag(path) {
             self.drop_children(tx, id)?;
             // Tag contents can change without changing the directory mtime.

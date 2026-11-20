@@ -261,8 +261,34 @@ fn replacing_a_directory_with_an_unwatchable_one_retires_the_old_watch() {
         if events.iter().any(|event| event.name == b"outside-report.txt") {
             surviving.push((relative, scan));
         }
+
+        f.scan(Mode::Quick);
+        assert!(f.find("keep").is_empty(), "a readable replacement reconciles cached entries");
+        touch(&replacement.join("inside-report.txt"));
+        f.settle();
+        assert_eq!(f.find("inside-report").len(), 1, "live indexing resumes at the replacement");
     }
     assert!(surviving.is_empty(), "old watches still delivered events for {surviving:?}");
+}
+
+#[test]
+fn root_watch_retries_after_retiring_descendants_when_the_limit_is_hit() {
+    let mut f = fx();
+    touch(&f.p("old-child/keep.txt"));
+    f.scan(Mode::Quick);
+    let (root_id, _) = Reader::open(&f.db).unwrap().lookup(&f.root).unwrap().unwrap();
+    f.ix.st.unwatch(root_id);
+    assert_eq!(f.ix.watched_dirs(), 1, "the old descendant is still watched");
+
+    fs::rename(&f.root, f._t.path().join("outside")).unwrap();
+    fs::create_dir(&f.root).unwrap();
+    f.ix.st.watch_failures.insert(f.root.clone(), libc::ENOSPC);
+    f.scan(Mode::Quick);
+
+    touch(&f.p("inside-report.txt"));
+    f.settle();
+    assert_eq!(f.find("report"), ["inside-report.txt"], "the replacement must be watched after reconciliation");
+    assert!(!f.ix.st.watch_limit_hit, "a successful retry must not report watch exhaustion");
 }
 
 #[test]
