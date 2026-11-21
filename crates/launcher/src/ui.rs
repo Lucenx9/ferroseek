@@ -3,6 +3,7 @@
 
 mod alias_editor;
 pub(crate) mod clipboard_view;
+mod favorites;
 mod global_shortcut_settings;
 mod paste;
 mod saved_editor;
@@ -773,8 +774,8 @@ impl Launcher {
             (Action::EditLink, Target::Link(link, _)) => {
                 self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
             }
-            (Action::AddFavorite | Action::RemoveFavorite, _) => {
-                self.set_favorite(&item.target, action == Action::AddFavorite)
+            (Action::AddFavorite | Action::RemoveFavorite | Action::MoveFavoriteUp | Action::MoveFavoriteDown, _) => {
+                self.favorite_action(&item.target, action)
             }
             (_, Target::Snippet(snippet)) => self.snippet_action(action, snippet),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
@@ -854,10 +855,6 @@ impl Launcher {
         task
     }
 
-    fn is_favorite(&self, target: &Target) -> bool {
-        target.favorite_key(&self.apps, &self.saved).is_some_and(|(kind, key)| self.favorites.contains(kind, &key))
-    }
-
     fn actions_for(&self, target: &Target) -> Vec<Action> {
         model::actions_for(target, self.is_favorite(target))
     }
@@ -878,33 +875,8 @@ impl Launcher {
             // Keep Paste immediately after the two original snippet actions.
             panel.actions.insert(panel.actions.len() - 1, Action::PasteSnippet);
         }
+        self.add_favorite_move_actions(&item.target, &mut panel.actions);
         panel
-    }
-
-    fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
-        let Some((kind, key)) = target.favorite_key(&self.apps, &self.saved) else { return Task::none() };
-        self.status = match self.favorites.set(kind, &key, enabled) {
-            Ok(()) => {
-                self.panel = None;
-                self.rebuild(true);
-                let message = if enabled {
-                    if self.favorites.is_persistent() {
-                        "Added to favorites"
-                    } else {
-                        "Added to favorites for this session"
-                    }
-                } else {
-                    "Removed from favorites"
-                };
-                Status::Notice(message.into())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                Status::Error("Favorites are busy. Try again.".into())
-            }
-            Err(e) => Status::Error(format!("Cannot update favorites: {e}")),
-        };
-        let focus = if self.panel.is_some() { actions_id() } else { search_id() };
-        Task::batch([self.resize(), crate::input::focus(focus)])
     }
 
     fn reset_ranking(&mut self, target: &Target) -> Task<Message> {

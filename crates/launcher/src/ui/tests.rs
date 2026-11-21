@@ -888,6 +888,29 @@ fn favorite_command_is_ready_from_an_empty_query_and_can_be_unpinned() {
 }
 
 #[test]
+fn moving_a_favorite_keeps_the_selected_command_and_allows_moving_it_back() {
+    let mut s = search_state();
+    s.favorites.set(crate::favorites::Kind::App, "report.desktop", true).unwrap();
+    s.favorites.set(crate::favorites::Kind::Command, "clipboard-history", true).unwrap();
+    let _ = update(&mut s, Message::Query(String::new()));
+    let _ = command(&mut s, Command::Down);
+    let target = s.selected().unwrap().target.clone();
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("move favorite up".into()));
+    let available = s.panel.as_ref().unwrap().filtered_actions();
+    assert_eq!(available.first().map(|action| action.label()), Some("Move favorite up"));
+    let _ = command(&mut s, Command::Activate);
+    assert_eq!((&s.items[0].target, &s.selected().unwrap().target), (&target, &target));
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("move favorite down".into()));
+    let action = s.panel.as_ref().unwrap().filtered_actions()[0];
+    let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action });
+    assert_eq!((&s.items[1].target, &s.selected().unwrap().target), (&target, &target));
+}
+
+#[test]
 fn saved_favorites_share_the_home_order_with_commands() {
     let mut s = search_state();
     s.saved.links.push(

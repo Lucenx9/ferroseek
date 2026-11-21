@@ -405,6 +405,8 @@ pub enum Action {
     ResetRanking,
     AddFavorite,
     RemoveFavorite,
+    MoveFavoriteUp,
+    MoveFavoriteDown,
     /// Index of an action in the selected application's immutable catalog entry.
     Desktop(usize),
 }
@@ -431,6 +433,8 @@ impl Action {
             Action::ResetRanking => "Reset ranking",
             Action::AddFavorite => "Add to favorites",
             Action::RemoveFavorite => "Remove from favorites",
+            Action::MoveFavoriteUp => "Move favorite up",
+            Action::MoveFavoriteDown => "Move favorite down",
             Action::Desktop(_) => "Run application action",
         }
     }
@@ -459,7 +463,10 @@ impl Action {
             Self::EditAlias => &["set alias", "remove alias", "shortcut"],
             Self::EditSnippet => &["change text", "delete snippet"],
             Self::AddFavorite => &["pin"],
-            Self::RemoveFavorite => &["unpin"],
+            // Keep "up" from selecting removal when a favorite is already first.
+            Self::RemoveFavorite if matches!(tokens, [word] if "unpin".starts_with(word)) => &["unpin"],
+            Self::MoveFavoriteUp => &["reorder earlier"],
+            Self::MoveFavoriteDown => &["reorder later"],
             Self::Launch
             | Self::Open
             | Self::OpenCommand
@@ -468,6 +475,7 @@ impl Action {
             | Self::CopySnippet
             | Self::PasteSnippet
             | Self::ResetRanking
+            | Self::RemoveFavorite
             | Self::Desktop(_) => &[],
         };
         let labels: Vec<_> =
@@ -497,6 +505,8 @@ impl Action {
             | Action::ResetRanking
             | Action::AddFavorite
             | Action::RemoveFavorite
+            | Action::MoveFavoriteUp
+            | Action::MoveFavoriteDown
             | Action::Desktop(_) => "",
         }
     }
@@ -1375,6 +1385,9 @@ mod tests {
         assert!(Action::CopyPath.search_score(&matcher::tokens("filename")).is_none());
         assert!(Action::ResetRanking.search_score(&matcher::tokens("history")).is_none());
         assert!(Action::UseResult.search_score(&matcher::tokens("resume")).is_none());
+        for query in ["up", "move favorite up"] {
+            assert_eq!(Action::RemoveFavorite.search_score(&matcher::tokens(query)), None, "{query}");
+        }
     }
 
     #[test]

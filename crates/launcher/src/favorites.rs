@@ -88,13 +88,30 @@ impl Favorites {
         if !valid_key(kind, key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid favorite key"));
         }
+        self.edit(|items| update_items(items, kind, key, enabled))
+    }
+
+    /// Swaps two visible favorites, leaving hidden entries in their slots.
+    pub fn swap_in_order(&mut self, earlier: (Kind, &str), later: (Kind, &str)) -> io::Result<()> {
+        self.edit(|items| {
+            let index = |(kind, key)| items.iter().position(|(k, value)| (*k, value.as_str()) == (kind, key));
+            match (index(earlier), index(later)) {
+                (Some(first), Some(second)) if first < second => {
+                    items.swap(first, second);
+                    Ok(true)
+                }
+                _ => Err(io::Error::other("The order changed on disk. Reopen FerroSeek to load it.")),
+            }
+        })
+    }
+
+    fn edit(&mut self, change: impl FnOnce(&mut Vec<(Kind, String)>) -> io::Result<bool>) -> io::Result<()> {
         let Some(path) = self.path.clone() else {
-            update_items(&mut self.items, kind, key, enabled)?;
-            return Ok(());
+            return change(&mut self.items).map(|_| ());
         };
         let items = usage::with_lock(&path, false, || {
             let mut items = read_items(&path)?;
-            if update_items(&mut items, kind, key, enabled)? {
+            if change(&mut items)? {
                 write_items(&path, &items)?;
             }
             Ok(items)
@@ -219,6 +236,25 @@ mod tests {
             Favorites::load(Some(path)).items(),
             [(Kind::App, "b.desktop".to_string()), (Kind::App, "a.desktop".to_string())]
         );
+    }
+
+    #[test]
+    fn reordering_keeps_hidden_slots_and_rejects_a_stale_direction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-favorites");
+        let mut favorites = Favorites::load(Some(path.clone()));
+        let app = (Kind::App, "a.desktop");
+        let file = (Kind::File, "file:///synthetic/file.txt");
+        let command = (Kind::Command, "switch-windows");
+        for (kind, key) in [app, file, command] {
+            favorites.set(kind, key, true).unwrap();
+        }
+        let mut stale = Favorites::load(Some(path.clone()));
+        favorites.swap_in_order(app, command).unwrap();
+        assert_eq!(favorites.items(), [command, file, app].map(|(kind, key)| (kind, key.to_owned())));
+        assert!(stale.swap_in_order(app, command).is_err());
+        assert_eq!(stale.items(), [app, file, command].map(|(kind, key)| (kind, key.to_owned())));
+        assert_eq!(Favorites::load(Some(path)).items(), favorites.items());
     }
 
     #[test]

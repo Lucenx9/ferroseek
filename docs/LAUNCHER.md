@@ -949,7 +949,10 @@ neither indexed nor persisted by this feature.
 Use **Add to favorites** or **Remove from favorites** in the action panel for
 an app, file, command, saved link or snippet (search for `pin` or `unpin`).
 A star marks favorite rows. With an empty query, **All** shows favorites before recent items
-in the order they were added. **Applications** and **Files** show favorites of
+in saved order. **Move favorite up** and **Move favorite down** swap the selected
+favorite with the previous or next favorite shown in that scope. The moved
+favorite stays selected. Open Actions again and use the opposite move to undo.
+**Applications** and **Files** show favorites of
 their own type. **Commands** lists favorite commands, links and snippets before
 the rest of the catalog. Renaming a link or snippet keeps its favorite.
 After deleting a saved item, a new entry with the same name has its own identity.
