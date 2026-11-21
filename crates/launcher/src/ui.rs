@@ -2300,7 +2300,7 @@ fn empty_results_text(s: &Launcher) -> (&'static str, &'static str) {
         Status::Error(_) => {
             ("File search unavailable", "You can still search applications and commands, or calculate a result.")
         }
-        _ if calc::is_explicit(query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
+        _ if calc::is_explicit(query) => ("Calculator", "Try = (2 + 3) * 4 or = 10 ft in m."),
         _ if s.scope == Scope::Files && short => {
             ("Search indexed files", "Type at least 2 characters to search files.")
         }
@@ -2395,7 +2395,8 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    if s.scope != Scope::Commands && !s.preview_visible() {
+    let show_tag = s.scope != Scope::Commands && !s.preview_visible();
+    if show_tag && item.section != model::Section::Calculator {
         content =
             content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::DIM.resolve(theme)),

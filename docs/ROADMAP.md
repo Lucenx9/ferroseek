@@ -113,6 +113,7 @@ Complete desktop validation before expanding the platform.
 
 - [x] Search and browse built-in launcher commands, with the same navigation,
   action menu and return flow as application and file results.
+- [x] Offline calculator unit conversions with copy and numeric continuation.
 - [x] Save and edit links to websites and indexed paths. Open saved links by
   name or keyword, and use query values for keyword-based web searches.
 - [x] Assign and remove aliases for application and built-in command results.

@@ -1105,7 +1105,7 @@ fn action_clicks_keep_their_identity_after_filtering_and_ignore_changed_targets(
 
 #[test]
 fn calculator_secondary_action_is_available_while_filtering_for_copy() {
-    let mut panel = Panel::new(&model::calc_item("= 1/3").unwrap(), false);
+    let mut panel = Panel::new(&model::calc_item("= 10 ft in m").unwrap(), false);
     panel.filter("copy".into());
     assert_eq!(panel.filtered_actions(), [Action::CopyResult]);
     assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyResult));
@@ -3672,13 +3672,17 @@ fn narrow_result_labels_fit_and_keep_distinguishing_text() {
     file.subtext = "~/Corpus/Documents/Department/Annual planning/Reports 2026".into();
     state.apps[0].comment = Some("Create and protect your documents with the synthetic report viewer".into());
     state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &[file]);
-    state.items.push(model::calc_item("1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12").unwrap());
+    state.items.push(model::calc_item("= 60 mph in km/h").unwrap());
     for (width, preview) in [(280.0, false), (320.0, false), (384.0, false), (704.0, false), (352.0, true)] {
         state.preview_enabled = preview;
         for i in 0..state.items.len() {
             let labels = rendered_labels(result_row(&state, i, i), Size::new(width, ROW_HEIGHT)).text;
             assert!(labels.len() >= 2);
-            assert_eq!(labels.iter().any(|(value, _)| value == state.items[i].tag), !preview);
+            let calculator = matches!(state.items[i].target, Target::Calc(_));
+            assert_eq!(labels.iter().any(|(value, _)| value == state.items[i].tag), !preview && !calculator);
+            if calculator {
+                assert_eq!(labels[0].0, "= 96.56064 km/h", "keep the full conversion visible at {width}px");
+            }
             assert!(labels.iter().any(|(value, _)| value == &format!("Ctrl+{}", i + 1)));
             for ((value, bounds), size) in labels.iter().take(2).zip([15.0, 12.0]) {
                 let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(

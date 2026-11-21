@@ -26,7 +26,8 @@ been published yet.
 - Browse indexed direct folder contents, or type to search its subfolders; return to the previous query and selection.
 - Inspect an indexed file's full location, type, current size and modification time.
 - Enable a text preview beside file results, with current metadata; navigate files without opening an application.
-- Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
+- Calculate expressions such as `(2+3)*4` and convert units with `10 ft in m`.
+  Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
 - Find built-in launcher commands, saved links and reusable text in **Commands**.

@@ -522,6 +522,29 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   retain full precision; copied answers use the displayed precision.
   A fixed grammar is evaluated in process; nothing is passed to a shell or
   interpreter.
+
+  Convert compatible units with `in` or `to`. The amount can be an expression,
+  as in `(2 + 3) mi to km`, and the space before the source unit is optional
+  (`10ft in m`). The result includes the destination unit when copied.
+  **Use result** takes the unrounded numeric value back to the search field
+  for further arithmetic.
+
+  ![Speed conversion in the launcher at 320 logical pixels](assets/launcher-calculator-conversion.png)
+
+  Captured at 1× in isolated Labwc with tiny-skia.
+
+  | Quantity | Examples |
+  |---|---|
+  | Length and area | `12 in in cm`, `10 ft² in m²` |
+  | Mass and volume | `2 lb in kg`, `1 US gal in L` |
+  | Time and speed | `90 min in h`, `60 mph in km/h` |
+  | Temperature | `32 °F in °C`, `0 °C in K` |
+  | Data size | `1 MiB in MB`, `1 MB in Mb` |
+
+  `gal` and `fl oz` refer to US measures. Use `imperial gallon` for the UK
+  measure. Data symbols distinguish uppercase `B` for bytes from lowercase
+  `b` for bits.
+
 - **Empty query:** the most often opened applications and files that still
   exist, followed by available applications to fill the suggestions. Removed
   items do not use up a suggestion slot.

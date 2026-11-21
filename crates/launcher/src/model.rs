@@ -172,9 +172,9 @@ pub fn order_files(files: &mut [FileHit], boost: impl Fn(&FileHit) -> u32) {
     files.sort_by_cached_key(|f| std::cmp::Reverse(boost(f)));
 }
 
-/// The calculator row for `query`, if it is an arithmetic expression.
+/// The calculator row for an arithmetic expression or unit conversion.
 pub fn calc_item(query: &str) -> Option<Item> {
-    let v = calc::format(calc::evaluate(query)?);
+    let v = calc::evaluate(query)?.label();
     Some(Item {
         target: Target::Calc(v.clone()),
         section: Section::Calculator,

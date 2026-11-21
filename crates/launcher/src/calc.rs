@@ -12,6 +12,8 @@
 //! atom   := number | constant | func '(' expr ')' | '(' expr ')'
 //! ```
 
+mod units;
+
 const MAX_DEPTH: u32 = 64;
 const MAX_INPUT: usize = 256;
 
@@ -21,10 +23,24 @@ pub fn is_explicit(input: &str) -> bool {
     input.trim_start().starts_with('=')
 }
 
-/// Evaluates expressions, or plain numbers when prefixed with `=`. Without
-/// that prefix, plain numbers and constants (`e`, `pi`, also signed) stay
-/// available for application and file search.
-pub fn evaluate(input: &str) -> Option<f64> {
+pub struct Answer {
+    value: f64,
+    unit: Option<&'static str>,
+}
+
+impl Answer {
+    pub fn label(&self) -> String {
+        let value = format(self.value);
+        match self.unit {
+            Some(unit) => format!("{value} {unit}"),
+            None => value,
+        }
+    }
+}
+
+/// Evaluates arithmetic or a conversion in the search field. Plain numbers and
+/// constants stay available for search unless prefixed with `=`.
+pub fn evaluate(input: &str) -> Option<Answer> {
     let s = input.trim();
     if s.is_empty() || s.len() > MAX_INPUT {
         return None;
@@ -33,13 +49,20 @@ pub fn evaluate(input: &str) -> Option<f64> {
         Some(expression) => (expression.trim(), true),
         None => (s, false),
     };
-    let tokens = lex(s)?;
+    if let Some((value, unit)) = units::convert(s) {
+        return Some(Answer { value, unit: Some(unit) });
+    }
+    arithmetic(s, explicit).map(|value| Answer { value, unit: None })
+}
+
+fn arithmetic(expression: &str, allow_plain: bool) -> Option<f64> {
+    let tokens = lex(expression)?;
     let interesting = tokens.iter().any(|t| matches!(t, Tok::Op(_) | Tok::Ident(_) | Tok::LParen))
         && !matches!(
             tokens.as_slice(),
             [Tok::Num(_) | Tok::Ident(_)] | [Tok::Op('-' | '+'), Tok::Num(_) | Tok::Ident(_)]
         );
-    if !explicit && !interesting {
+    if !allow_plain && !interesting {
         return None;
     }
     let mut p = Parser { tokens, pos: 0, depth: 0 };
@@ -50,7 +73,7 @@ pub fn evaluate(input: &str) -> Option<f64> {
 /// Reuses the unrounded result as an editable calculator query. Negative
 /// operands need parentheses so an appended power applies to the whole value.
 pub fn continuation(input: &str) -> Option<String> {
-    let v = evaluate(input)?;
+    let v = evaluate(input)?.value;
     let value = if v == 0.0 {
         "0".to_string()
     } else if (1e-4..1e15).contains(&v.abs()) {
@@ -67,7 +90,7 @@ const SIGNIFICANT: i32 = 10;
 /// Display form with up to 10 significant digits and no trailing zeros:
 /// integers as integers, ordinary magnitudes in fixed point, very small or
 /// very large values in scientific notation (so `10^-12` never becomes 0).
-pub fn format(v: f64) -> String {
+fn format(v: f64) -> String {
     if v == 0.0 {
         return "0".to_string();
     }
@@ -288,7 +311,11 @@ mod tests {
     use super::*;
 
     fn ev(s: &str) -> Option<String> {
-        evaluate(s).map(format)
+        evaluate(s).map(|result| result.label())
+    }
+
+    fn value(s: &str) -> Option<f64> {
+        evaluate(s).map(|result| result.value)
     }
 
     #[test]
@@ -318,6 +345,48 @@ mod tests {
     }
 
     #[test]
+    fn unit_conversions_accept_arithmetic_amounts_and_display_destination_symbols() {
+        for (query, expected) in [
+            ("10ft in m", "3.048 m"),
+            ("12 in in cm", "30.48 cm"),
+            ("= (2 + 3) mi TO km", "8.04672 km"),
+            ("sqrt(16) m^2 to ft2", "43.05564167 ft²"),
+            ("1e3ms to s", "1 s"),
+            ("60 miles per hour to km/h", "96.56064 km/h"),
+            ("2LB to kg", "0.90718474 kg"),
+            ("1 gallon in L", "3.785411784 L"),
+            ("1 imperial gallon in l", "4.54609 L"),
+            ("32°F in °C", "0 °C"),
+            ("-40 C to F", "-40 °F"),
+            ("-459.67 F in K", "0 K"),
+            ("1 MB in Mb", "8 Mb"),
+            ("1 MiB in MB", "1.048576 MB"),
+        ] {
+            assert_eq!(ev(query).as_deref(), Some(expected), "{query}");
+        }
+    }
+
+    #[test]
+    fn conversion_rejects_unknown_units_incompatible_units_and_invalid_values() {
+        for query in [
+            "reports in m",
+            "10 in",
+            "10 ft in",
+            "1 m in kg",
+            "10 °C in m",
+            "-273.16 °C in K",
+            "-1 K in K",
+            "1e308 m in mm",
+            "1/0 ft in m",
+            "5 m in bananas",
+        ] {
+            assert!(evaluate(query).is_none(), "{query}");
+        }
+        let beyond_input_limit = format!("10{}ft in m", " ".repeat(MAX_INPUT));
+        assert!(evaluate(&beyond_input_limit).is_none());
+    }
+
+    #[test]
     fn only_expressions_count() {
         for s in [
             "",
@@ -340,19 +409,19 @@ mod tests {
             "-e",
             "+pi",
         ] {
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
         }
     }
 
     #[test]
     fn explicit_mode_accepts_numbers_and_keeps_incomplete_input_in_mode() {
-        assert_eq!(evaluate("=42"), Some(42.0));
-        assert_eq!(evaluate("  = -5  "), Some(-5.0));
-        assert_eq!(evaluate("= +5"), Some(5.0));
-        assert_eq!(evaluate("= (2+3)*4"), Some(20.0));
+        assert_eq!(value("=42"), Some(42.0));
+        assert_eq!(value("  = -5  "), Some(-5.0));
+        assert_eq!(value("= +5"), Some(5.0));
+        assert_eq!(value("= (2+3)*4"), Some(20.0));
         for s in ["=", " = ", "= 1+", "==2", "= report"] {
             assert!(is_explicit(s));
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
         }
         for s in ["", "2026", "1+1", "report=1"] {
             assert!(!is_explicit(s));
@@ -361,13 +430,13 @@ mod tests {
 
     #[test]
     fn scientific_numbers_require_a_complete_finite_literal() {
-        assert_eq!(evaluate("1e-12*2"), Some(2e-12));
-        assert_eq!(evaluate("2E+3+1"), Some(2001.0));
-        assert_eq!(evaluate("= -.5E-2"), Some(-0.005));
-        assert_eq!(evaluate("e+1"), Some(std::f64::consts::E + 1.0));
-        assert_eq!(evaluate("= e"), Some(std::f64::consts::E));
+        assert_eq!(value("1e-12*2"), Some(2e-12));
+        assert_eq!(value("2E+3+1"), Some(2001.0));
+        assert_eq!(value("= -.5E-2"), Some(-0.005));
+        assert_eq!(value("e+1"), Some(std::f64::consts::E + 1.0));
+        assert_eq!(value("= e"), Some(std::f64::consts::E));
         for s in ["= 1e", "= 1e+", "= 1e-", "= 1e--2", "= 1.2.3e4", "= 1e2.5", "= 1e309", "1e309^0", "1/1e309"] {
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
         }
     }
 
@@ -375,15 +444,18 @@ mod tests {
     fn continuation_preserves_precision_and_negative_operand_precedence() {
         let third = continuation("1/3").unwrap();
         assert_eq!(third, "= 0.3333333333333333");
-        assert_eq!(evaluate(&format!("{third}*3")), Some(1.0));
+        assert_eq!(value(&format!("{third}*3")), Some(1.0));
         let negative = continuation("-2^2").unwrap();
         assert_eq!(negative, "= (-4)");
-        assert_eq!(evaluate(&format!("{negative}^2")), Some(16.0));
+        assert_eq!(value(&format!("{negative}^2")), Some(16.0));
         let tiny = continuation("10^-12").unwrap();
         assert_eq!(tiny, "= 1e-12");
-        assert_eq!(evaluate(&format!("{tiny}*2")), Some(2e-12));
+        assert_eq!(value(&format!("{tiny}*2")), Some(2e-12));
         let huge = continuation("2^60").unwrap();
-        assert_eq!(evaluate(&format!("{huge}/2")), Some(2f64.powi(59)));
+        assert_eq!(value(&format!("{huge}/2")), Some(2f64.powi(59)));
+        let feet = continuation("1 m in ft").unwrap();
+        assert_eq!(value(&feet), value("1 m in ft"));
+        assert_ne!(value(&feet), Some(3.280839895), "continuation uses the unrounded value");
         assert_eq!(continuation("= -0").as_deref(), Some("= 0"));
         for s in ["report", "=", "= 1/0"] {
             assert_eq!(continuation(s), None, "{s:?}");
@@ -397,37 +469,37 @@ mod tests {
         {
             let next = continuation(s).unwrap();
             assert!(next.len() <= MAX_INPUT, "{next}");
-            assert_eq!(evaluate(&next), evaluate(s), "{s:?}");
+            assert_eq!(value(&next), value(s), "{s:?}");
         }
         let max = format!("= {}", "1".repeat(MAX_INPUT - 2));
-        assert!(evaluate(&max).is_some());
-        assert_eq!(evaluate(&format!("{max}1")), None, "the prefix counts towards the limit");
+        assert!(value(&max).is_some());
+        assert_eq!(value(&format!("{max}1")), None, "the prefix counts towards the limit");
     }
 
     #[test]
     fn invalid_intermediate_results_cannot_become_valid_answers() {
         for s in ["(-1)^0.5", "1^((-1)^0.5)", "1^(-1)^0.5", "1/(10^400)", "1/(1e308*10)", "1/(1e308+1e308)"] {
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
             assert_eq!(continuation(s), None, "{s:?}");
-            assert_eq!(evaluate(&format!("= {s}")), None, "{s:?}");
+            assert_eq!(value(&format!("= {s}")), None, "{s:?}");
         }
-        assert_eq!(evaluate("1/(10^300)"), Some(1e-300));
-        assert_eq!(evaluate("1^(-1)^2"), Some(1.0));
+        assert_eq!(value("1/(10^300)"), Some(1e-300));
+        assert_eq!(value("1^(-1)^2"), Some(1.0));
     }
 
     #[test]
     fn errors_are_none_not_panics() {
         for s in ["1/0", "5%0", "sqrt(-1)", "ln(0)", "(1+2", "1+", "*2", "((((", "9^9^9^9", "()"] {
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
         }
         let deep = format!("{}1{}", "(".repeat(500), ")".repeat(500));
-        assert_eq!(evaluate(&deep), None, "too long");
+        assert_eq!(value(&deep), None, "too long");
         let deep = format!("{}1+1{}", "(".repeat(100), ")".repeat(100));
-        assert_eq!(evaluate(&deep), None, "too deep");
-        assert_eq!(evaluate(&"-".repeat(200).to_string()), None);
-        assert_eq!(evaluate(&format!("= {deep}")), None, "explicit mode keeps the depth limit");
+        assert_eq!(value(&deep), None, "too deep");
+        assert_eq!(value(&"-".repeat(200).to_string()), None);
+        assert_eq!(value(&format!("= {deep}")), None, "explicit mode keeps the depth limit");
         for s in ["= 1/0", "= 5%0", "= sqrt(-1)", "= 9^9^9^9"] {
-            assert_eq!(evaluate(s), None, "{s:?}");
+            assert_eq!(value(s), None, "{s:?}");
         }
     }
 }

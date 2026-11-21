@@ -152,6 +152,9 @@ files, description for applications and a short purpose for commands. Commands
 use the same selection and action affordances as other results. All shows
 strong command matches. Commands browses the catalog with an empty search.
 Avoid repeated type badges or metadata that does not help choose a result.
+Give calculator answers and destination units the available width. Copying
+a conversion includes its destination unit. Using the answer for further
+arithmetic keeps its numeric value at full precision.
 Saved links show their destination host or path and optional keyword. Their
 editor uses labeled fields, native focus, and explicit confirmation for
 discard and delete. After Save, Commands selects the saved link.
