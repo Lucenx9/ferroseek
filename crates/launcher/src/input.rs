@@ -9,6 +9,7 @@ use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector, keyboard};
 
 use std::collections::VecDeque;
 
+use crate::shortcuts::Routing;
 use crate::ui;
 use crate::ui::Message;
 
@@ -18,15 +19,9 @@ pub fn capture<'a, R: iced::advanced::Renderer + 'a>(
     focus: Option<iced::widget::Id>,
     context: Option<iced::widget::Id>,
     focus_cycle: Option<FocusCycle>,
+    shortcuts: Routing,
 ) -> Element<'a, Message, Theme, R> {
-    Element::new(Input { content, epoch, focus, context, focus_cycle })
-}
-
-fn shortcut_owns_text(event: &Event) -> bool {
-    matches!(
-        ui::input_event(event, iced::event::Status::Ignored),
-        Some(Message::ShowAppearance | Message::ShowSettings)
-    )
+    Element::new(Input { content, epoch, focus, context, focus_cycle, shortcuts })
 }
 
 struct Input<'a, R> {
@@ -35,6 +30,7 @@ struct Input<'a, R> {
     focus: Option<iced::widget::Id>,
     context: Option<iced::widget::Id>,
     focus_cycle: Option<FocusCycle>,
+    shortcuts: Routing,
 }
 
 struct State {
@@ -262,12 +258,13 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
             let mut messages = Vec::new();
             let mut inner = Shell::new(&mut messages);
             // A printable global shortcut must not edit the focused text field.
-            if !shortcut_owns_text(event) {
+            let shortcut = self.shortcuts.message(event);
+            if shortcut.is_none() {
                 self.content
                     .as_widget_mut()
                     .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
             }
-            let mut command = ui::input_event(event, inner.event_status());
+            let mut command = shortcut.or_else(|| ui::input_event(event, inner.event_status()));
             if let Some(cycle) = &self.focus_cycle {
                 command = cycle.command(command, self.content.as_widget_mut(), child, layout, renderer);
             }

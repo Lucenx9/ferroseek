@@ -86,18 +86,26 @@ impl Document {
 
     /// Save launcher preferences without changing indexing or unrelated settings.
     pub fn save_appearance(&self, preferences: crate::appearance::Preferences) -> Result<Self, String> {
-        let source = toml::to_string(&preferences).map_err(|e| e.to_string())?;
-        let appearance = source.parse::<toml_edit::DocumentMut>().map_err(|e| e.to_string())?;
+        self.save_section("appearance", preferences)
+    }
+
+    pub fn save_shortcuts(&self, preferences: crate::shortcuts::Preferences) -> Result<Self, String> {
+        self.save_section("shortcuts", preferences)
+    }
+
+    fn save_section(&self, section: &'static str, value: impl serde::Serialize) -> Result<Self, String> {
+        let source = toml::to_string(&value).map_err(|e| e.to_string())?;
+        let values = source.parse::<toml_edit::DocumentMut>().map_err(|e| e.to_string())?;
         self.edit(move |document| {
-            for (key, value) in appearance.iter() {
+            for (key, value) in values.iter() {
                 let decor = document
-                    .get("appearance")
+                    .get(section)
                     .and_then(|table| table.get(key))
                     .and_then(toml_edit::Item::as_value)
                     .map(|v| v.decor().clone());
-                document["appearance"][key] = value.clone();
+                document[section][key] = value.clone();
                 if let Some(decor) = decor
-                    && let Some(value) = document["appearance"][key].as_value_mut()
+                    && let Some(value) = document[section][key].as_value_mut()
                 {
                     *value.decor_mut() = decor;
                 }

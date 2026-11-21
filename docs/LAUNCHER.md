@@ -28,8 +28,9 @@ global shortcuts or changes desktop settings. Running it while it is open
 closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
-while the folder or appearance settings screen is shown, or after a copy in this session: the
-launcher serves the copied value, so it stays until Esc or the toggle closes it.
+while Search folders, Appearance or Shortcuts is shown, or after a copy in
+this session. The launcher serves a copied value until Esc or the toggle
+closes it.
 
 | Option | Effect |
 |---|---|
@@ -46,16 +47,38 @@ the engine and integrations. See [installation](INSTALLATION.md).
 ## Settings
 
 Open **Settings** in the search header or press Ctrl+Shift+S. Use Up/Down or
-Tab/Shift+Tab to select a page and Enter to open it, or click its row. Appearance
-contains colors and layout. File search groups **Search folders** and
+Tab/Shift+Tab to select a page and Enter to open it, or click its row. Launcher
+settings group **Appearance** and **Shortcuts**. File search groups **Search folders** and
 **Search status**. Back or Esc returns to Settings with the same page selected.
 Esc from Settings returns to the current search. Each page also has a direct
-shortcut shown next to its name.
+shortcut shown next to its name when one is available.
 
 ![Settings grouped by launcher and file search](assets/launcher-settings.png)
 
 The search, Settings, and Search status screenshots show the launcher at 1× in
 isolated virtual KWin 5.27.11 with the tiny-skia renderer and synthetic data.
+
+## Shortcuts
+
+![Shortcut settings with a changed Actions binding ready to save](assets/launcher-shortcuts.png)
+
+Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
+Open **Settings → Shortcuts** or search for **Shortcuts**. Select a row and
+press Enter or click it, then press the new combination. Choose Ctrl+Shift
+with a letter or comma. Ctrl+Shift+C is reserved for copying a path. The
+original Ctrl+K, Ctrl+I and Ctrl+Comma bindings are also available. A
+combination already assigned to another action is reported in the editor.
+
+Press Ctrl+S or **Save** to apply the draft. **Restore defaults** stages the
+original bindings for saving. Esc cancels recording. When leaving a changed
+draft, Ctrl+D discards it and Esc keeps editing. If unrelated configuration
+changes on disk, **Reload** can update the saved version while keeping the
+draft. When bindings themselves changed on disk, discard and reopen the page
+to edit the latest version.
+
+The bindings apply inside the launcher window. Set the global shortcut for
+launching FerroSeek through your [desktop configuration](#build-and-run).
 
 ## Saved links
 
@@ -212,6 +235,9 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 
 ## Keys
 
+These are the default bindings. The bindings for Actions, Settings, Appearance,
+Search folders and Search status are configurable in [Shortcuts](#shortcuts).
+
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab, Ctrl+N/Ctrl+P | move the selection |
@@ -225,6 +251,7 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 | Ctrl+K | open/close the searchable action panel for the selected row |
 | Ctrl+Shift+S | open/close Settings |
 | Ctrl+I | open/close file search status |
+| Ctrl+Comma | search folder preferences |
 | Ctrl+Shift+Comma | appearance preferences |
 | Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |

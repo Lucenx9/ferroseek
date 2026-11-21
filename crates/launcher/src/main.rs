@@ -114,20 +114,10 @@ fn main() -> ExitCode {
         favorites::Favorites::load(favorites::Favorites::default_path())
     };
     let settings_path = ferroseek_config::Paths::from_env().config_file;
-    let appearance = ferroseek_config::Config::load(&settings_path).map(|c| c.appearance).unwrap_or_default();
+    let config = ferroseek_config::Config::load(&settings_path).unwrap_or_default();
     timing::event("ui_starting");
     match ui::run(
-        ui::Boot {
-            appearance,
-            activation,
-            opaque,
-            backend,
-            apps,
-            usage: history,
-            favorites,
-            initial_query,
-            settings_path,
-        },
+        ui::Boot { config, activation, opaque, backend, apps, usage: history, favorites, initial_query, settings_path },
         events,
     ) {
         Ok(()) => ExitCode::SUCCESS,

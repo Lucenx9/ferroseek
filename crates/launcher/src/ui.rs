@@ -4,6 +4,7 @@
 mod alias_editor;
 mod link_editor;
 mod settings;
+mod shortcut_settings;
 mod views;
 
 use std::sync::Mutex;
@@ -41,6 +42,7 @@ use crate::saved;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
+use ferroseek_config::shortcuts::{Action as Shortcut, Chord};
 pub(crate) use views::file_page_header;
 
 #[cfg(test)]
@@ -76,7 +78,7 @@ static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None
 
 /// What the launcher starts with.
 pub struct Boot {
-    pub appearance: Preferences,
+    pub config: ferroseek_config::Config,
     pub opaque: bool,
     pub activation: Activation,
     pub backend: Backend,
@@ -194,6 +196,7 @@ pub struct Launcher {
     system_dark: Option<bool>,
     opaque: bool,
     settings: Option<settings::Entry>,
+    shortcuts: shortcut_settings::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
     input_epoch: u64,
@@ -282,6 +285,8 @@ pub enum Message {
     ShowSearchStatus,
     ShowFolders,
     ShowAppearance,
+    ShortcutSettings { generation: u64, event: shortcut_settings::Event },
+    ShortcutRecorded(Result<Chord, &'static str>),
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
     Folder { generation: u64, event: folders::Event },
@@ -317,12 +322,12 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
-    let initial = layout::calculate(boot_data.appearance, None, true, false);
+    let initial = layout::calculate(boot_data.config.appearance, None, true, false);
     let (output, output_events) = output::Observer::new((initial.width, initial.height));
     let shared_output = output.clone();
     *OUTPUT_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(output_events);
     let (material, material_events) = Material::new(
-        !boot_data.opaque && boot_data.appearance.material == ferroseek_config::appearance::Material::Glass,
+        !boot_data.opaque && boot_data.config.appearance.material == ferroseek_config::appearance::Material::Glass,
         (initial.width, initial.height),
     );
     let shared_material = material.clone();
@@ -370,27 +375,18 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot {
-        activation,
-        backend,
-        apps,
-        usage,
-        favorites,
-        initial_query,
-        settings_path,
-        appearance: preferences,
-        opaque,
-    } = data;
-    let initial = layout::calculate(preferences, None, true, false);
-    let mut state = Launcher {
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, config, opaque } = data;
+    let initial = layout::calculate(config.appearance, None, true, false);
+    Launcher {
         output,
         output_bounds: None,
         placement: None,
         window_height: initial.height,
-        preferences,
+        preferences: config.appearance,
         system_dark: None,
         opaque,
         settings: None,
+        shortcuts: shortcut_settings::State::new(config.shortcuts),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -441,9 +437,8 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         generation: 0,
         status: Status::Idle,
         compact: true,
-    };
-    let startup = state.start_search(initial_query);
-    (state, startup)
+    }
+    .start_search(initial_query)
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -481,11 +476,6 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
         return (dy != 0.0).then_some(Message::Wheel(dy));
     }
     let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
-    if *modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
-        && *physical_key == keyboard::key::Physical::Code(keyboard::key::Code::Comma)
-    {
-        return Some(Message::ShowAppearance);
-    }
     let command = key_message(key, *modifiers);
     if status == event::Status::Captured
         && modifiers.command()
@@ -498,18 +488,10 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
-    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && matches!(key.as_ref(), Key::Character("s" | "S")) {
-        return Some(Message::ShowSettings);
-    }
-    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Character(",") {
-        return Some(Message::ShowAppearance);
-    }
     if mods == Modifiers::CTRL {
         match key.as_ref() {
-            Key::Character(",") => return Some(Message::ShowFolders),
             Key::Character("s" | "S") => return Some(Message::FolderShortcut(folders::Shortcut::Save)),
             Key::Character("d" | "D") => return Some(Message::FolderShortcut(folders::Shortcut::Remove)),
-            Key::Character("i" | "I") => return Some(Message::ShowSearchStatus),
             Key::Character("r" | "R") => return Some(Message::RefreshSearchStatus),
             _ => {}
         }
@@ -538,7 +520,7 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
-    fn start_search(&mut self, initial_query: String) -> Task<Message> {
+    fn start_search(mut self, initial_query: String) -> (Self, Task<Message>) {
         self.rebuild(false);
         let prefill = if !self.settings_path.exists() {
             self.deferred_query = Some(initial_query);
@@ -546,9 +528,10 @@ impl Launcher {
         } else if initial_query.is_empty() {
             Task::none()
         } else {
-            update(self, Message::Query(initial_query))
+            update(&mut self, Message::Query(initial_query))
         };
-        Task::batch([self.resize(), prefill])
+        let startup = Task::batch([self.resize(), prefill]);
+        (self, startup)
     }
 
     fn resume_query(&mut self, query: String) -> Task<Message> {
@@ -1020,12 +1003,18 @@ impl Launcher {
     fn search_suspended(&self) -> bool {
         self.file_details.is_some()
             || self.application_picker.is_some()
-            || self.folder_settings.is_some()
-            || self.appearance.is_some()
             || self.search_status.is_some()
             || self.settings.is_some()
-            || self.link_editor.is_some()
-            || self.alias_editor.is_some()
+            || self.settings_form_open()
+            || self.saved_editor_open()
+    }
+
+    fn settings_form_open(&self) -> bool {
+        self.folder_settings.is_some() || self.appearance.is_some() || self.shortcuts.panel.is_some()
+    }
+
+    fn saved_editor_open(&self) -> bool {
+        self.link_editor.is_some() || self.alias_editor.is_some()
     }
 
     fn preview_visible(&self) -> bool {
@@ -1322,7 +1311,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.alias_editor.is_some() {
+    if s.shortcuts.panel.is_some() {
+        s.update_shortcut_settings(message)
+    } else if s.alias_editor.is_some() {
         s.update_alias_editor(message)
     } else if s.link_editor.is_some() {
         s.update_link_editor(message)
@@ -1472,9 +1463,7 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
         // An open in flight finishes and exits on its own (or shows its error);
         // folder settings may hold unsaved edits or be saving; a copy is pasted
         // from the launcher after the click into the destination window.
-        Message::FocusLost
-            if s.opening.is_none() && s.folder_settings.is_none() && s.appearance.is_none() && !s.clipboard_owner =>
-        {
+        Message::FocusLost if s.opening.is_none() && !s.settings_form_open() && !s.clipboard_owner => {
             s.launch_task = None;
             iced::exit()
         }
@@ -1859,6 +1848,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         s.input_focus(),
         s.input_context(),
         s.link_editor.as_ref().and_then(link_editor::Editor::focus_cycle),
+        s.shortcut_routing(),
     )
 }
 
@@ -1950,9 +1940,12 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
-        column![input, row![scopes, space::horizontal(), settings::header_button()].align_y(Vertical::Center)]
-            .spacing(8)
-            .into()
+        column![
+            input,
+            row![scopes, space::horizontal(), settings::header_button(s.shortcuts.bindings)].align_y(Vertical::Center)
+        ]
+        .spacing(8)
+        .into()
     };
     let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
@@ -2434,8 +2427,9 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
 }
 
 fn search_hints(s: &Launcher) -> Element<'_, Message> {
+    let shortcut = s.shortcuts.bindings.get(Shortcut::Actions).to_string();
     if s.panel.is_some() {
-        return button(primary_hint("Ctrl+K", "Close actions"))
+        return button(primary_hint(shortcut, "Close actions"))
             .on_press(Message::Cmd(Command::ToggleActions))
             .padding([3, 6])
             .height(24)
@@ -2464,7 +2458,7 @@ fn search_hints(s: &Launcher) -> Element<'_, Message> {
     }
     hints
         .push(
-            button(hint("Ctrl+K", "Actions"))
+            button(hint(shortcut, "Actions"))
                 .on_press(Message::Cmd(Command::ToggleActions))
                 .padding([3, 6])
                 .height(24)
@@ -2481,7 +2475,7 @@ pub(crate) fn footer_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
+pub(crate) fn hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) -> Element<'a, M> {
     row![
         keycap(key, true),
         text(label)
@@ -2493,7 +2487,7 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     .into()
 }
 
-pub(crate) fn primary_hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
+pub(crate) fn primary_hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) -> Element<'a, M> {
     row![
         keycap(key, true),
         text(label)

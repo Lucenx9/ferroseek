@@ -11,15 +11,17 @@ pub enum Builtin {
     SearchFolders,
     SearchStatus,
     CreateLink,
+    Shortcuts,
 }
 
-const ALL: [Builtin; 6] = [
+const ALL: [Builtin; 7] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
     Builtin::SearchFolders,
     Builtin::SearchStatus,
     Builtin::CreateLink,
+    Builtin::Shortcuts,
 ];
 
 struct Metadata {
@@ -67,6 +69,13 @@ impl Builtin {
                 description: "Check indexing progress",
                 icon: "dialog-information",
                 keywords: "indexing diagnostics progress",
+            },
+            Self::Shortcuts => &Metadata {
+                id: "shortcuts",
+                title: "Shortcuts",
+                description: "Change launcher keyboard bindings",
+                icon: "preferences-desktop-keyboard",
+                keywords: "keys keyboard shortcuts bindings hotkeys",
             },
             Self::CreateLink => &Metadata {
                 id: "create-link",

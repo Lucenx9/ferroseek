@@ -76,6 +76,9 @@ configuration, optional service enablement, archives and uninstall.
 
 ## Keyboard controls
 
+These are the defaults. Open **Settings → Shortcuts** to change the
+Actions and settings bindings. [Shortcut settings](docs/LAUNCHER.md#shortcuts)
+
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab | Select a result |

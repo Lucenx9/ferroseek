@@ -103,7 +103,16 @@ fn immediate_link_editor_input_follows_each_tab_without_focus_tasks() {
 
 #[test]
 fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
+    check_action_shortcut_typing("k", Modifiers::CTRL);
+    check_action_shortcut_typing("u", Modifiers::CTRL | Modifiers::SHIFT);
+}
+
+fn check_action_shortcut_typing(key: &str, modifiers: Modifiers) {
     let mut s = search_state();
+    s.shortcuts
+        .bindings
+        .set(Shortcut::Actions, Chord::new(key.chars().next().unwrap(), modifiers.shift()).unwrap())
+        .unwrap();
     let _ = update(&mut s, Message::Query("report".into()));
     let mut cache = iced_runtime::user_interface::Cache::default();
     widget_batch(&mut s, &mut cache, &[], true);
@@ -111,8 +120,8 @@ fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
         &mut s,
         &mut cache,
         &[
-            Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
-            typed("k", Modifiers::CTRL),
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+            typed(key, modifiers),
             Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
             typed("p", Modifiers::empty()),
             typed("i", Modifiers::empty()),
@@ -170,7 +179,7 @@ fn query_prefill_is_applied_before_the_first_input_event() {
     std::fs::write(&config, "roots = []\n").unwrap();
     let (mut s, _pending_tasks) = boot_from(
         Boot {
-            appearance: Preferences::default(),
+            config: ferroseek_config::Config::default(),
             opaque: true,
             activation: Activation::default(),
             backend: Backend::disconnected(),
@@ -503,6 +512,7 @@ fn search_state() -> Launcher {
         system_dark: None,
         opaque: false,
         settings: None,
+        shortcuts: shortcut_settings::State::new(Default::default()),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -686,7 +696,7 @@ fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert!(s.items.is_empty());
     let _ = command(&mut s, Command::Back);
-    assert!(s.query.is_empty() && s.items.len() == 6);
+    assert!(s.query.is_empty() && s.items.len() == 7);
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
 }
 
@@ -2793,7 +2803,10 @@ fn first_run_defers_file_queries_until_folders_are_applied() {
     assert_eq!(s.query, "report");
     assert_eq!(s.generation, 1);
     assert!(s.files.is_empty());
-    assert!(matches!(key_message(&Key::Character(",".into()), Modifiers::CTRL), Some(Message::ShowFolders)));
+    assert!(matches!(
+        crate::shortcuts::Routing::Commands(s.shortcuts.bindings).message(&typed(",", Modifiers::CTRL)),
+        Some(Message::ShowFolders)
+    ));
 }
 
 #[test]
@@ -2817,7 +2830,9 @@ fn search_status_errors_can_retry_and_empty_search_restores_its_size() {
     assert!(s.search_status.is_none(), "the status shortcut also closes the view");
     assert!(s.compact);
     assert_eq!(
-        key_message(&Key::Character("I".into()), Modifiers::CTRL).map(|m| matches!(m, Message::ShowSearchStatus)),
+        crate::shortcuts::Routing::Commands(s.shortcuts.bindings)
+            .message(&typed("I", Modifiers::CTRL))
+            .map(|m| matches!(m, Message::ShowSearchStatus)),
         Some(true)
     );
     assert_eq!(
@@ -3352,6 +3367,7 @@ fn settings_navigation_keeps_search_and_ignores_stale_search_input() {
     let _ = update(&mut state, Message::Files { generation, result: Ok(Some(file_hits())) });
     let selected = state.selected().unwrap().target.clone();
     let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
     let _ = update(&mut state, Message::Cmd(Command::Activate));
     assert!(state.folder_settings.is_some());
     assert!(!state.settings_menu_open());
@@ -3417,21 +3433,26 @@ fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
 }
 
 #[test]
-fn settings_scroll_does_not_carry_into_search_status() {
+fn settings_scroll_does_not_carry_into_child_pages() {
+    check_settings_scroll(Command::Last, settings::Entry::SearchStatus);
+    check_settings_scroll(Command::Down, settings::Entry::Shortcuts);
+}
+
+fn check_settings_scroll(step: Command, destination: settings::Entry) {
     use iced::Size;
     use iced_runtime::{Action as RuntimeAction, UserInterface, task, user_interface::Cache};
 
     let mut state = search_state();
     state.output_bounds = Some((352, 300));
     let _ = update(&mut state, Message::ShowSettings);
-    let scroll = update(&mut state, Message::Cmd(Command::Last));
+    let scroll = update(&mut state, Message::Cmd(step));
     let mut renderer =
         iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
     let size = Size::new(state.window_width as f32, state.window_height as f32);
     let mut menu = UserInterface::build(view(&state), size, Cache::default(), &mut renderer);
     let mut stream = task::into_stream(scroll).unwrap();
     let Some(RuntimeAction::Widget(mut operation)) = iced::futures::executor::block_on(stream.next()) else {
-        panic!("moving to the final settings entry must scroll it into view");
+        panic!("moving down in Settings must scroll the selected entry into view");
     };
     menu.operate(&renderer, operation.as_mut());
     let mut layout = RenderedLabels::default();
@@ -3440,14 +3461,17 @@ fn settings_scroll_does_not_carry_into_search_status() {
     let cache = menu.into_cache();
 
     let _ = update(&mut state, Message::Cmd(Command::Activate));
-    let generation = state.status_generation;
-    let error = "The search service is temporarily unavailable. ".repeat(20);
-    let _ = update(&mut state, Message::SearchStatusLoaded { generation, result: Err(error) });
+    assert_eq!(state.settings, Some(destination));
+    if destination == settings::Entry::SearchStatus {
+        let generation = state.status_generation;
+        let error = "The search service is temporarily unavailable. ".repeat(20);
+        let _ = update(&mut state, Message::SearchStatusLoaded { generation, result: Err(error) });
+    }
     let size = Size::new(state.window_width as f32, state.window_height as f32);
-    let mut status = UserInterface::build(view(&state), size, cache, &mut renderer);
+    let mut page = UserInterface::build(view(&state), size, cache, &mut renderer);
     let mut layout = RenderedLabels::default();
-    status.operate(&renderer, &mut layout);
-    assert_eq!(layout.scroll_offsets, vec![iced::Vector::ZERO]);
+    page.operate(&renderer, &mut layout);
+    assert_eq!(layout.scroll_offsets, vec![iced::Vector::ZERO], "{destination:?}");
 }
 
 #[test]

@@ -653,7 +653,6 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
         Key::Named(Named::ContextMenu) => Some(Command::OpenActions),
         Key::Named(Named::F10) if mods.shift() => Some(Command::OpenActions),
         Key::Character(c) if ctrl => match c.as_str() {
-            "k" | "K" => Some(Command::ToggleActions),
             "n" | "N" | "j" | "J" => Some(Command::Down),
             "p" | "P" => Some(Command::Up),
             "c" | "C" if mods.shift() => Some(Command::CopyPath),
@@ -1328,7 +1327,6 @@ mod tests {
         assert_eq!(command_for(&Key::Named(Named::Enter), none), Some(Command::Activate));
         assert_eq!(command_for(&Key::Named(Named::Enter), Modifiers::CTRL), Some(Command::Secondary));
         assert_eq!(command_for(&Key::Named(Named::Tab), Modifiers::SHIFT), Some(Command::Up));
-        assert_eq!(command_for(&k("k"), Modifiers::CTRL), Some(Command::ToggleActions));
         assert_eq!(command_for(&k("C"), Modifiers::CTRL | Modifiers::SHIFT), Some(Command::CopyPath));
         assert_eq!(command_for(&k("c"), Modifiers::CTRL), None, "plain Ctrl+C copies field text");
         assert_eq!(command_for(&k("a"), none), None);

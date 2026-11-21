@@ -2,12 +2,13 @@
 //! Secondary-view presentation, transitions and replies.
 
 use super::{
-    Launcher, Message, SearchStatusPanel, actions_id, hint, page_header, search_id, search_status_view, settings,
-    status_button_style, update,
+    Launcher, Message, SearchStatusPanel, Shortcut, actions_id, hint, page_header, search_id, search_status_view,
+    settings, status_button_style, update,
 };
 use crate::backend::SearchStatus;
 use crate::commands::Builtin;
 use crate::model::ClickTracker;
+use crate::shortcuts::Routing;
 use crate::{appearance, details, folders, open_with, preview, timing};
 use iced::alignment::Vertical;
 use iced::widget::{button, container, responsive, row, space, text};
@@ -50,9 +51,30 @@ impl Launcher {
     pub(super) fn dialog_height(&self) -> Option<u32> {
         if self.alias_editor.is_some() {
             Some(super::alias_editor::HEIGHT)
+        } else if self.shortcuts.panel.is_some() {
+            Some(super::shortcut_settings::HEIGHT)
         } else {
             self.settings_menu_open().then_some(settings::HEIGHT)
         }
+    }
+
+    pub(super) fn shortcut_routing(&self) -> Routing {
+        if let Some(panel) = &self.shortcuts.panel {
+            return if panel.recording() { Routing::Recording } else { Routing::Disabled };
+        }
+        if self.saved_editor_open() || self.application_picker.is_some() {
+            return Routing::Disabled;
+        }
+        let shortcut = if self.folder_settings.is_some() {
+            Some(Shortcut::SearchFolders)
+        } else if self.appearance.is_some() {
+            Some(Shortcut::Appearance)
+        } else {
+            None
+        };
+        shortcut.map_or(Routing::Commands(self.shortcuts.bindings), |action| {
+            Routing::Only(self.shortcuts.bindings.get(action), action)
+        })
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
@@ -65,12 +87,22 @@ impl Launcher {
         }
     }
 
-    pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+    fn editor_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.shortcuts.panel {
+            return Some(self.shortcut_settings_view(panel));
+        }
         if let Some(editor) = &self.alias_editor {
             return Some(editor.view());
         }
         if let Some(editor) = &self.link_editor {
             return Some(self.link_editor_view(editor));
+        }
+        None
+    }
+
+    pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(editor) = self.editor_view() {
+            return Some(editor);
         }
         if let Some(panel) = &self.appearance {
             let generation = self.appearance_generation;
@@ -94,7 +126,7 @@ impl Launcher {
         if let Some(status) = &self.search_status {
             return Some(search_status_view(status));
         }
-        self.settings.map(settings::view)
+        self.settings.map(|entry| settings::view(entry, self.shortcuts.bindings))
     }
 
     pub(super) fn open_with_view<'a>(&self, panel: &'a open_with::Panel) -> Element<'a, Message> {
@@ -255,6 +287,7 @@ impl Launcher {
             Builtin::SearchFolders => self.show_folders(false),
             Builtin::SearchStatus => self.toggle_search_status(),
             Builtin::CreateLink => self.open_link_editor(None),
+            Builtin::Shortcuts => self.show_shortcuts(),
         }
     }
 

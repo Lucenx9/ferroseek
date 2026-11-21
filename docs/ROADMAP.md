@@ -47,8 +47,10 @@ published release or verified compatibility with every Linux desktop.
 - [x] Verify mixed-scale virtual multimonitor placement, query/selection
   preservation, focus return and output disable/re-enable; physical hardware
   validation remains open.
-- [ ] Add configurable keyboard shortcuts. Keep focus,
-  navigation and feedback consistent across views.
+- [x] Configurable in-window shortcuts for Actions and settings pages, with
+  conflict feedback, restore defaults and recovery controls.
+- [ ] Evaluate compositor support for setting global launch and command shortcuts
+  from the application.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon
