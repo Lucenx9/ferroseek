@@ -578,7 +578,8 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.
   Back returns to the same search. Applying new search folders refreshes the
-  results. [Saved links](#saved-links) and [snippets](#snippets) also appear here.
+  results. [Saved links](#saved-links), [snippets](#snippets) and
+  [local commands](#local-commands) also appear here.
 
   ![Built-in commands with keyboard access](assets/launcher-commands.png)
 
@@ -943,6 +944,41 @@ the read is refused when detected. Reads use a pinned descriptor through Linux
 shows a timeout after three seconds; underlying filesystem work may still finish
 in the daemon. Matching launcher and daemon versions are required. File text is
 neither indexed nor persisted by this feature.
+
+## Local commands
+
+Register an executable by adding an entry to `launcher-scripts.toml` beside
+the main configuration file. Reopen the launcher to load changes. The Commands
+filter lists the registered commands. Strong title and description matches also
+appear in All.
+
+```toml
+[[command]]
+title = "Release check"
+description = "Print a local release summary"
+executable = "/home/you/bin/release-check"
+args = ["--summary"]
+confirm = true
+```
+
+Use an absolute path to an executable. The launcher passes each argument as
+written, starts in the executable's parent directory and closes standard input.
+The executable runs with your account's permissions. Discovery reads the
+registration file. Run starts the executable, and `confirm = true`
+adds a confirmation showing the executable and arguments. Click **Run** or
+press Ctrl+Enter to confirm.
+
+The command view shows the outcome and the first 64 KiB of combined standard
+output and standard error as plain text. After the process exits, choose
+**Copy output** or press Enter. Esc returns to the captured search. During
+execution, Esc or **Cancel** stops the process group and returns to search.
+The launcher stops a command that is still running 30 seconds after it starts.
+Changes the command already made remain in effect.
+
+Titles must be unique within the file. The configuration accepts up to 128
+entries. If the Commands footer says **Check launcher-scripts.toml**, correct
+the file and reopen FerroSeek. Other results remain available. `--command`
+and desktop-assigned shortcuts currently address built-in commands.
 
 ## Favorites
 

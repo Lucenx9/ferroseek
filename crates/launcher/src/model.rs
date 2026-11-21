@@ -5,6 +5,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Range;
+use std::sync::Arc;
 
 use iced::keyboard::{
     Key, Modifiers,
@@ -15,6 +16,7 @@ use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
 use crate::favorites::Kind as FavoriteKind;
+use crate::script_commands::Script;
 use crate::snippets::Snippet;
 use crate::usage::Kind;
 use crate::{calc, links, matcher, saved, uri};
@@ -97,6 +99,7 @@ pub enum Target {
     /// A calculator result, as displayed.
     Calc(String),
     Command(Builtin),
+    Script(Arc<Script>),
     Link(links::Link, String),
     Snippet(Snippet),
     UnavailableAlias(saved::Alias),
@@ -349,6 +352,21 @@ pub(crate) fn unavailable_alias(alias: &saved::Alias) -> Item {
     }
 }
 
+pub(crate) fn script_item(script: &Arc<Script>) -> Item {
+    Item {
+        target: Target::Script(script.clone()),
+        section: Section::Commands,
+        title: script.title.clone(),
+        subtitle: if script.description.is_empty() {
+            script.executable.to_string_lossy().into_owned()
+        } else {
+            script.description.clone()
+        },
+        icon: "utilities-terminal".into(),
+        tag: "Script",
+    }
+}
+
 pub fn link_item(link: &links::Link, terms: &str) -> Item {
     Item {
         target: Target::Link(link.clone(), terms.to_owned()),
@@ -387,6 +405,7 @@ pub enum Action {
     Launch,
     Open,
     OpenCommand,
+    RunScript,
     OpenLink,
     EditLink,
     CopySnippet,
@@ -416,6 +435,7 @@ impl Action {
         match self {
             Action::Launch => "Launch",
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
+            Action::RunScript => "Run",
             Action::EditLink => "Edit link",
             Action::CopySnippet => "Copy snippet",
             Action::PasteSnippet => "Paste snippet",
@@ -470,6 +490,7 @@ impl Action {
             Self::Launch
             | Self::Open
             | Self::OpenCommand
+            | Self::RunScript
             | Self::OpenLink
             | Self::EditLink
             | Self::CopySnippet
@@ -488,6 +509,7 @@ impl Action {
             Action::Launch
             | Action::Open
             | Action::OpenCommand
+            | Action::RunScript
             | Action::OpenLink
             | Action::CopyResult
             | Action::CopySnippet => "Enter",
@@ -523,6 +545,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand, Action::EditAlias],
+        Target::Script(_) => vec![Action::RunScript],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],

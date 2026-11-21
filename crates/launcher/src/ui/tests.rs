@@ -242,14 +242,14 @@ fn query_prefill_is_applied_before_the_first_input_event() {
             apps: search_state().apps,
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
-            destination: Destination::Search("report".into()),
             settings_path: config.path().to_path_buf(),
             paste_target: None,
         },
         Material::default(),
         output::Observer::default(),
         Icons::disabled(),
-    );
+    )
+    .start_destination(Destination::Search("report".into()));
     assert_eq!(s.query, "report");
     let mut cache = iced_runtime::user_interface::Cache::default();
     widget_batch(&mut s, &mut cache, &[typed("x", Modifiers::empty())], false);
@@ -586,6 +586,7 @@ fn search_state() -> Launcher {
         usage: Usage::disabled(),
         favorites: Favorites::disabled(),
         saved: saved::Store::default(),
+        scripts: scripts::State::default(),
         alias_editor: None,
         saved_editor: None,
         edit_generation: 0,
@@ -908,6 +909,32 @@ fn moving_a_favorite_keeps_the_selected_command_and_allows_moving_it_back() {
     let action = s.panel.as_ref().unwrap().filtered_actions()[0];
     let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action });
     assert_eq!((&s.items[1].target, &s.selected().unwrap().target), (&target, &target));
+}
+
+#[test]
+fn leaving_local_command_confirmation_restores_the_selected_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = \"Launch check\"\nexecutable = \"/synthetic/launch-check\"\nconfirm = true\n",
+    )
+    .unwrap();
+    let mut s = search_state();
+    s.scripts = scripts::State::load(&settings);
+    let _ = update(&mut s, Message::Scope(Scope::Commands));
+    let _ = update(&mut s, Message::Query("launch check".into()));
+    let saved_target = s.selected().unwrap().target.clone();
+    assert!(matches!(saved_target, Target::Script(_)));
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = command(&mut s, Command::Activate);
+    assert!(s.scripts.panel.is_some());
+    assert!(s.search_suspended());
+    let _ = update(&mut s, Message::Query("queued text".into()));
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!((s.query.as_str(), s.selected().map(|item| &item.target)), ("launch check", Some(&saved_target)));
+    assert!(s.scripts.panel.is_none());
 }
 
 #[test]

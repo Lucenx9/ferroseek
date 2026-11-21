@@ -33,6 +33,10 @@ pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
 }
 
 impl Launcher {
+    pub(super) fn command_view_open(&self) -> bool {
+        self.clipboard_history.panel.is_some() || self.window_switcher.panel.is_some() || self.scripts.panel.is_some()
+    }
+
     pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
         if let Some(panel) = &self.window_switcher.panel {
             return Some(panel.input());
@@ -112,7 +116,10 @@ impl Launcher {
     }
 
     fn overrides_launcher_shortcuts(&self) -> bool {
-        self.application_picker.is_some() || self.global_shortcuts.panel.is_some() || self.saved_editor_open()
+        self.application_picker.is_some()
+            || self.global_shortcuts.panel.is_some()
+            || self.saved_editor_open()
+            || self.scripts.panel.is_some()
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
@@ -150,6 +157,9 @@ impl Launcher {
     }
 
     pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.scripts.panel {
+            return Some(panel.view(self.scripts.generation));
+        }
         if let Some(editor) = self.editor_view() {
             return Some(editor);
         }

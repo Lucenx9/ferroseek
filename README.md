@@ -29,7 +29,7 @@ and Labwc sessions. No binary release has been published yet.
   Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
-- Find built-in launcher commands, saved links and reusable text in **Commands**.
+- Find built-in commands, saved links, reusable text and registered local commands in **Commands**.
 - Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
 - Save and copy multiline text from [snippets](docs/LAUNCHER.md#snippets).
 - Opt in to [clipboard history](docs/LAUNCHER.md#clipboard-history) on supported Wayland compositors.

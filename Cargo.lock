@@ -1133,6 +1133,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml",
  "url",
  "wayland-client",
  "wayland-protocols",

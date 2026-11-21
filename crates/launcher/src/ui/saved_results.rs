@@ -46,7 +46,13 @@ impl Launcher {
         let snippets = snippets::matching(&self.saved.snippets, &self.query, all)
             .into_iter()
             .map(|(snippet, score)| (model::snippet_item(snippet), score));
-        let mut matches: Vec<_> = links.chain(snippets).collect();
+        let scripts = self
+            .scripts
+            .catalog
+            .matching(&self.query, all)
+            .into_iter()
+            .map(|(script, score)| (model::script_item(script), score));
+        let mut matches: Vec<_> = links.chain(snippets).chain(scripts).collect();
         if self.query.trim().is_empty() {
             // The empty catalog already includes the pinned links and snippets.
             matches.retain(|(item, _)| !self.is_favorite(&item.target));

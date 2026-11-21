@@ -8,6 +8,7 @@ mod global_shortcut_settings;
 mod paste;
 mod saved_editor;
 mod saved_results;
+mod scripts;
 mod settings;
 mod shortcut_settings;
 mod views;
@@ -91,7 +92,6 @@ pub struct Boot {
     pub apps: Vec<App>,
     pub usage: Usage,
     pub favorites: Favorites,
-    pub destination: Destination,
     pub settings_path: std::path::PathBuf,
     pub paste_target: Option<crate::window_switcher::PasteTarget>,
 }
@@ -231,6 +231,7 @@ pub struct Launcher {
     usage: Usage,
     favorites: Favorites,
     saved: saved::Store,
+    scripts: scripts::State,
     alias_editor: Option<alias_editor::Editor>,
     saved_editor: Option<saved_editor::Editor>,
     edit_generation: u64,
@@ -289,6 +290,7 @@ pub enum Message {
     Output(output::Event),
     ApplicationOpened { id: String, result: Result<(), String> },
     LinkOpened(Result<(), RunError>),
+    Script { generation: u64, event: scripts::Event },
     SavedEditor { generation: u64, event: saved_editor::Event },
     AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
@@ -351,7 +353,11 @@ fn status_scroll_id() -> Id {
     Id::new("search-status-scroll")
 }
 
-pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
+pub fn run(
+    boot_data: Boot,
+    destination: Destination,
+    events: UnboundedReceiver<UiEvent>,
+) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
     let provisional = layout::calculate(boot_data.config.appearance, None, Some(0), false);
     let (output, output_events) = output::Observer::new((provisional.width, provisional.height));
@@ -364,7 +370,8 @@ pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), ic
     let shared_material = material.clone();
     *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    let (mut state, startup) = boot_from(boot_data, material, output, Icons::new(ICON_SIZE as u16));
+    let (mut state, startup) =
+        boot_from(boot_data, material, output, Icons::new(ICON_SIZE as u16)).start_destination(destination);
     let initial = state.placement.expect("startup computes the first surface geometry");
     shared_material.resize((initial.width, initial.height));
     state.surface_ready = true;
@@ -407,7 +414,7 @@ fn boot() -> (Launcher, Task<Message>) {
     BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()")
 }
 
-fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
+fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> Launcher {
     Launcher {
         output,
         output_bounds: None,
@@ -434,6 +441,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         usage: data.usage,
         favorites: data.favorites,
         saved: saved::Store::load(&saved::Store::path(&data.settings_path)),
+        scripts: scripts::State::load(&data.settings_path),
         alias_editor: None,
         saved_editor: None,
         edit_generation: 0,
@@ -474,7 +482,6 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         status: Status::Idle,
         compact: true,
     }
-    .start_destination(data.destination)
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -691,6 +698,7 @@ impl Launcher {
                     Target::File(_) => &file_fallbacks,
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                     Target::Command(_) => &["preferences-system", "applications-system"],
+                    Target::Script(_) => &["utilities-terminal", "application-x-executable"],
                     Target::Link(..) => &["insert-link"],
                     Target::Snippet(_) => &["text-x-generic"],
                     Target::UnavailableAlias(_) => &["dialog-information"],
@@ -769,7 +777,7 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
-            (Action::OpenCommand, Target::Command(command)) => self.open_builtin(*command),
+            (Action::OpenCommand | Action::RunScript, _) => self.activate_command(&item.target),
             (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
             (Action::EditLink, Target::Link(link, _)) => {
                 self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
@@ -1039,8 +1047,7 @@ impl Launcher {
             || self.settings.is_some()
             || self.settings_form_open()
             || self.saved_editor_open()
-            || self.clipboard_history.panel.is_some()
-            || self.window_switcher.panel.is_some()
+            || self.command_view_open()
     }
 
     fn settings_form_open(&self) -> bool {
@@ -1353,7 +1360,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.window_switcher.panel.is_some() {
+    if s.scripts.panel.is_some() {
+        s.update_scripts(message)
+    } else if s.window_switcher.panel.is_some() {
         s.update_windows(message)
     } else if s.clipboard_history.panel.is_some() {
         s.update_clipboard_history(message)
@@ -1570,7 +1579,7 @@ fn query_changed(s: &mut Launcher, q: String) -> Task<Message> {
     // this one is searched.
     s.files.clear();
     s.folder_more = false;
-    s.status = if file_query { Status::Searching } else { Status::Idle };
+    s.status = if file_query { Status::Searching } else { s.scripts.search_status(s.scope) };
     s.rebuild(false);
     if !file_query {
         timing::ready(s.generation, s.items.len(), s.files.len(), true);

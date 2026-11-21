@@ -26,6 +26,7 @@ mod open_with;
 mod output;
 mod preview;
 mod saved;
+mod script_commands;
 mod shortcuts;
 mod snippets;
 mod timing;
@@ -200,11 +201,11 @@ fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> E
             apps,
             usage: history,
             favorites,
-            destination,
             settings_path,
             private,
             paste_target: paste.and_then(window_switcher::PasteCapture::finish),
         },
+        destination,
         events,
     ) {
         Ok(()) => ExitCode::SUCCESS,

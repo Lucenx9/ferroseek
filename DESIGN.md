@@ -228,6 +228,11 @@ offers a next step and omits Run. The launcher footer offers a clickable primary
 action for the selected result and Close actions while the panel is open.
 Footer clicks operate on the target and action shown when clicked.
 
+Local command results use Run as their primary action. When confirmation is
+configured, show the executable and arguments and keep Back available. Show
+progress and cancellation during execution, then the outcome and readable,
+copyable text output. Back restores the captured query and selection.
+
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve
 the existing query-clearing and folder-return order documented in the launcher

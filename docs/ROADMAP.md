@@ -135,8 +135,10 @@ Complete desktop validation before expanding the platform.
   management interface, verified on virtual KWin 6.8.3.
 - [x] Register a dedicated window-management helper for restricted Plasma
   sessions, with the installed command verified on virtual KWin 5.27.11.
-- [ ] Evaluate user-defined script commands before designing workflows or a
-  general extension API; keep execution explicit and separate from search.
+- [x] Run registered local commands from search, with optional confirmation,
+  bounded output and a cancellable command view.
+- [ ] Evaluate visual command registration, user-supplied arguments and
+  reusable workflows before designing a general extension API.
 
 ## Optional AI agent integration
 
