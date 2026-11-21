@@ -3,6 +3,8 @@
 
 mod wayland;
 
+pub use wayland::publish;
+
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{FileExt, OpenOptionsExt};

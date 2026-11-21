@@ -131,8 +131,16 @@ enum Protocol {
     Wlr,
 }
 
+enum Device {
+    Standard(ext_manager::ExtDataControlManagerV1, ext_device::ExtDataControlDeviceV1),
+    Wlr(wlr_manager::ZwlrDataControlManagerV1, wlr_device::ZwlrDataControlDeviceV1),
+}
+
 impl Protocol {
-    fn connect() -> io::Result<(GlobalList, EventQueue<Capture>, Self)> {
+    fn connect<D>() -> io::Result<(GlobalList, EventQueue<D>, Self)>
+    where
+        D: Dispatch<wl_registry::WlRegistry, GlobalListContents> + 'static,
+    {
         let connection = Connection::connect_to_env().map_err(io::Error::other)?;
         let (globals, queue) = registry_queue_init(&connection).map_err(io::Error::other)?;
         let listed = globals.contents().clone_list();
@@ -147,21 +155,30 @@ impl Protocol {
         Ok((globals, queue, protocol))
     }
 
-    fn bind(self, globals: &GlobalList, handle: &QueueHandle<Capture>) -> io::Result<()> {
+    fn bind<D>(self, globals: &GlobalList, handle: &QueueHandle<D>) -> io::Result<Device>
+    where
+        D: Dispatch<wl_seat::WlSeat, ()>
+            + Dispatch<ext_manager::ExtDataControlManagerV1, ()>
+            + Dispatch<ext_device::ExtDataControlDeviceV1, ()>
+            + Dispatch<wlr_manager::ZwlrDataControlManagerV1, ()>
+            + Dispatch<wlr_device::ZwlrDataControlDeviceV1, ()>
+            + 'static,
+    {
         let seat: wl_seat::WlSeat = globals.bind(handle, 1..=1, ()).map_err(io::Error::other)?;
         match self {
             Self::Standard => {
                 let manager: ext_manager::ExtDataControlManagerV1 =
                     globals.bind(handle, 1..=1, ()).map_err(io::Error::other)?;
-                manager.get_data_device(&seat, handle, ());
+                let device = manager.get_data_device(&seat, handle, ());
+                Ok(Device::Standard(manager, device))
             }
             Self::Wlr => {
                 let manager: wlr_manager::ZwlrDataControlManagerV1 =
                     globals.bind(handle, 1..=2, ()).map_err(io::Error::other)?;
-                manager.get_data_device(&seat, handle, ());
+                let device = manager.get_data_device(&seat, handle, ());
+                Ok(Device::Wlr(manager, device))
             }
         }
-        Ok(())
     }
 }
 
@@ -208,7 +225,7 @@ pub(super) fn watch(profile: &Profile, lock: &File) -> io::Result<bool> {
     }
 }
 
-fn advance(queue: &mut EventQueue<Capture>, state: &mut Capture) -> io::Result<()> {
+fn advance<D: 'static>(queue: &mut EventQueue<D>, state: &mut D) -> io::Result<()> {
     queue.dispatch_pending(state).map_err(io::Error::other)?;
     queue.flush().map_err(io::Error::other)?;
     if let Some(read) = queue.prepare_read()
@@ -232,12 +249,12 @@ fn ready(fd: BorrowedFd<'_>, timeout: i32) -> io::Result<bool> {
 
 // These objects have no events the recorder needs to handle.
 macro_rules! ignore_events {
-    ($object:ty, $data:ty) => {
-        impl Dispatch<$object, $data> for Capture {
+    ($state:ty, $object:ty, $data:ty) => {
+        impl Dispatch<$object, $data> for $state {
             fn event(
                 _: &mut Self,
                 _: &$object,
-                _: <$object as Proxy>::Event,
+                _: <$object as wayland_client::Proxy>::Event,
                 _: &$data,
                 _: &Connection,
                 _: &QueueHandle<Self>,
@@ -247,13 +264,15 @@ macro_rules! ignore_events {
     };
 }
 
-ignore_events!(wl_registry::WlRegistry, GlobalListContents);
-ignore_events!(wl_seat::WlSeat, ());
+pub mod publish;
+
+ignore_events!(Capture, wl_registry::WlRegistry, GlobalListContents);
+ignore_events!(Capture, wl_seat::WlSeat, ());
 
 // Both data-control versions expose the same offer and selection semantics.
 macro_rules! capture_protocol {
     ($manager:ident::$Manager:ident, $device:ident::$Device:ident, $offer:ident::$Offer:ident) => {
-        ignore_events!($manager::$Manager, ());
+        ignore_events!(Capture, $manager::$Manager, ());
 
         impl Dispatch<$device::$Device, ()> for Capture {
             fn event(

@@ -28,9 +28,9 @@ Running it while it is open
 without a command ID closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
-while Search folders, Appearance or Shortcuts is shown, or after a copy in
-this session. The launcher serves a copied value until Esc or the toggle
-closes it.
+while Search folders, Appearance or Shortcuts is shown, or while the launcher
+is serving the clipboard. See [Clipboard history](#clipboard-history) for
+copying text that remains available after the launcher closes.
 
 | Option | Effect |
 |---|---|
@@ -244,10 +244,15 @@ the KDE password hint. It accepts UTF-8 text up to 8 KiB per entry.
 
 Filter with the search field. Use **Preview** or Ctrl+Enter to read the full
 text. Esc returns to the same filter and selection. Press Enter, use a
-numbered shortcut, or double-click to copy the selected text again. The launcher stays open to serve
-the clipboard while you paste. Use **Pin** or Ctrl+Shift+P to keep the selected
-entry. Pinned entries appear first. **Pinned** or Ctrl+G narrows the current
-search to pins. **Show all** or the same shortcut restores all entries.
+numbered shortcut, or double-click to copy the selected text again. With one
+input seat and clipboard data control, the copied text stays available when
+you close the launcher. You can return to the previous app and press its paste
+shortcut, even with recording stopped. Otherwise keep the launcher open while
+you paste.
+
+Use **Pin** or Ctrl+Shift+P to keep the selected entry. Pinned entries appear
+first. **Pinned** or Ctrl+G narrows the current search to pins. **Show all** or
+the same shortcut restores all entries.
 
 Ctrl+D deletes the selected entry, including a pinned one. **Clear history**
 or Ctrl+Shift+Delete opens a confirmation to remove all entries. Ctrl+D

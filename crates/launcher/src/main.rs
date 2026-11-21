@@ -90,12 +90,11 @@ impl Destination {
 fn main() -> ExitCode {
     timing::init();
     let mut args = std::env::args().skip(1).peekable();
-    if args.next_if(|arg| arg == "--global-shortcuts").is_some() {
-        return if args.next().is_none() {
-            monitor_shortcuts()
-        } else {
-            usage_error("--global-shortcuts is a standalone option")
-        };
+    if let Some(flag) = args.next_if(|arg| matches!(arg.as_str(), "--global-shortcuts" | "--serve-clipboard")) {
+        if args.next().is_some() {
+            return usage_error(&format!("{flag} is a standalone option"));
+        }
+        return if flag == "--global-shortcuts" { monitor_shortcuts() } else { serve_clipboard() };
     }
     match parse_options(args) {
         Ok(options) => launch_ui(options),
@@ -227,6 +226,16 @@ fn clipboard_watcher() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("ferroseek-launcher: clipboard recorder stopped: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn serve_clipboard() -> ExitCode {
+    match clipboard_history::publish::serve() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("ferroseek-launcher: {error}");
             ExitCode::from(1)
         }
     }

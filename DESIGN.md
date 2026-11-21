@@ -171,7 +171,9 @@ Clipboard history has its own filter and result list. Show recording status,
 retention, copy and deletion controls in the view. Mark pinned entries in their
 rows and provide a pinned-only filter that keeps the query. Ask for confirmation
 before clearing all entries, including pins. Preserve the selected entry during
-live refreshes.
+live refreshes. Keep copied text available after leaving the launcher when the
+desktop supports a standalone clipboard source. Otherwise keep the surface
+available to serve the current selection.
 Switch windows filters the live window list by title and application. Use the
 application name and window state as context. Keep the selected window
 through updates and require a new selection if it closes. Back restores the

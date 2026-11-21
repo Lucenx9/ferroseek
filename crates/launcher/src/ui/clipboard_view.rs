@@ -45,6 +45,7 @@ pub enum Event {
     PinnedOnly,
     Refresh,
     Copy(u64),
+    Copied(Option<String>),
     Back,
 }
 
@@ -58,6 +59,12 @@ impl State {
     pub(super) fn new(private: bool) -> Self {
         Self { private, generation: 0, panel: None }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Edit,
+    Copy,
 }
 
 pub(super) struct Panel {
@@ -74,7 +81,7 @@ pub(super) struct Panel {
     preview_scroll: Id,
     preview: Option<u64>,
     feed: Option<iced::task::Handle>,
-    busy: bool,
+    pending: Option<Pending>,
     confirm: bool,
     error: Option<String>,
     note: &'static str,
@@ -96,7 +103,7 @@ impl Panel {
             preview_scroll: Id::unique(),
             preview: None,
             feed: None,
-            busy: false,
+            pending: None,
             confirm: false,
             error: None,
             note: "",
@@ -190,12 +197,12 @@ impl Panel {
     }
 
     fn edit(&mut self, edit: Option<Edit>) -> Task<Event> {
-        if self.busy {
+        if self.pending.is_some() {
             return Task::none();
         }
         let Some(profile) = self.profile.clone() else { return Task::none() };
         self.confirm = false;
-        self.busy = true;
+        self.pending = Some(Pending::Edit);
         self.error = None;
         self.note = "";
         let update = async move {
@@ -247,7 +254,7 @@ impl Panel {
     }
 
     fn can_act(&self) -> bool {
-        !self.confirm && !self.busy
+        !self.confirm && self.pending.is_none()
     }
 
     fn key_command(&mut self, command: Command) -> Option<Event> {
@@ -307,7 +314,6 @@ impl Panel {
 
     fn update(&mut self, event: Event) -> Task<Event> {
         match event {
-            Event::Load(result) if !self.busy => self.received(result),
             Event::Query(query) if self.can_act() => {
                 self.query = query;
                 self.note = "";
@@ -331,7 +337,7 @@ impl Panel {
             Event::Retention => self.retention(),
             Event::Refresh => self.edit(None),
             Event::Clear => {
-                self.confirm = !self.entries().is_empty() && !self.busy;
+                self.confirm = !self.entries().is_empty() && self.pending.is_none();
                 Task::none()
             }
             Event::Delete(id) => self.edit(Some(Edit::Delete(id))),
@@ -446,7 +452,7 @@ impl Panel {
             Mode::Paused => "Resume recording",
             Mode::Off => "Start recording",
         };
-        let enabled = !self.busy && !self.confirm;
+        let enabled = self.can_act();
         let control = |label, event, enabled: bool| {
             button(text(label).size(12)).on_press_maybe(enabled.then_some(event)).padding(6).style(status_button_style)
         };
@@ -473,8 +479,12 @@ impl Panel {
         if let Some(error) = &self.error {
             return (error, palette::ERROR);
         }
-        if self.busy {
-            return ("Saving clipboard history…", palette::DIM);
+        if let Some(operation) = self.pending {
+            let message = match operation {
+                Pending::Edit => "Saving clipboard history…",
+                Pending::Copy => "Copying text…",
+            };
+            return (message, palette::DIM);
         }
         if self.private {
             return ("Clipboard history is paused for private use.", palette::DIM);
@@ -504,7 +514,7 @@ impl Panel {
         } else {
             self.cursor.window(self.matches.len()).enumerate().fold(column![], |column, (slot, index)| {
                 let entry = &self.entries()[self.matches[index]];
-                column.push(history_row(entry, slot, index == self.cursor.selected, !self.confirm && !self.busy))
+                column.push(history_row(entry, slot, index == self.cursor.selected, self.can_act()))
             })
         };
         column![notice, list].height(Length::Fill).padding([0, 4]).into()
@@ -533,7 +543,7 @@ impl Panel {
     }
 
     fn list_actions(&self, width: u32) -> Vec<Element<'_, Event>> {
-        let Some(entry) = self.selected().filter(|_| !self.busy) else { return Vec::new() };
+        let Some(entry) = self.selected().filter(|_| self.can_act()) else { return Vec::new() };
         let action = |key, label, event| {
             let content = if width < 600 { text(label).size(12).into() } else { hint(key, label) };
             button(content).on_press(event).style(status_button_style).into()
@@ -641,18 +651,23 @@ impl Launcher {
     }
 
     pub(super) fn update_clipboard_history(&mut self, message: Message) -> Task<Message> {
+        let generation = self.clipboard_history.generation;
+        let panel = self.clipboard_history.panel.as_mut().expect("clipboard panel is open");
+        if matches!(&message, Message::FocusLost) && panel.pending == Some(Pending::Copy) {
+            return Task::none();
+        }
         if matches!(&message, Message::Files { .. } | Message::Ui(_) | Message::FocusLost | Message::InputClipboard(_))
         {
             return update_content(self, message);
         }
-        let generation = self.clipboard_history.generation;
-        let panel = self.clipboard_history.panel.as_mut().expect("clipboard panel is open");
         let Some(event) = panel.input_event(message, generation) else { return Task::none() };
         match event {
-            Event::Load(result) if !panel.busy => self.clipboard_loaded(result, false),
+            Event::Load(result) if panel.pending != Some(Pending::Edit) => self.clipboard_loaded(result, false),
             Event::Edited(result) => self.clipboard_loaded(result, true),
-            Event::DoubleClick(id) if panel.double_clicked(id) => self.copy_history_entry(id),
-            Event::Copy(id) if panel.can_act() => self.copy_history_entry(id),
+            Event::Copied(fallback) => self.history_copy_finished(fallback),
+            Event::Copy(id) | Event::DoubleClick(id) => {
+                self.copy_history_entry(id, matches!(event, Event::DoubleClick(_)))
+            }
             Event::Preview(id) if panel.can_act() => panel.begin_preview(id),
             Event::ScrollPreview(command) => panel.scroll_preview(command),
             Event::Back => self.back_from_clipboard(),
@@ -664,27 +679,50 @@ impl Launcher {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
         let height = panel.height();
         if edited {
-            panel.busy = false;
+            panel.pending = None;
         }
         panel.received(result);
         let focus = if edited { panel.focus().map_or_else(Task::none, crate::input::focus) } else { Task::none() };
         if height == panel.height() { focus } else { Task::batch([focus, self.resize()]) }
     }
 
-    fn copy_history_entry(&mut self, id: u64) -> Task<Message> {
+    fn copy_history_entry(&mut self, id: u64, double_click: bool) -> Task<Message> {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
+        if double_click && !panel.double_clicked(id) {
+            return Task::none();
+        }
+        if !panel.can_act() {
+            return Task::none();
+        }
         let target = if panel.preview.is_some() { panel.viewed() } else { panel.selected() };
         let Some(text) = target.filter(|entry| entry.id == id).map(|entry| entry.text.clone()) else {
             return Task::none();
         };
+        panel.pending = Some(Pending::Copy);
+        panel.note = "Copying text…";
+        let generation = self.clipboard_history.generation;
+        let handoff = zruntime::unblock(move || crate::clipboard_history::publish::handoff(&text).err().map(|_| text));
+        Task::perform(handoff, move |fallback| Message::Clipboard { generation, event: Event::Copied(fallback) })
+    }
+
+    fn history_copy_finished(&mut self, fallback: Option<String>) -> Task<Message> {
+        let panel = self.clipboard_history.panel.as_mut().unwrap();
+        panel.pending = None;
         panel.note = "Copied text";
         let focus = panel.focus().map_or_else(Task::none, crate::input::focus);
-        Task::batch([self.write_clipboard(text), focus])
+        match fallback {
+            Some(text) => Task::batch([self.write_clipboard(text), focus]),
+            None => {
+                timing::event("clipboard_handoff_ready");
+                self.clipboard_owner = false;
+                focus
+            }
+        }
     }
 
     fn back_from_clipboard(&mut self) -> Task<Message> {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
-        if panel.busy {
+        if panel.pending.is_some() {
             return Task::none();
         }
         if panel.preview.take().is_some() {
