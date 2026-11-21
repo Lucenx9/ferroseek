@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
+mod link_editor;
 mod settings;
 mod views;
 
@@ -30,6 +31,7 @@ use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::layout::{self, FOOTER_HEIGHT, INPUT_HEIGHT, PAD, ROW_HEIGHT};
+use crate::links;
 use crate::material::Material;
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
@@ -201,6 +203,9 @@ pub struct Launcher {
     apps: Vec<App>,
     usage: Usage,
     favorites: Favorites,
+    links: links::Store,
+    link_editor: Option<link_editor::Editor>,
+    link_generation: u64,
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
@@ -255,6 +260,8 @@ pub enum Message {
     SurfaceResized((u32, u32)),
     Output(output::Event),
     ApplicationOpened { id: String, result: Result<(), String> },
+    LinkOpened(Result<(), RunError>),
+    LinkEditor { generation: u64, event: link_editor::Event },
     TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
@@ -392,6 +399,9 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         apps,
         usage,
         favorites,
+        links: links::Store::load(&links::Store::path(&settings_path)),
+        link_editor: None,
+        link_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -429,16 +439,8 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         status: Status::Idle,
         compact: true,
     };
-    state.rebuild(false); // recently opened items for the empty query
-    let prefill = if first_run {
-        state.show_folders(true)
-    } else if initial_query.is_empty() {
-        Task::none()
-    } else {
-        update(&mut state, Message::Query(initial_query))
-    };
-    let size = state.resize();
-    (state, Task::batch([size, prefill]))
+    let startup = state.start_search(initial_query, first_run);
+    (state, startup)
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -533,6 +535,24 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
+    fn start_search(&mut self, initial_query: String, first_run: bool) -> Task<Message> {
+        self.rebuild(false);
+        let prefill = if first_run {
+            self.show_folders(true)
+        } else if initial_query.is_empty() {
+            Task::none()
+        } else {
+            update(self, Message::Query(initial_query))
+        };
+        Task::batch([self.resize(), prefill])
+    }
+
+    fn resume_query(&mut self, query: String) -> Task<Message> {
+        self.panel = None;
+        let change = update(self, Message::Query(query));
+        Task::batch([change, crate::input::focus(search_id()), widget::operation::move_cursor_to_end(search_id())])
+    }
+
     fn appearance_theme(&self, glass: bool) -> Theme {
         appearance::theme(self.preferences, self.system_dark, glass)
     }
@@ -602,6 +622,7 @@ impl Launcher {
             }
             items
         };
+        self.merge_links();
         self.sync_result_icons();
         let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
         match kept {
@@ -630,6 +651,7 @@ impl Launcher {
                     Target::File(_) => &file_fallbacks,
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                     Target::Command(_) => &["preferences-system", "applications-system"],
+                    Target::Link(..) => &["insert-link"],
                 };
                 icons.get(&item.icon, fallbacks)
             })
@@ -693,6 +715,8 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::OpenCommand, Target::Command(command)) => self.open_builtin(*command),
+            (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
+            (Action::EditLink, Target::Link(link, _)) => self.open_link_editor(Some(link.clone())),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
@@ -732,15 +756,7 @@ impl Launcher {
             (Action::CopyResult, Target::Calc(v)) => self.copy(v.clone(), "result"),
             (Action::UseResult, Target::Calc(_)) => {
                 let Some(query) = calc::continuation(&self.query) else { return Task::none() };
-                self.panel = None;
-                // Update before moving the cursor: the continued value can
-                // be longer than the original expression.
-                let change = update(self, Message::Query(query));
-                Task::batch([
-                    change,
-                    crate::input::focus(search_id()),
-                    widget::operation::move_cursor_to_end(search_id()),
-                ])
+                self.resume_query(query)
             }
             (Action::AddFavorite | Action::RemoveFavorite, _) => {
                 self.set_favorite(&item.target, action == Action::AddFavorite)
@@ -785,7 +801,7 @@ impl Launcher {
         match target {
             Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
             Target::File(file) => self.favorites.contains(Kind::File, &file.id),
-            Target::Calc(_) | Target::Command(_) => false,
+            Target::Calc(_) | Target::Command(_) | Target::Link(..) => false,
         }
     }
 
@@ -842,7 +858,7 @@ impl Launcher {
         let (kind, key) = match target {
             Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
             Target::File(f) => (Kind::File, f.id.as_str()),
-            Target::Calc(_) | Target::Command(_) => return Task::none(),
+            Target::Calc(_) | Target::Command(_) | Target::Link(..) => return Task::none(),
         };
         self.panel = None;
         self.status = match self.usage.reset(kind, key) {
@@ -998,6 +1014,7 @@ impl Launcher {
             || self.appearance.is_some()
             || self.search_status.is_some()
             || self.settings.is_some()
+            || self.link_editor.is_some()
     }
 
     fn preview_visible(&self) -> bool {
@@ -1290,7 +1307,17 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
         timing::frame(at, s.generation, visible);
         return Task::none();
     }
-    if s.appearance.is_some() { update_appearance(s, message) } else { update_content(s, message) }
+    update_active_view(s, message)
+}
+
+fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.link_editor.is_some() {
+        s.update_link_editor(message)
+    } else if s.appearance.is_some() {
+        update_appearance(s, message)
+    } else {
+        update_content(s, message)
+    }
 }
 
 fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
@@ -1375,19 +1402,7 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
         }
         Message::Files { generation, result } => files_loaded(s, generation, result),
         Message::Cmd(cmd) => command(s, cmd),
-        Message::Wheel(dy) => {
-            s.clicks = ClickTracker::default();
-            if let Some(panel) = &mut s.application_picker {
-                if s.opening.is_none() {
-                    panel.wheel(if dy > 0.0 { -1 } else { 1 });
-                }
-                return Task::none();
-            }
-            if s.search_suspended() {
-                return Task::none(); // modal scrollables handle their own wheel events
-            }
-            move_results(s, dy)
-        }
+        Message::Wheel(dy) => wheel(s, dy),
         Message::Selected(target) => {
             if s.panel.is_some() {
                 s.clicks = ClickTracker::default();
@@ -1431,7 +1446,8 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             a.map_or_else(Task::none, |a| s.perform(a))
         }
         Message::ApplicationOpened { id, result } => application_opened(s, id, result),
-        Message::Opened(result) => file_opened(s, result),
+        Message::Opened(result) => finish_open(s, result, Some(Kind::File)),
+        Message::LinkOpened(result) => finish_open(s, result, None),
         Message::Ui(UiEvent::Toggle) => {
             s.launch_task = None;
             iced::exit()
@@ -1532,12 +1548,14 @@ fn application_opened(s: &mut Launcher, id: String, result: Result<(), String>) 
     }
 }
 
-fn file_opened(s: &mut Launcher, result: Result<(), RunError>) -> Task<Message> {
+fn finish_open(s: &mut Launcher, result: Result<(), RunError>, history: Option<Kind>) -> Task<Message> {
     match result {
         Ok(()) => {
             if let Some((id, query)) = s.opening.take() {
                 s.launch_task = None;
-                s.usage.record(Kind::File, &id, &query, usage::now());
+                if let Some(kind) = history {
+                    s.usage.record(kind, &id, &query, usage::now());
+                }
                 return iced::exit();
             }
             Task::none()
@@ -1632,6 +1650,20 @@ fn refresh_current_view(s: &mut Launcher) -> Task<Message> {
         return s.refresh_search_status();
     }
     Task::none()
+}
+
+fn wheel(s: &mut Launcher, dy: f32) -> Task<Message> {
+    s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.application_picker {
+        if s.opening.is_none() {
+            panel.wheel(if dy > 0.0 { -1 } else { 1 });
+        }
+        return Task::none();
+    }
+    if s.search_suspended() {
+        return Task::none(); // modal scrollables handle their own wheel events
+    }
+    move_results(s, dy)
 }
 
 fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
@@ -1808,24 +1840,15 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
-    let focus = if s.file_details.is_some() || s.search_status.is_some() || s.appearance.is_some() {
-        None
-    } else if s.folder_settings.is_some() {
-        Some(folders::input_id())
-    } else if s.application_picker.is_some() {
-        Some(open_with::input_id())
-    } else if s.settings.is_some() {
-        None
-    } else if s.panel.is_some() {
-        Some(actions_id())
-    } else {
-        Some(search_id())
-    };
     crate::input::capture(
         crate::material::renderer::opaque_fallback(view_content(s), s.appearance_theme(false)),
         s.input_epoch,
-        focus,
-        s.appearance.as_ref().map(appearance::Panel::content_id),
+        s.input_focus(),
+        s.link_editor
+            .as_ref()
+            .map(link_editor::Editor::context)
+            .or_else(|| s.appearance.as_ref().map(appearance::Panel::content_id)),
+        s.link_editor.as_ref().and_then(link_editor::Editor::focus_cycle),
     )
 }
 
@@ -1842,29 +1865,8 @@ fn search_placeholder(s: &Launcher) -> &'static str {
 }
 
 fn view_content(s: &Launcher) -> Element<'_, Message> {
-    if let Some(panel) = &s.appearance {
-        let generation = s.appearance_generation;
-        return panel
-            .view(s.system_dark, s.opaque, s.glass)
-            .map(move |event| Message::Appearance { generation, event });
-    }
-
-    if let Some(panel) = &s.file_details {
-        let generation = s.details_generation;
-        return panel.view().map(move |event| Message::Details { generation, event });
-    }
-    if let Some(panel) = &s.application_picker {
-        return s.open_with_view(panel);
-    }
-    if let Some(panel) = &s.folder_settings {
-        let generation = s.folder_generation;
-        return panel.view().map(move |event| Message::Folder { generation, event });
-    }
-    if let Some(status) = &s.search_status {
-        return search_status_view(status);
-    }
-    if let Some(selected) = s.settings {
-        return settings::view(selected);
+    if let Some(secondary) = s.secondary_view() {
+        return secondary;
     }
     let placeholder = search_placeholder(s);
     let scope_generation = s.scope_generation;

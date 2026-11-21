@@ -57,6 +57,38 @@ shortcut shown next to its name.
 The search, Settings, and Search status screenshots show the launcher at 1× in
 isolated virtual KWin 5.27.11 with the tiny-skia renderer and synthetic data.
 
+## Saved links
+
+![Editing a saved web search and its keyword](assets/launcher-edit-link.png)
+
+Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
+Search for **Create link** in **All** or **Commands**. Give the link a name
+and enter an HTTPS or HTTP address, an absolute indexed path, or a path starting
+with `~/`. Tab and Shift+Tab move between fields. Press Enter or Ctrl+S to
+save. The launcher opens **Commands** with the saved link selected. Escape
+returns to the previous search. If the form contains unsaved changes, Ctrl+D
+discards them and Escape keeps editing.
+
+An optional keyword gives a shorter way to find a link. For a web search,
+enter a destination such as `https://example.net/find?q={query}` and a keyword
+such as `find`. Type `find ferro seek` in the launcher and press Enter to
+submit the encoded search terms to the default web handler. A web search uses
+one `{query}` in a query parameter value. Selecting a web search with empty
+terms fills its keyword so you can type the terms. The launcher sends the
+destination to the desktop only when you explicitly open it.
+
+Saved links appear alongside built-in commands. Use **Actions → Edit link**
+to change one. In the editor, **Delete** or Ctrl+D opens a confirmation.
+Confirm with Ctrl+D or the **Delete** button. Escape keeps the saved link.
+Opening an indexed path asks the search service to resolve and open it. The
+same indexing and access rules apply as for a file search result.
+
+The launcher stores the explicitly saved links beside its main configuration
+as `launcher-links` with owner-only permissions. Private mode can use and edit
+these links, and opening a link adds no launch history. The launcher keeps up
+to 128 links, with unique names and keywords.
+
 ## Appearance
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
@@ -278,12 +310,13 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   fallback are not supported. These commands use argument vectors, the app's
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
-  **Appearance**, **Layout**, **Search folders** or **Search status**. Strong
+  **Appearance**, **Layout**, **Search folders**, **Search status** or
+  **Create link**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.
   Back returns to the same search. Applying new search folders refreshes the
-  results.
+  results. [Saved links](#saved-links) also appear in this scope.
 
   ![Built-in commands with keyboard access](assets/launcher-commands.png)
 

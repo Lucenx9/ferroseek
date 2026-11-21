@@ -19,6 +19,7 @@ mod icons;
 mod input;
 mod launch;
 mod layout;
+mod links;
 mod matcher;
 mod material;
 mod model;

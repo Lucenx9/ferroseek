@@ -29,7 +29,8 @@ been published yet.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
-- Find built-in launcher commands in search or browse them in **Commands**.
+- Find built-in launcher commands and saved links in **Commands**.
+- Save websites and indexed paths, and run web searches by keyword.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.

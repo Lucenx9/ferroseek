@@ -1,6 +1,6 @@
 [package]
 name = "ferroseek-launcher"
-description = "FerroSeek Linux launcher for applications, files and calculations on Wayland"
+description = "FerroSeek Linux launcher for applications, files, commands and calculations on Wayland"
 keywords = ["launcher", "linux", "wayland", "file-search"]
 categories = ["gui"]
 version.workspace = true
@@ -33,6 +33,7 @@ wayland-client = "0.31"
 wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 freedesktop-icons = "0.4"
+url = "2.5.7"
 log.workspace = true
 libc.workspace = true
 # Four transparent bytes for the owned Wayland output observer.

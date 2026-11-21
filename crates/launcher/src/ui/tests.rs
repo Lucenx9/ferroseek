@@ -68,6 +68,40 @@ fn settle_widgets(s: &mut Launcher, cache: &mut iced_runtime::user_interface::Ca
 }
 
 #[test]
+fn immediate_link_editor_input_follows_each_tab_without_focus_tasks() {
+    use iced::keyboard::key::{Named, NativeCode, Physical};
+    let named = |key| {
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(key),
+            modified_key: Key::Named(key),
+            physical_key: Physical::Unidentified(NativeCode::Unidentified),
+            location: keyboard::Location::Standard,
+            modifiers: Modifiers::empty(),
+            text: None,
+            repeat: false,
+        })
+    };
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("create link".into()));
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    let mut events = vec![named(Named::Enter)];
+    for (index, value) in ["Atlas", "https://example.net/?q={query}", "atlas"].into_iter().enumerate() {
+        if index != 0 {
+            events.push(named(Named::Tab));
+        }
+        events.extend(value.chars().map(|c| typed(&c.to_string(), Modifiers::empty())));
+    }
+    widget_batch(&mut s, &mut cache, &events, true);
+    settle_widgets(&mut s, &mut cache);
+    let draft = s.link_editor.as_ref().unwrap().draft().unwrap();
+    assert_eq!(
+        (draft.name.as_str(), draft.address.as_str(), draft.keyword.as_str()),
+        ("Atlas", "https://example.net/?q={query}", "atlas")
+    );
+    assert_eq!(s.query, "create link");
+}
+
+#[test]
 fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
     let mut s = search_state();
     let _ = update(&mut s, Message::Query("report".into()));
@@ -476,6 +510,9 @@ fn search_state() -> Launcher {
         apps: vec![app],
         usage: Usage::disabled(),
         favorites: Favorites::disabled(),
+        links: links::Store::default(),
+        link_editor: None,
+        link_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -615,7 +652,7 @@ fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert!(s.items.is_empty());
     let _ = command(&mut s, Command::Back);
-    assert!(s.query.is_empty() && s.items.len() == 5);
+    assert!(s.query.is_empty() && s.items.len() == 6);
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
 }
 

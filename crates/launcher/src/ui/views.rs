@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Secondary-view presentation, transitions and replies.
 
-use super::{Launcher, Message, SearchStatusPanel, hint, page_header, settings, status_button_style, update};
+use super::{
+    Launcher, Message, SearchStatusPanel, actions_id, hint, page_header, search_id, search_status_view, settings,
+    status_button_style, update,
+};
 use crate::backend::SearchStatus;
 use crate::commands::Builtin;
 use crate::model::ClickTracker;
@@ -23,6 +26,54 @@ pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, 
 }
 
 impl Launcher {
+    pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
+        if self.search_suspended() {
+            return self.secondary_focus();
+        }
+        Some(if self.panel.is_some() { actions_id() } else { search_id() })
+    }
+
+    fn secondary_focus(&self) -> Option<iced::widget::Id> {
+        if let Some(editor) = &self.link_editor {
+            editor.focus_target()
+        } else if self.folder_settings.is_some() {
+            Some(folders::input_id())
+        } else if self.application_picker.is_some() {
+            Some(open_with::input_id())
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(editor) = &self.link_editor {
+            return Some(self.link_editor_view(editor));
+        }
+        if let Some(panel) = &self.appearance {
+            let generation = self.appearance_generation;
+            return Some(
+                panel
+                    .view(self.system_dark, self.opaque, self.glass)
+                    .map(move |event| Message::Appearance { generation, event }),
+            );
+        }
+        if let Some(panel) = &self.file_details {
+            let generation = self.details_generation;
+            return Some(panel.view().map(move |event| Message::Details { generation, event }));
+        }
+        if let Some(panel) = &self.application_picker {
+            return Some(self.open_with_view(panel));
+        }
+        if let Some(panel) = &self.folder_settings {
+            let generation = self.folder_generation;
+            return Some(panel.view().map(move |event| Message::Folder { generation, event }));
+        }
+        if let Some(status) = &self.search_status {
+            return Some(search_status_view(status));
+        }
+        self.settings.map(settings::view)
+    }
+
     pub(super) fn open_with_view<'a>(&self, panel: &'a open_with::Panel) -> Element<'a, Message> {
         let generation = self.application_generation;
         let view = panel.view(self.opening.is_some(), self.unconfirmed_open);
@@ -180,6 +231,7 @@ impl Launcher {
             Builtin::Layout => self.show_appearance(appearance::Tab::Layout),
             Builtin::SearchFolders => self.show_folders(false),
             Builtin::SearchStatus => self.toggle_search_status(),
+            Builtin::CreateLink => self.open_link_editor(None),
         }
     }
 

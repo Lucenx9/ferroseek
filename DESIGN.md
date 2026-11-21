@@ -152,6 +152,9 @@ files, description for applications and a short purpose for commands. Commands
 use the same selection and action affordances as other results. All shows
 strong command matches. Commands browses the catalog with an empty search.
 Avoid repeated type badges or metadata that does not help choose a result.
+Saved links show their destination host or path and optional keyword. Their
+editor uses labeled fields, native focus, and explicit confirmation for
+discard and delete. After Save, Commands selects the saved link.
 
 Enter performs the selected result's primary action. Ctrl+K reveals its actions;
 Shift+F10, the Menu key, the footer button and context click provide the existing

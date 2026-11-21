@@ -14,7 +14,7 @@ use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
 use crate::usage::Kind;
-use crate::{calc, matcher, uri};
+use crate::{calc, links, matcher, uri};
 
 /// Visible rows addressable by Ctrl+1 through Ctrl+8.
 pub const NUMBERED_SLOTS: usize = 8;
@@ -85,6 +85,7 @@ pub enum Target {
     /// A calculator result, as displayed.
     Calc(String),
     Command(Builtin),
+    Link(links::Link, String),
 }
 
 impl Target {
@@ -287,11 +288,24 @@ pub fn command_items(scope: Scope, query: &str) -> impl Iterator<Item = Item> {
     })
 }
 
+pub fn link_item(link: &links::Link, terms: &str) -> Item {
+    Item {
+        target: Target::Link(link.clone(), terms.to_owned()),
+        section: Section::Commands,
+        title: link.name.clone(),
+        subtitle: link.subtitle(),
+        icon: if link.is_indexed() { "folder" } else { "internet-web-browser" }.into(),
+        tag: "Link",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Launch,
     Open,
     OpenCommand,
+    OpenLink,
+    EditLink,
     OpenWith,
     Details,
     Preview,
@@ -312,7 +326,8 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Launch => "Launch",
-            Action::Open | Action::OpenCommand => "Open",
+            Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
+            Action::EditLink => "Edit link",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
             Action::Preview => "Preview text",
@@ -352,7 +367,13 @@ impl Action {
             Self::UseResult => &["continue"],
             Self::AddFavorite => &["pin"],
             Self::RemoveFavorite => &["unpin"],
-            Self::Launch | Self::Open | Self::OpenCommand | Self::ResetRanking | Self::Desktop(_) => &[],
+            Self::Launch
+            | Self::Open
+            | Self::OpenCommand
+            | Self::OpenLink
+            | Self::EditLink
+            | Self::ResetRanking
+            | Self::Desktop(_) => &[],
         };
         let labels: Vec<_> =
             std::iter::once((title.as_str(), 100)).chain(aliases.iter().map(|alias| (*alias, 70))).collect();
@@ -361,11 +382,12 @@ impl Action {
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            Action::Launch | Action::Open | Action::OpenCommand | Action::CopyResult => "Enter",
+            Action::Launch | Action::Open | Action::OpenCommand | Action::OpenLink | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::BrowseFolder => "Alt+Right",
             Action::CopyName
+            | Action::EditLink
             | Action::OpenWith
             | Action::Details
             | Action::Preview
@@ -388,6 +410,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand],
+        Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });

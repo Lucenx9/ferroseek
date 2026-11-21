@@ -104,8 +104,9 @@ Complete desktop validation before expanding the platform.
 
 - [x] Search and browse built-in launcher commands, with the same navigation,
   action menu and return flow as application and file results.
-- [ ] Add user-defined aliases, quicklinks to URLs/folders and keyword-based web
-  searches, with editable targets and predictable argument handling.
+- [x] Save and edit links to websites and indexed paths. Open saved links by
+  name or keyword, and use query values for keyword-based web searches.
+- [ ] Add user-defined aliases to application and built-in command results.
 - [ ] Add searchable clipboard history and reusable text snippets as opt-in
   features, with clear retention/deletion controls and explicit desktop support.
 - [ ] Evaluate user-defined script commands before designing workflows or a

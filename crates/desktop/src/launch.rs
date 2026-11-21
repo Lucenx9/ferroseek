@@ -77,7 +77,7 @@ pub fn launch(app: &App) -> io::Result<()> {
 
 pub fn launch_with_token(app: &App, token: Option<&str>) -> io::Result<()> {
     let argv = command_line(app, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token).map(drop)
+    spawn(app.working_dir.as_deref(), argv, token).map(drop)
 }
 
 pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
@@ -87,17 +87,26 @@ pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
 pub fn launch_action_with_token(app: &App, index: usize, token: Option<&str>) -> io::Result<()> {
     let argv = app.action_argv(index).map_err(exec_error)?;
     let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token).map(drop)
+    spawn(app.working_dir.as_deref(), argv, token).map(drop)
 }
 
 /// Launch a selected document handler; the caller owns reaping the child.
 pub fn launch_file(app: &App, path: &Path, uri: &str, token: Option<&str>) -> io::Result<std::process::Child> {
     let argv = app.file_argv(path, uri).map_err(exec_error)?;
     let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token)
+    spawn(app.working_dir.as_deref(), argv, token)
 }
 
-fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::Result<std::process::Child> {
+/// Submit an already validated HTTP(S) destination to the user's default handler.
+pub fn open_web(url: &str, token: Option<&str>) -> io::Result<()> {
+    spawn(None, vec!["xdg-open", url], token).map(drop)
+}
+
+fn spawn<S: AsRef<OsStr>>(
+    working_dir: Option<&Path>,
+    argv: Vec<S>,
+    token: Option<&str>,
+) -> io::Result<std::process::Child> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // Startup context is single-use; only this operation's context may escape.
@@ -108,7 +117,7 @@ fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::R
     // Its own process group: a signal to the launcher's group (e.g. ^C in
     // the terminal it was started from) must not reach the application.
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    if let Some(dir) = app.working_dir.as_deref() {
+    if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
     // The launcher exits right after; the child is reparented, not reaped
@@ -171,7 +180,7 @@ mod tests {
             [(temp.path().join("missing"), io::ErrorKind::NotFound), (file, io::ErrorKind::NotADirectory)]
         {
             let app = app(&format!("Path={}\n", path.display()));
-            match spawn(&app, vec!["/bin/true"], None) {
+            match spawn(app.working_dir.as_deref(), vec!["/bin/true"], None) {
                 Err(error) => assert_eq!(error.kind(), expected),
                 Ok(mut child) => {
                     child.wait().unwrap();

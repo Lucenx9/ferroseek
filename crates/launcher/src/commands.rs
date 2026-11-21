@@ -10,10 +10,17 @@ pub enum Builtin {
     Layout,
     SearchFolders,
     SearchStatus,
+    CreateLink,
 }
 
-const ALL: [Builtin; 5] =
-    [Builtin::Settings, Builtin::Appearance, Builtin::Layout, Builtin::SearchFolders, Builtin::SearchStatus];
+const ALL: [Builtin; 6] = [
+    Builtin::Settings,
+    Builtin::Appearance,
+    Builtin::Layout,
+    Builtin::SearchFolders,
+    Builtin::SearchStatus,
+    Builtin::CreateLink,
+];
 
 impl Builtin {
     pub fn title(self) -> &'static str {
@@ -23,6 +30,7 @@ impl Builtin {
             Self::Layout => "Layout",
             Self::SearchFolders => "Search folders",
             Self::SearchStatus => "Search status",
+            Self::CreateLink => "Create link",
         }
     }
 
@@ -33,6 +41,7 @@ impl Builtin {
             Self::Layout => "Choose window width and position",
             Self::SearchFolders => "Choose locations to index",
             Self::SearchStatus => "Check indexing progress",
+            Self::CreateLink => "Save a website, indexed path or web search",
         }
     }
 
@@ -43,6 +52,7 @@ impl Builtin {
             Self::Layout => "preferences-system-windows",
             Self::SearchFolders => "folder-saved-search",
             Self::SearchStatus => "dialog-information",
+            Self::CreateLink => "insert-link",
         }
     }
 
@@ -53,6 +63,7 @@ impl Builtin {
             Self::Layout => "window width position compact centered",
             Self::SearchFolders => "directories locations roots",
             Self::SearchStatus => "indexing diagnostics progress",
+            Self::CreateLink => "new saved shortcut quicklink bookmark",
         }
     }
 
