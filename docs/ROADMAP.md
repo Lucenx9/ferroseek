@@ -128,7 +128,10 @@ Complete desktop validation before expanding the platform.
 - [x] Search and switch open windows on compositors exposing wlr foreign
   toplevel management, with live updates and a return to the parent search.
 - [x] Maximize, restore and minimize selected windows with compositor feedback.
-- [ ] Evaluate supported window switching interfaces for Plasma.
+- [x] Switch and manage windows on Plasma sessions that expose its window
+  management interface, verified on virtual KWin 6.8.3.
+- [ ] Evaluate window switching on older Plasma releases where the interface
+  is restricted.
 - [ ] Evaluate user-defined script commands before designing workflows or a
   general extension API; keep execution explicit and separate from search.
 

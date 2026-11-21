@@ -2,6 +2,7 @@
 //! A short-lived catalog of switchable Wayland windows.
 
 mod paste;
+mod plasma;
 
 pub use paste::{Capture as PasteCapture, Target as PasteTarget};
 
@@ -10,15 +11,56 @@ use std::time::Duration;
 
 use iced::futures::channel::{mpsc, oneshot};
 use wayland_client::backend::ObjectId;
+use wayland_client::globals::Global;
 use wayland_client::protocol::{wl_callback, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1 as handle, zwlr_foreign_toplevel_manager_v1 as manager,
 };
 
-type Window = handle::ZwlrForeignToplevelHandleV1;
-type Manager = manager::ZwlrForeignToplevelManagerV1;
+type WlrWindow = handle::ZwlrForeignToplevelHandleV1;
+type WlrManager = manager::ZwlrForeignToplevelManagerV1;
 type Seat = wl_seat::WlSeat;
+
+enum Manager {
+    Wlr(WlrManager),
+    Plasma,
+}
+
+enum Window {
+    Wlr(WlrWindow),
+    Plasma(plasma::Window),
+}
+
+impl Window {
+    fn id(&self) -> ObjectId {
+        match self {
+            Self::Wlr(window) => window.id(),
+            Self::Plasma(window) => window.handle.id(),
+        }
+    }
+
+    fn destroy(&self) {
+        match self {
+            Self::Wlr(window) => window.destroy(),
+            Self::Plasma(window) => window.handle.destroy(),
+        }
+    }
+
+    fn request(&self, action: Action, seat: &Seat) {
+        let window = match self {
+            Self::Wlr(window) => window,
+            Self::Plasma(window) => return window.request(action),
+        };
+        match action {
+            Action::Switch => window.activate(seat),
+            Action::Maximize(true) => window.set_maximized(),
+            Action::Maximize(false) => window.unset_maximized(),
+            Action::Minimize(true) => window.set_minimized(),
+            Action::Minimize(false) => window.unset_minimized(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {
@@ -184,8 +226,11 @@ impl Catalog {
         events: &mut wayland_client::EventQueue<Self>,
         observer: &Observer,
     ) -> Result<(), &'static str> {
-        // The first sync discovers globals. The second waits for each window's initial properties.
+        // Discover globals, then windows. Plasma creates window handles from UUID notifications.
         events.roundtrip(self).and_then(|_| events.roundtrip(self)).map_err(|_| DISCONNECTED)?;
+        if matches!(self.manager, Some((_, Manager::Plasma))) {
+            events.roundtrip(self).map_err(|_| DISCONNECTED)?;
+        }
         if let Observer::Paste(send) = observer {
             send.send(self.paste_target()).map_err(|_| DISCONNECTED)?;
         }
@@ -231,7 +276,7 @@ impl Catalog {
         for (_, window) in std::mem::take(&mut self.windows) {
             window.window.destroy();
         }
-        if let Some((_, manager)) = &self.manager {
+        if let Some((_, Manager::Wlr(manager))) = &self.manager {
             manager.stop();
         } else {
             self.finished = true;
@@ -242,15 +287,8 @@ impl Catalog {
         if let Some(message) = self.unavailable() {
             return Err(message);
         }
-        let window = self.windows.get(&id).ok_or(CLOSED)?;
-        let window = &window.window;
-        match action {
-            Action::Switch => window.activate(self.seats.values().next().expect("one input seat")),
-            Action::Maximize(true) => window.set_maximized(),
-            Action::Maximize(false) => window.unset_maximized(),
-            Action::Minimize(true) => window.set_minimized(),
-            Action::Minimize(false) => window.unset_minimized(),
-        }
+        let window = self.windows.get(&id).filter(|window| window.visible.is_some()).ok_or(CLOSED)?;
+        window.window.request(action, self.seats.values().next().expect("one input seat"));
         Ok(())
     }
     fn add(&mut self, window: Window) {
@@ -264,11 +302,12 @@ impl Catalog {
         self.windows.insert(id, Toplevel { window, draft: Entry { id, ..Entry::default() }, visible: None });
     }
 
-    fn close(&mut self, window: &Window, id: u64) {
-        window.destroy();
-        self.handles.remove(&window.id());
-        self.windows.remove(&id);
-        self.changed = true;
+    fn close(&mut self, id: u64) {
+        if let Some(window) = self.windows.remove(&id) {
+            self.handles.remove(&window.window.id());
+            window.window.destroy();
+            self.changed |= window.visible.is_some();
+        }
     }
 }
 
@@ -280,27 +319,52 @@ impl Catalog {
         queue: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version }
-                if interface == Manager::interface().name && self.manager.is_none() =>
-            {
-                self.manager = Some((name, registry.bind(name, version.min(3), queue, ())));
-            }
-            wl_registry::Event::Global { name, interface, version } if interface == Seat::interface().name => {
-                self.seats.insert(name, registry.bind(name, version.min(5), queue, ()));
-                self.changed = true;
-            }
-            global @ wl_registry::Event::Global { .. } if self.observe_paste_target => {
-                self.paste_keyboard.bind(registry, global, queue);
+            wl_registry::Event::Global { name, interface, version } => {
+                self.add_global(registry, Global { name, interface, version }, queue);
             }
             wl_registry::Event::GlobalRemove { name } => self.remove_global(name),
             _ => {}
         }
     }
 
+    fn add_global(&mut self, registry: &wl_registry::WlRegistry, global: Global, queue: &QueueHandle<Self>) {
+        let Global { name, version, .. } = global;
+        if global.interface == Seat::interface().name {
+            self.seats.insert(name, registry.bind(name, version.min(5), queue, ()));
+            self.changed = true;
+            return;
+        }
+        if self.manager.is_none() {
+            self.manager = self.bind_manager(registry, &global, queue).map(|manager| (name, manager));
+        }
+        if self.observe_paste_target {
+            self.paste_keyboard.bind(
+                registry,
+                wl_registry::Event::Global { name, interface: global.interface, version },
+                queue,
+            );
+        }
+    }
+
+    fn bind_manager(
+        &self,
+        registry: &wl_registry::WlRegistry,
+        global: &Global,
+        queue: &QueueHandle<Self>,
+    ) -> Option<Manager> {
+        if global.interface == WlrManager::interface().name {
+            return Some(Manager::Wlr(registry.bind(global.name, global.version.min(3), queue, ())));
+        }
+        if self.observe_paste_target {
+            return None;
+        }
+        plasma::bind(registry, global, queue).then_some(Manager::Plasma)
+    }
+
     fn confirm_change(&mut self) {
         let Some(pending) = &self.pending else { return };
-        let result = match self.windows.get(&pending.id) {
-            Some(window) => window.visible.as_ref().filter(|entry| pending.action.reached(entry)).map(|_| Ok(())),
+        let result = match self.windows.get(&pending.id).and_then(|window| window.visible.as_ref()) {
+            Some(entry) => pending.action.reached(entry).then_some(Ok(())),
             None => Some(Err(CLOSED)),
         };
         if let Some(result) = result {
@@ -323,16 +387,16 @@ impl Catalog {
 
     fn manager_event(&mut self, event: manager::Event) {
         match event {
-            manager::Event::Toplevel { toplevel } => self.add(toplevel),
+            manager::Event::Toplevel { toplevel } => self.add(Window::Wlr(toplevel)),
             manager::Event::Finished => self.finished = true,
             _ => {}
         }
     }
 
-    fn window_event(&mut self, window: &Window, event: handle::Event) {
+    fn window_event(&mut self, window: &WlrWindow, event: handle::Event) {
         let Some(&id) = self.handles.get(&window.id()) else { return };
         match event {
-            handle::Event::Closed => self.close(window, id),
+            handle::Event::Closed => self.close(id),
             event => {
                 if let Some(record) = self.windows.get_mut(&id) {
                     self.changed |= record.update(event);
@@ -349,7 +413,8 @@ impl Catalog {
                 None
             }
             Wake::Sent(id, send) => {
-                reply(send, self.windows.contains_key(id).then_some(()).ok_or(CLOSED));
+                let visible = self.windows.get(id).is_some_and(|window| window.visible.is_some());
+                reply(send, visible.then_some(()).ok_or(CLOSED));
                 None
             }
             Wake::Paste(request, send) => self.paste_request(request, send, queue),
@@ -382,6 +447,15 @@ impl Catalog {
 }
 
 impl Toplevel {
+    fn publish(&mut self, selectable: bool) -> bool {
+        let entry = selectable.then_some(&self.draft);
+        if self.visible.as_ref() == entry {
+            return false;
+        }
+        self.visible = entry.cloned();
+        true
+    }
+
     fn update(&mut self, event: handle::Event) -> bool {
         match event {
             handle::Event::Title { title } => self.draft.title = title,
@@ -393,10 +467,7 @@ impl Toplevel {
                 self.draft.maximized = has(handle::State::Maximized);
                 self.draft.activated = has(handle::State::Activated);
             }
-            handle::Event::Done if self.visible.as_ref() != Some(&self.draft) => {
-                self.visible = Some(self.draft.clone());
-                return true;
-            }
+            handle::Event::Done => return self.publish(true),
             _ => {}
         }
         false
@@ -430,7 +501,10 @@ macro_rules! catalog_dispatch {
 delegate_noop!(Catalog: ignore Seat);
 catalog_dispatch!(wl_registry::WlRegistry, (), |state, registry, event, _, _, queue| state
     .registry_event(registry, event, queue));
-catalog_dispatch!(Manager, (), |state, _, event, _, _, _| state.manager_event(event);
-    manager::EVT_TOPLEVEL_OPCODE => Window);
-catalog_dispatch!(Window, (), |state, window, event, _, _, _| state.window_event(window, event));
+catalog_dispatch!(WlrManager, (), |state, _, event, _, _, _| state.manager_event(event);
+    manager::EVT_TOPLEVEL_OPCODE => WlrWindow);
+catalog_dispatch!(WlrWindow, (), |state, window, event, _, _, _| state.window_event(window, event));
+catalog_dispatch!(plasma::Manager, (), |state, manager, event, _, _, queue| state
+    .plasma_manager_event(manager, event, queue));
+catalog_dispatch!(plasma::Handle, (), |state, window, event, _, _, _| state.plasma_window_event(window, event));
 catalog_dispatch!(wl_callback::WlCallback, Wake, |state, _, _, wake, conn, queue| state.wake(wake, conn, queue));

@@ -318,11 +318,15 @@ The list updates while the command is open. If the selected window closes or
 stops matching after a title change, choose another window. FerroSeek keeps
 window titles in memory while the command is open.
 
-Switching requires a Wayland session with a single input seat and
-[wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml).
-The compositor manages focus and window state and may decline a request. Virtual Labwc 0.7.1
-was tested at 1× using tiny-skia and synthetic application windows. The command
-reports unavailability on the virtual Plasma 5.27 setup.
+Switching requires a Wayland session with a single input seat and either
+[wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml)
+or [Plasma window management](https://github.com/KDE/plasma-wayland-protocols/blob/master/src/protocols/plasma-window-management.xml).
+FerroSeek uses the interfaces the compositor advertises. KWin 6.8 exposes
+Plasma window management to native apps outside the sandbox. The command
+reports unavailability on the virtual Plasma 5.27 setup with default permissions.
+The compositor manages focus and window state and may decline a request.
+Keyboard, pointer and live updates were tested at 1× on virtual Labwc 0.7.1
+and KWin 6.8.3 with tiny-skia and synthetic application windows.
 
 ## Appearance
 
