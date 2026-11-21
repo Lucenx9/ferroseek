@@ -226,20 +226,37 @@ pub(super) fn watch(profile: &Profile, lock: &File) -> io::Result<bool> {
 }
 
 fn advance<D: 'static>(queue: &mut EventQueue<D>, state: &mut D) -> io::Result<()> {
+    advance_with_control(queue, state, None)
+}
+
+fn advance_with_control<D: 'static>(
+    queue: &mut EventQueue<D>,
+    state: &mut D,
+    control: Option<BorrowedFd<'_>>,
+) -> io::Result<()> {
     queue.dispatch_pending(state).map_err(io::Error::other)?;
     queue.flush().map_err(io::Error::other)?;
-    if let Some(read) = queue.prepare_read()
-        && ready(read.connection_fd(), WAIT_MS)?
-    {
-        read.read().map_err(io::Error::other)?;
+    if let Some(read) = queue.prepare_read() {
+        let mut descriptors = [poll_fd(Some(read.connection_fd())), poll_fd(control)];
+        poll_ready(&mut descriptors, WAIT_MS)?;
+        if descriptors[0].revents != 0 {
+            read.read().map_err(io::Error::other)?;
+        }
     }
     Ok(())
 }
 
 fn ready(fd: BorrowedFd<'_>, timeout: i32) -> io::Result<bool> {
-    let mut fd = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-    // poll borrows one live descriptor for the duration of this call.
-    let result = unsafe { libc::poll(&mut fd, 1, timeout) };
+    poll_ready(&mut [poll_fd(Some(fd))], timeout)
+}
+
+fn poll_fd(fd: Option<BorrowedFd<'_>>) -> libc::pollfd {
+    libc::pollfd { fd: fd.map_or(-1, |fd| fd.as_raw_fd()), events: libc::POLLIN, revents: 0 }
+}
+
+fn poll_ready(descriptors: &mut [libc::pollfd], timeout: i32) -> io::Result<bool> {
+    // poll borrows the live descriptors for the duration of the call.
+    let result = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as libc::nfds_t, timeout) };
     if result >= 0 {
         return Ok(result > 0);
     }

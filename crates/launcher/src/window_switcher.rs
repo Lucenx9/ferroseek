@@ -3,6 +3,7 @@
 
 mod paste;
 mod plasma;
+mod plasma_keys;
 
 pub use paste::{Capture as PasteCapture, Target as PasteTarget};
 
@@ -13,7 +14,7 @@ use iced::futures::channel::{mpsc, oneshot};
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::Global;
 use wayland_client::protocol::{wl_callback, wl_registry, wl_seat};
-use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1 as handle, zwlr_foreign_toplevel_manager_v1 as manager,
 };
@@ -338,11 +339,7 @@ impl Catalog {
             self.manager = self.bind_manager(registry, &global, queue).map(|manager| (name, manager));
         }
         if self.observe_paste_target {
-            self.paste_keyboard.bind(
-                registry,
-                wl_registry::Event::Global { name, interface: global.interface, version },
-                queue,
-            );
+            self.paste_keyboard.bind(registry, &global, queue);
         }
     }
 
@@ -354,9 +351,6 @@ impl Catalog {
     ) -> Option<Manager> {
         if global.interface == WlrManager::interface().name {
             return Some(Manager::Wlr(registry.bind(global.name, global.version.min(3), queue, ())));
-        }
-        if self.observe_paste_target {
-            return None;
         }
         plasma::bind(registry, global, queue).then_some(Manager::Plasma)
     }
@@ -375,6 +369,7 @@ impl Catalog {
     fn remove_global(&mut self, name: u32) {
         self.paste_keyboard.remove(name);
         if let Some(seat) = self.seats.remove(&name) {
+            self.paste_keyboard.remove_seat(&seat);
             if seat.version() >= 5 {
                 seat.release();
             }
@@ -498,7 +493,7 @@ macro_rules! catalog_dispatch {
     };
 }
 
-delegate_noop!(Catalog: ignore Seat);
+catalog_dispatch!(Seat, (), |state, seat, event, _, _, queue| state.paste_seat_changed(seat, event, queue));
 catalog_dispatch!(wl_registry::WlRegistry, (), |state, registry, event, _, _, queue| state
     .registry_event(registry, event, queue));
 catalog_dispatch!(WlrManager, (), |state, _, event, _, _, _| state.manager_event(event);
@@ -507,4 +502,8 @@ catalog_dispatch!(WlrWindow, (), |state, window, event, _, _, _| state.window_ev
 catalog_dispatch!(plasma::Manager, (), |state, manager, event, _, _, queue| state
     .plasma_manager_event(manager, event, queue));
 catalog_dispatch!(plasma::Handle, (), |state, window, event, _, _, _| state.plasma_window_event(window, event));
+catalog_dispatch!(plasma_keys::KeyState, (), |state, _, event, _, conn, queue| state
+    .paste_modifiers_changed(event, conn, queue));
+catalog_dispatch!(plasma_keys::SeatKeyboard, (), |state, keyboard, event, _, _, _| state
+    .paste_keymap_changed(keyboard, event));
 catalog_dispatch!(wl_callback::WlCallback, Wake, |state, _, _, wake, conn, queue| state.wake(wake, conn, queue));

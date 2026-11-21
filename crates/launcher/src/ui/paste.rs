@@ -56,6 +56,8 @@ impl State {
 #[derive(Debug, Clone)]
 pub enum Event {
     Published(Result<Arc<Lease>, String>),
+    RestoreFocus,
+    FocusRestored(Result<(), &'static str>),
     FocusTimeout,
     Sent(Result<(), &'static str>),
 }
@@ -135,6 +137,8 @@ impl Launcher {
                 let restore = self.finish_paste_error("Copied text. Keep FerroSeek open and paste manually.");
                 Task::batch([self.write_clipboard(text), restore])
             }
+            (Event::RestoreFocus, Some(Phase::Releasing(lease))) => self.restore_paste_focus(Arc::clone(lease)),
+            (Event::FocusRestored(Err(error)), Some(Phase::Releasing(_))) => self.finish_paste_error(error),
             (Event::FocusTimeout, Some(Phase::Releasing(_))) => {
                 self.finish_paste_error("Could not confirm the focus change. Paste the copied text manually.")
             }
@@ -159,9 +163,19 @@ impl Launcher {
             }
         };
         Task::batch([
-            Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None)),
+            Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None))
+                .chain(Task::done(Message::Paste { attempt, event: Event::RestoreFocus })),
             Task::perform(timeout, move |()| Message::Paste { attempt, event: Event::FocusTimeout }),
         ])
+    }
+
+    fn restore_paste_focus(&mut self, lease: Arc<Lease>) -> Task<Message> {
+        let Some(target) = &self.paste.target else { return Task::none() };
+        let attempt = self.paste.attempt;
+        Task::perform(target.restore_focus(lease), move |result| Message::Paste {
+            attempt,
+            event: Event::FocusRestored(result),
+        })
     }
 
     fn paste_focus_lost(&mut self) -> Task<Message> {

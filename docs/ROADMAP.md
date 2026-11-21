@@ -123,8 +123,9 @@ Complete desktop validation before expanding the platform.
   delete actions.
 - [x] Opt-in Wayland text clipboard history with search, copy, pinning, retention,
   individual deletion, clear confirmation and a private-session pause.
-- [x] Paste selected clipboard text after confirming the original window on
-  desktops with virtual keyboard and foreign-toplevel support.
+- [x] Paste clipboard entries and snippets after confirming the original window
+  on desktops with virtual keyboard and foreign-toplevel support or the
+  corresponding Plasma interfaces.
 - [x] Search and switch open windows on compositors exposing wlr foreign
   toplevel management, with live updates and a return to the parent search.
 - [x] Maximize, restore and minimize selected windows with compositor feedback.

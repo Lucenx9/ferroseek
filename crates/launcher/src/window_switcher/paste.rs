@@ -5,12 +5,17 @@ use std::io::Write;
 use std::os::fd::AsFd;
 use std::sync::{Arc, mpsc};
 
+use wayland_client::Connection;
+use wayland_client::globals::Global;
 use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
     zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1 as Manager,
     zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1 as Keyboard,
 };
 
-use super::{Catalog, Duration, Entry, Observer, Proxy, QueueHandle, Reply, Seat, Session, Wake, oneshot, wl_registry};
+use super::{
+    Action, Catalog, Duration, Entry, Observer, Proxy, QueueHandle, Reply, Seat, Session, Wake, oneshot, plasma_keys,
+    wl_registry,
+};
 use crate::clipboard_history::publish::Lease;
 
 const TARGET_CHANGED: &str = "The original window does not have focus. Paste the copied text manually.";
@@ -54,8 +59,16 @@ impl Target {
     }
 
     pub fn send(&self, lease: Arc<Lease>) -> impl Future<Output = Result<(), &'static str>> + use<> {
+        self.request(Request::Prepare(Attempt { id: self.id, lease }))
+    }
+
+    pub fn restore_focus(&self, lease: Arc<Lease>) -> impl Future<Output = Result<(), &'static str>> + use<> {
+        self.request(Request::Restore(Attempt { id: self.id, lease }))
+    }
+
+    fn request(&self, request: Request) -> impl Future<Output = Result<(), &'static str>> + use<> {
         let (send, receive) = oneshot::channel();
-        self.session.wake(Wake::Paste(Request::Prepare { id: self.id, lease }, Some(send).into()));
+        self.session.wake(Wake::Paste(request, Some(send).into()));
         async move {
             let runtime = zruntime::SharedRuntime::current().map_err(|_| INPUT_UNAVAILABLE)?;
             runtime
@@ -67,45 +80,82 @@ impl Target {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct Attempt {
+    id: u64,
+    lease: Arc<Lease>,
+}
+
 pub(super) enum Request {
-    Prepare { id: u64, lease: Arc<Lease> },
-    Send { id: u64, lease: Arc<Lease>, keyboard: PasteKeyboard },
+    Restore(Attempt),
+    Prepare(Attempt),
+    Send(Attempt, PasteKeyboard),
     Submitted,
 }
 
 #[derive(Default)]
-pub(super) struct Input(Option<(u32, Manager)>);
+pub(super) struct Input {
+    virtual_manager: Option<(u32, Manager)>,
+    plasma: plasma_keys::Input,
+    waiting: Option<Wake>,
+}
 
 impl Input {
-    pub(super) fn bind(
-        &mut self,
-        registry: &wl_registry::WlRegistry,
-        global: wl_registry::Event,
-        queue: &QueueHandle<Catalog>,
-    ) {
-        if self.0.is_some() {
-            return;
+    pub(super) fn bind(&mut self, registry: &wl_registry::WlRegistry, global: &Global, queue: &QueueHandle<Catalog>) {
+        if self.virtual_manager.is_none() && global.interface == Manager::interface().name {
+            self.virtual_manager = Some((global.name, registry.bind(global.name, 1, queue, ())));
         }
-        let wl_registry::Event::Global { name, interface, .. } = global else { return };
-        if interface == Manager::interface().name {
-            self.0 = Some((name, registry.bind(name, 1, queue, ())));
-        }
+        self.plasma.discover(registry, global, queue);
     }
 
     pub(super) fn remove(&mut self, name: u32) {
-        if self.0.as_ref().is_some_and(|(id, _)| *id == name) {
-            self.0 = None;
+        if self.virtual_manager.as_ref().is_some_and(|(id, _)| *id == name) {
+            self.virtual_manager = None;
+        }
+        self.plasma.remove(name);
+    }
+
+    pub(super) fn remove_seat(&mut self, seat: &Seat) {
+        self.plasma.remove_seat(seat);
+    }
+
+    fn available(&self) -> bool {
+        self.virtual_manager.is_some() || self.plasma.available()
+    }
+
+    fn can_type(&self) -> bool {
+        self.virtual_manager.is_some() || self.plasma.can_type()
+    }
+
+    fn keyboard(&self, seat: &Seat, queue: &QueueHandle<Catalog>) -> Option<PasteKeyboard> {
+        if let Some((_, manager)) = &self.virtual_manager {
+            return VirtualKeyboard::new(manager, seat, queue).map(PasteKeyboard::Virtual);
+        }
+        self.plasma.keyboard(queue).map(PasteKeyboard::Plasma)
+    }
+}
+
+pub(super) enum PasteKeyboard {
+    Virtual(VirtualKeyboard),
+    Plasma(plasma_keys::Keyboard),
+}
+
+impl PasteKeyboard {
+    fn press(&self) {
+        match self {
+            Self::Virtual(keyboard) => keyboard.press(),
+            Self::Plasma(keyboard) => keyboard.press(),
         }
     }
 }
 
-pub(super) struct PasteKeyboard {
+pub(super) struct VirtualKeyboard {
     proxy: Keyboard,
     control: u32,
     key: u32,
 }
 
-impl PasteKeyboard {
+impl VirtualKeyboard {
     fn new(manager: &Manager, seat: &Seat, queue: &QueueHandle<Catalog>) -> Option<Self> {
         use xkbcommon::xkb;
 
@@ -132,15 +182,29 @@ impl PasteKeyboard {
     }
 }
 
-impl Drop for PasteKeyboard {
+impl Drop for VirtualKeyboard {
     fn drop(&mut self) {
         self.proxy.destroy();
     }
 }
 
 impl Catalog {
+    pub(super) fn paste_seat_changed(&mut self, seat: &Seat, event: <Seat as Proxy>::Event, queue: &QueueHandle<Self>) {
+        if self.observe_paste_target {
+            self.paste_keyboard.plasma.seat_changed(seat, event, queue);
+        }
+    }
+
+    pub(super) fn paste_keymap_changed(
+        &mut self,
+        keyboard: &plasma_keys::SeatKeyboard,
+        event: <plasma_keys::SeatKeyboard as Proxy>::Event,
+    ) {
+        self.paste_keyboard.plasma.keymap_changed(keyboard, event);
+    }
+
     pub(super) fn paste_target(&self) -> Option<Entry> {
-        if self.unavailable().is_some() || self.paste_keyboard.0.is_none() {
+        if self.unavailable().is_some() || !self.paste_keyboard.available() {
             return None;
         }
         self.sole_active().filter(|entry| !entry.title.trim().is_empty() || !entry.app_id.trim().is_empty()).cloned()
@@ -153,50 +217,105 @@ impl Catalog {
         active.next().is_none().then_some(first)
     }
 
-    pub(super) fn paste_request(&self, request: &Request, send: &Reply, queue: &QueueHandle<Self>) -> Option<Wake> {
+    pub(super) fn paste_modifiers_changed(
+        &mut self,
+        event: <plasma_keys::KeyState as Proxy>::Event,
+        conn: &Connection,
+        queue: &QueueHandle<Self>,
+    ) {
+        self.paste_keyboard.plasma.observe(event);
+        if self.paste_keyboard.can_type()
+            && let Some(waiting) = self.paste_keyboard.waiting.take()
+        {
+            conn.display().sync(queue, waiting);
+        }
+    }
+
+    pub(super) fn paste_request(&mut self, request: &Request, send: &Reply, queue: &QueueHandle<Self>) -> Option<Wake> {
         let send = send.lock().ok().and_then(|mut reply| reply.take())?;
         if send.is_canceled() {
             return None;
         }
         let next = match request {
-            Request::Prepare { id, lease } => self.prepare_paste(*id, Arc::clone(lease), queue),
-            Request::Send { id, lease, keyboard } => self.send_paste(*id, lease, keyboard),
+            Request::Restore(attempt) => {
+                let _ = send.send(self.restore_paste_focus(attempt));
+                return None;
+            }
+            Request::Prepare(attempt) => return self.prepare_paste(attempt, send, queue),
+            Request::Send(attempt, keyboard) => self.send_paste(attempt, keyboard),
             Request::Submitted => {
                 let _ = send.send(Ok(()));
                 return None;
             }
         };
-        match next {
-            Ok(next) => Some(Wake::Paste(next, Some(send).into())),
-            Err(error) => {
-                let _ = send.send(Err(error));
-                None
-            }
+        wake_or_reject(next, send)
+    }
+
+    fn restore_paste_focus(&self, attempt: &Attempt) -> Result<(), &'static str> {
+        if !matches!(self.manager, Some((_, super::Manager::Plasma))) {
+            return Ok(());
         }
+        if !attempt.lease.is_current() {
+            return Err(CLIPBOARD_CHANGED);
+        }
+        // KWin can keep the layer focused after it gives up interactivity.
+        // Restore the captured window only while no application has focus.
+        if self.windows.values().any(|window| window.draft.activated) {
+            return self.verify_target(attempt);
+        }
+        self.request(attempt.id, Action::Switch).map_err(|_| TARGET_CHANGED)
     }
 
-    fn prepare_paste(&self, id: u64, lease: Arc<Lease>, queue: &QueueHandle<Self>) -> Result<Request, &'static str> {
-        self.verify_target(id, &lease)?;
-        let (_, manager) = self.paste_keyboard.0.as_ref().ok_or(INPUT_UNAVAILABLE)?;
-        let seat = self.seats.values().next().ok_or(INPUT_UNAVAILABLE)?;
-        let keyboard = PasteKeyboard::new(manager, seat, queue).ok_or(INPUT_UNAVAILABLE)?;
-        Ok(Request::Send { id, lease, keyboard })
+    fn prepare_paste(&mut self, attempt: &Attempt, reply: PasteReply, queue: &QueueHandle<Self>) -> Option<Wake> {
+        if let Err(error) = self.verify_target(attempt) {
+            return wake_or_reject(Err(error), reply);
+        }
+        if !self.paste_keyboard.available() {
+            return wake_or_reject(Err(INPUT_UNAVAILABLE), reply);
+        }
+        if !self.paste_keyboard.can_type() {
+            // KWin shares modifier state with the physical keyboard. Wait for
+            // Alt+Enter (or a sticky modifier) to clear before creating a device.
+            self.paste_keyboard.waiting = Some(Wake::Paste(Request::Prepare(attempt.clone()), Some(reply).into()));
+            return None;
+        }
+        if !attempt.lease.confirm_current() {
+            return wake_or_reject(Err(CLIPBOARD_CHANGED), reply);
+        }
+        let seat = self.seats.values().next().expect("validated only input seat");
+        let next = self.paste_keyboard.keyboard(seat, queue).ok_or(INPUT_UNAVAILABLE);
+        wake_or_reject(next.map(|keyboard| Request::Send(attempt.clone(), keyboard)), reply)
     }
 
-    fn send_paste(&self, id: u64, lease: &Lease, keyboard: &PasteKeyboard) -> Result<Request, &'static str> {
-        self.verify_target(id, lease)?;
+    fn send_paste(&self, attempt: &Attempt, keyboard: &PasteKeyboard) -> Result<Request, &'static str> {
+        self.verify_target(attempt)?;
+        if !self.paste_keyboard.can_type() {
+            return Err("A modifier key is active. Release it or paste the copied text manually.");
+        }
         keyboard.press();
         Ok(Request::Submitted)
     }
 
-    fn verify_target(&self, id: u64, lease: &Lease) -> Result<(), &'static str> {
-        if !lease.is_current() {
+    fn verify_target(&self, attempt: &Attempt) -> Result<(), &'static str> {
+        if !attempt.lease.is_current() {
             return Err(CLIPBOARD_CHANGED);
         }
-        if self.unavailable().is_some() || !self.sole_active().is_some_and(|entry| entry.id == id) {
+        if self.unavailable().is_some() || !self.sole_active().is_some_and(|entry| entry.id == attempt.id) {
             return Err(TARGET_CHANGED);
         }
         Ok(())
+    }
+}
+
+type PasteReply = oneshot::Sender<Result<(), &'static str>>;
+
+fn wake_or_reject(result: Result<Request, &'static str>, send: PasteReply) -> Option<Wake> {
+    match result {
+        Ok(next) => Some(Wake::Paste(next, Some(send).into())),
+        Err(error) => {
+            let _ = send.send(Err(error));
+            None
+        }
     }
 }
 

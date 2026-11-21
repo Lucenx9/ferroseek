@@ -1139,6 +1139,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
+ "wayland-scanner",
  "winit-core",
  "xkbcommon",
  "zbus",

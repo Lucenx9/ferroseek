@@ -261,10 +261,13 @@ on the clipboard, releases keyboard focus and sends Ctrl+V after observing
 the original window become active. If the window cannot be confirmed, paste
 manually. Use **Copy** for apps with a different paste shortcut.
 
-Direct paste needs a single input seat and the foreign-toplevel, virtual
-keyboard and clipboard data-control protocols. The desktop must allow their
-use. The action is hidden if FerroSeek cannot identify the original window
-before opening.
+Direct paste needs one input seat, clipboard data control and an input
+interface the compositor grants. It supports wlr foreign-toplevel management
+with a virtual keyboard, and Plasma window management with the KWin
+keyboard-symbol and modifier-state interfaces. On Plasma, FerroSeek waits
+for shortcut modifiers to clear. Use **Copy** if the seat's keymap cannot
+send Ctrl+V directly in every configured layout. **Paste** also requires
+FerroSeek to identify the original window before opening.
 
 Use **Pin** or Ctrl+Shift+P to keep the selected entry. Pinned entries appear
 first. **Pinned** or Ctrl+G narrows the current search to pins. **Show all** or
