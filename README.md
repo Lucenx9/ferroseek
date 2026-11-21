@@ -32,6 +32,7 @@ been published yet.
 - Find built-in launcher commands, saved links and reusable text in **Commands**.
 - Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
 - Save and copy multiline text from [snippets](docs/LAUNCHER.md#snippets).
+- Opt in to [clipboard history](docs/LAUNCHER.md#clipboard-history) on supported Wayland compositors.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
@@ -112,8 +113,7 @@ and the [desktop validation matrix](docs/LAUNCHER.md#desktop-validation).
 The next priorities are real desktop validation, reliable activation, clear
 appearance settings and latency checks on real desktops. A first
 [virtual KWin diagnostic baseline](docs/BENCHMARKS.md#12-launcher-interaction-latency)
-is available. Window switching, clipboard
-history and a plugin API are planned work. See the [roadmap](docs/ROADMAP.md).
+is available. Window switching and a plugin API are planned work. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools
 

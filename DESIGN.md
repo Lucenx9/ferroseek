@@ -159,6 +159,9 @@ An exact alias promotes its original result with the alias visible in the
 subtitle. The editor identifies the target and preserves the search on return.
 Snippets show their keyword and line count. Copy is an explicit action.
 The text field preserves multiline editing and uses Ctrl+S for save.
+Clipboard history has its own filter and result list. Show recording status,
+retention, copy and deletion controls in the view. Ask for confirmation before
+clearing all entries. Preserve the selected entry during live refreshes.
 
 Enter performs the selected result's primary action. Ctrl+K reveals its actions by default;
 Shift+F10, the Menu key, the footer button and context click provide the existing

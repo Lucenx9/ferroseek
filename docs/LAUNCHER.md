@@ -35,7 +35,7 @@ closes it.
 | Option | Effect |
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
-| `--private` | do not record anything opened in this session |
+| `--private` | skip launch history, hide clipboard history and pause clipboard recording |
 | `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
 
@@ -157,6 +157,44 @@ FerroSeek keeps up to 128 snippets with unique names and up to 8 KiB of text
 each. Keywords share the same namespace as saved links and aliases. Snippets
 are saved only when you explicitly save them, including in private sessions.
 They use the owner-only `launcher-links` file beside the main configuration.
+
+## Clipboard history
+
+![Clipboard history with recording controls and keyboard actions](assets/launcher-clipboard-history.png)
+
+[Full text preview](assets/launcher-clipboard-preview.png). Captured at 1×
+in isolated virtual KWin 5.27.11 with tiny-skia and synthetic clipboard text.
+
+Search for **Clipboard history**. Choose **Start recording** or press Ctrl+S
+to opt in. FerroSeek saves new plain-text copies from the Wayland clipboard,
+including while the launcher is closed. It skips the selection already present
+when recording starts, the primary selection and offers marked sensitive with
+the KDE password hint. It accepts UTF-8 text up to 8 KiB per entry.
+
+Filter with the search field. Use **Preview** or Ctrl+Enter to read the full
+text. Esc returns to the same filter and selection. Press Enter, use a
+numbered shortcut, or double-click to copy the selected text again. The launcher stays open to serve
+the clipboard while you paste. Ctrl+D deletes the selected entry. **Clear
+history** or Ctrl+Shift+Delete opens a confirmation. Ctrl+D confirms and Esc
+keeps the entries. Clearing history leaves the current desktop clipboard
+available.
+
+FerroSeek keeps up to 100 distinct entries. **Keep … days** or Ctrl+T cycles
+through 1, 7 and 30 days. Shortening retention removes older entries. The
+recorder and the history view remove expired entries while they are active.
+**Stop recording** retains existing entries. A private launcher pauses the
+recorder and hides its history. Open a regular launcher and choose **Resume
+recording** when you are ready to start capturing again.
+
+The recorder exits when the compositor disconnects. Launching FerroSeek again
+restarts a recorder you left enabled. Use **Refresh** or Ctrl+R to retry a
+recorder for the current session. The history and policy live in owner-only
+files under `$XDG_STATE_HOME/ferroseek`, or `~/.local/state/ferroseek` by
+default.
+
+Clipboard recording requires a compositor exposing
+[ext-data-control](https://github.com/wayland-mirror/wayland-protocols/blob/main/staging/ext-data-control/ext-data-control-v1.xml)
+or [wlr-data-control](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-data-control-unstable-v1.xml).
 
 ## Appearance
 
@@ -384,7 +422,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
   **Appearance**, **Layout**, **Search folders**, **Search status**,
-  **Shortcuts**, **Create link** or **Create snippet**. Strong
+  **Shortcuts**, **Create link**, **Create snippet** or **Clipboard history**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.

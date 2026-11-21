@@ -13,9 +13,10 @@ pub enum Builtin {
     CreateLink,
     Shortcuts,
     CreateSnippet,
+    ClipboardHistory,
 }
 
-const ALL: [Builtin; 8] = [
+const ALL: [Builtin; 9] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
@@ -24,6 +25,7 @@ const ALL: [Builtin; 8] = [
     Builtin::CreateLink,
     Builtin::Shortcuts,
     Builtin::CreateSnippet,
+    Builtin::ClipboardHistory,
 ];
 
 struct Metadata {
@@ -78,6 +80,13 @@ impl Builtin {
                 description: "Change launcher keyboard bindings",
                 icon: "preferences-desktop-keyboard",
                 keywords: "keys keyboard shortcuts bindings hotkeys",
+            },
+            Self::ClipboardHistory => &Metadata {
+                id: "clipboard-history",
+                title: "Clipboard history",
+                description: "Find and reuse copied text",
+                icon: "edit-paste",
+                keywords: "copies recent clipboard history paste",
             },
             Self::CreateSnippet => &Metadata {
                 id: "create-snippet",

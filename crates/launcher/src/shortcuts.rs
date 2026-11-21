@@ -19,6 +19,7 @@ pub enum Routing {
     Commands(Preferences),
     Only(Chord, Action),
     Recording,
+    Clipboard,
     Disabled,
 }
 
@@ -32,10 +33,22 @@ impl Routing {
             Self::Commands(preferences) => preferences.action(chord.ok()?).map(command_message),
             Self::Only(binding, action) => (chord == Ok(binding)).then(|| command_message(action)),
             Self::Disabled => None,
+            Self::Clipboard => clipboard_shortcut(key, *modifiers),
             Self::Recording if idle_recording_key(key) => None,
             Self::Recording => Some(Message::ShortcutRecorded(chord)),
         }
     }
+}
+
+fn clipboard_shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    use crate::ui::clipboard_view::Shortcut;
+    if modifiers == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Named(Named::Delete) {
+        return Some(Message::ClipboardShortcut(Shortcut::Clear));
+    }
+    if modifiers == Modifiers::CTRL && matches!(key.as_ref(), Key::Character("t" | "T")) {
+        return Some(Message::ClipboardShortcut(Shortcut::Retention));
+    }
+    None
 }
 
 fn idle_recording_key(key: &Key) -> bool {

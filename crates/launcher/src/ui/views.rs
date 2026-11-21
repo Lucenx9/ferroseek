@@ -28,6 +28,9 @@ pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, 
 
 impl Launcher {
     pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
+        if let Some(panel) = &self.clipboard_history.panel {
+            return panel.focus();
+        }
         if self.search_suspended() {
             return self.secondary_focus();
         }
@@ -49,7 +52,9 @@ impl Launcher {
     }
 
     pub(super) fn dialog_height(&self) -> Option<u32> {
-        if self.alias_editor.is_some() {
+        if let Some(panel) = &self.clipboard_history.panel {
+            Some(panel.height())
+        } else if self.alias_editor.is_some() {
             Some(super::alias_editor::HEIGHT)
         } else if self.shortcuts.panel.is_some() {
             Some(super::shortcut_settings::HEIGHT)
@@ -61,6 +66,9 @@ impl Launcher {
     }
 
     pub(super) fn shortcut_routing(&self) -> Routing {
+        if self.clipboard_history.panel.is_some() {
+            return Routing::Clipboard;
+        }
         if let Some(panel) = &self.shortcuts.panel {
             return if panel.recording() { Routing::Recording } else { Routing::Disabled };
         }
@@ -80,7 +88,9 @@ impl Launcher {
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
-        if let Some(editor) = &self.alias_editor {
+        if let Some(panel) = &self.clipboard_history.panel {
+            Some(panel.context())
+        } else if let Some(editor) = &self.alias_editor {
             Some(editor.context())
         } else if let Some(editor) = &self.saved_editor {
             Some(editor.context())
@@ -90,6 +100,9 @@ impl Launcher {
     }
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.clipboard_history.panel {
+            return Some(self.clipboard_view(panel));
+        }
         if let Some(panel) = &self.shortcuts.panel {
             return Some(self.shortcut_settings_view(panel));
         }
@@ -291,6 +304,7 @@ impl Launcher {
             Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
             Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
             Builtin::Shortcuts => self.show_shortcuts(),
+            Builtin::ClipboardHistory => self.show_clipboard_history(),
         }
     }
 

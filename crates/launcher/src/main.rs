@@ -10,6 +10,7 @@ mod appearance;
 mod apps;
 mod backend;
 mod calc;
+mod clipboard_history;
 mod commands;
 mod desktop_settings;
 mod details;
@@ -45,7 +46,7 @@ to a global shortcut in the desktop settings.
 
   --query TEXT       start with TEXT already typed
   --opaque           use a solid surface without background blur
-  --private          do not record what is opened in this session
+  --private          skip launch history and pause clipboard recording
   --forget-history   delete the launch history and exit
 
 The launch history (what you open, used to rank results and to fill the
@@ -57,8 +58,21 @@ Keys: Up/Down or Tab move, Enter opens, Ctrl+Enter shows the file in its
 folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Ctrl+Tab switches
 search scopes, and Esc clears the query and then closes.";
 
+struct LaunchOptions {
+    initial_query: String,
+    private: bool,
+    opaque: bool,
+}
+
 fn main() -> ExitCode {
     timing::init();
+    match parse_options() {
+        Ok(options) => launch_ui(options),
+        Err(exit) => exit,
+    }
+}
+
+fn parse_options() -> Result<LaunchOptions, ExitCode> {
     let mut initial_query = String::new();
     let mut private = false;
     let mut opaque = false;
@@ -67,32 +81,38 @@ fn main() -> ExitCode {
         match a.as_str() {
             "-q" | "--query" => match args.next() {
                 Some(q) => initial_query = q,
-                None => return usage_error("--query needs a value"),
+                None => return Err(usage_error("--query needs a value")),
             },
             "--private" => private = true,
+            "--watch-clipboard" => return Err(clipboard_watcher()),
             "--opaque" => opaque = true,
             "--forget-history" => {
-                let Some(p) = usage::Usage::default_path() else { return usage_error("no HOME or XDG_STATE_HOME") };
-                return match usage::Usage::forget(&p) {
+                let Some(p) = usage::Usage::default_path() else {
+                    return Err(usage_error("no HOME or XDG_STATE_HOME"));
+                };
+                return Err(match usage::Usage::forget(&p) {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(e) => {
                         eprintln!("ferroseek-launcher: cannot delete {}: {e}", p.display());
                         ExitCode::from(1)
                     }
-                };
+                });
             }
             "-h" | "--help" => {
                 println!("{USAGE}");
-                return ExitCode::SUCCESS;
+                return Err(ExitCode::SUCCESS);
             }
             "-V" | "--version" => {
                 println!("ferroseek-launcher {}", env!("CARGO_PKG_VERSION"));
-                return ExitCode::SUCCESS;
+                return Err(ExitCode::SUCCESS);
             }
-            other => return usage_error(&format!("unknown argument {other:?}")),
+            other => return Err(usage_error(&format!("unknown argument {other:?}"))),
         }
     }
+    Ok(LaunchOptions { initial_query, private, opaque })
+}
 
+fn launch_ui(LaunchOptions { initial_query, private, opaque }: LaunchOptions) -> ExitCode {
     // Applications are scanned while the bus connection is set up.
     let scan =
         std::thread::spawn(|| apps::scan(&apps::data_dirs(), &apps::current_locales(), &apps::current_desktops()));
@@ -105,6 +125,10 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    if let Err(error) = clipboard_history::launcher_started(private) {
+        eprintln!("ferroseek-launcher: cannot pause clipboard recording: {error}");
+        return ExitCode::from(1);
+    }
     timing::event("backend_ready");
     let apps = scan.join().unwrap_or_default();
     timing::event("applications_ready");
@@ -118,12 +142,36 @@ fn main() -> ExitCode {
     let config = ferroseek_config::Config::load(&settings_path).unwrap_or_default();
     timing::event("ui_starting");
     match ui::run(
-        ui::Boot { config, activation, opaque, backend, apps, usage: history, favorites, initial_query, settings_path },
+        ui::Boot {
+            config,
+            activation,
+            opaque,
+            backend,
+            apps,
+            usage: history,
+            favorites,
+            initial_query,
+            settings_path,
+            private,
+        },
         events,
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("ferroseek-launcher: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn clipboard_watcher() -> ExitCode {
+    let Some(profile) = clipboard_history::Profile::from_env() else {
+        return usage_error("no HOME or XDG_STATE_HOME");
+    };
+    match profile.watch() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("ferroseek-launcher: clipboard recorder stopped: {error}");
             ExitCode::from(1)
         }
     }

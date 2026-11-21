@@ -2,6 +2,7 @@
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
 mod alias_editor;
+pub(crate) mod clipboard_view;
 mod saved_editor;
 mod settings;
 mod shortcut_settings;
@@ -80,6 +81,7 @@ static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None
 pub struct Boot {
     pub config: ferroseek_config::Config,
     pub opaque: bool,
+    pub private: bool,
     pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
@@ -197,6 +199,7 @@ pub struct Launcher {
     opaque: bool,
     settings: Option<settings::Entry>,
     shortcuts: shortcut_settings::State,
+    clipboard_history: clipboard_view::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
     input_epoch: u64,
@@ -287,6 +290,8 @@ pub enum Message {
     ShowAppearance,
     ShortcutSettings { generation: u64, event: shortcut_settings::Event },
     ShortcutRecorded(Result<Chord, &'static str>),
+    Clipboard { generation: u64, event: clipboard_view::Event },
+    ClipboardShortcut(clipboard_view::Shortcut),
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
     Folder { generation: u64, event: folders::Event },
@@ -375,7 +380,8 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, config, opaque } = data;
+    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, config, opaque, private } =
+        data;
     let initial = layout::calculate(config.appearance, None, true, false);
     Launcher {
         output,
@@ -387,6 +393,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         opaque,
         settings: None,
         shortcuts: shortcut_settings::State::new(config.shortcuts),
+        clipboard_history: clipboard_view::State::new(private),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -573,6 +580,19 @@ impl Launcher {
         }
     }
 
+    fn home_results(&self) -> Vec<Item> {
+        if self.scope == Scope::Commands {
+            return model::command_items(self.scope, "").collect();
+        }
+        model::home_items(
+            &self.apps,
+            &self.usage.recent(usage::now(), usize::MAX),
+            self.favorites.items(),
+            self.scope,
+            VISIBLE_ROWS,
+        )
+    }
+
     /// Recomputes the rows. With `keep_selection` (more results for the
     /// same query), the selected target and its action panel stay put
     /// instead of jumping to the first row.
@@ -587,13 +607,7 @@ impl Launcher {
             }
             model::build_items(&[], &[], &files)
         } else if self.query.trim().is_empty() {
-            model::home_items(
-                &self.apps,
-                &self.usage.recent(usage::now(), usize::MAX),
-                self.favorites.items(),
-                self.scope,
-                VISIBLE_ROWS,
-            )
+            self.home_results()
         } else {
             let mut items: Vec<Item> = if self.scope.shows_calculator(&self.query) {
                 model::calc_item(&self.query).into_iter().collect()
@@ -660,6 +674,7 @@ impl Launcher {
         if let Some(height) = self.dialog_height() {
             geometry = geometry.with_content_height(height, self.output_bounds);
         }
+        self.resize_clipboard(geometry.height);
         self.cursor.visible = geometry.rows;
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
@@ -1014,6 +1029,7 @@ impl Launcher {
             || self.settings.is_some()
             || self.settings_form_open()
             || self.saved_editor_open()
+            || self.clipboard_history.panel.is_some()
     }
 
     fn settings_form_open(&self) -> bool {
@@ -1318,7 +1334,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.shortcuts.panel.is_some() {
+    if s.clipboard_history.panel.is_some() {
+        s.update_clipboard_history(message)
+    } else if s.shortcuts.panel.is_some() {
         s.update_shortcut_settings(message)
     } else if s.alias_editor.is_some() {
         s.update_alias_editor(message)
@@ -2350,6 +2368,17 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
     content = content.push(numbered_slot(slot, selected, s.panel.is_none()));
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(12));
     // With the row's 4 px inset, 4 + 3 + 9 px keeps the icon on the 28 px gutter.
+    // Keep the full navigation slot clickable around the inset selection.
+    mouse_area(selectable_result_row(content, selected))
+        .on_press(Message::Selected(item.target.clone()))
+        .on_double_click(Message::Clicked(item.target.clone()))
+        .on_right_press(Message::ContextMenu(item.target.clone()))
+        .interaction(mouse::Interaction::Pointer)
+        .into()
+}
+
+fn selectable_result_row<'a, M: 'a>(content: impl Into<Element<'a, M>>, selected: bool) -> Element<'a, M> {
+    let content = content.into();
     let bar = selection_bar(selected, ROW_HEIGHT / 2.0);
     let row = container(row![bar, content].align_y(Vertical::Center))
         .height(ROW_HEIGHT - 4.0)
@@ -2365,13 +2394,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
     });
-    // Keep the full navigation slot clickable around the inset selection.
-    mouse_area(container(widget::hover(row, hover)).padding([2, 4]).height(ROW_HEIGHT).clip(true))
-        .on_press(Message::Selected(item.target.clone()))
-        .on_double_click(Message::Clicked(item.target.clone()))
-        .on_right_press(Message::ContextMenu(item.target.clone()))
-        .interaction(mouse::Interaction::Pointer)
-        .into()
+    container(widget::hover(row, hover)).padding([2, 4]).height(ROW_HEIGHT).clip(true).into()
 }
 
 fn search_status_text(s: &Launcher) -> (String, palette::Role) {

@@ -237,6 +237,7 @@ fn query_prefill_is_applied_before_the_first_input_event() {
         Boot {
             config: ferroseek_config::Config::default(),
             opaque: true,
+            private: true,
             activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: search_state().apps,
@@ -569,6 +570,7 @@ fn search_state() -> Launcher {
         opaque: false,
         settings: None,
         shortcuts: shortcut_settings::State::new(Default::default()),
+        clipboard_history: clipboard_view::State::new(true),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -750,9 +752,9 @@ fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     }
     assert_eq!((s.scope, &s.status), (Scope::Commands, &Status::Idle));
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
-    assert!(s.items.is_empty());
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
     let _ = command(&mut s, Command::Back);
-    assert!(s.query.is_empty() && s.items.len() == 8);
+    assert!(s.query.is_empty() && s.items.len() == 9);
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
 }
 

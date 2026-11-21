@@ -111,8 +111,8 @@ Complete desktop validation before expanding the platform.
 - [x] Assign and remove aliases for application and built-in command results.
 - [x] Save searchable text snippets with explicit creation, edit, copy and
   delete actions.
-- [ ] Add opt-in searchable clipboard history, with clear retention/deletion
-  controls and explicit desktop support.
+- [x] Opt-in Wayland text clipboard history with search, copy, retention,
+  individual deletion, clear confirmation and a private-session pause.
 - [ ] Evaluate user-defined script commands before designing workflows or a
   general extension API; keep execution explicit and separate from search.
 
