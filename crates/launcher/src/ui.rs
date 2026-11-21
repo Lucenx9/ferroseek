@@ -66,9 +66,7 @@ const MIN_FILE_QUERY: usize = 2;
 const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
 
 #[cfg(test)]
-fn compact_height() -> u32 {
-    (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32
-}
+use crate::layout::compact_height;
 
 #[cfg(test)]
 fn full_height() -> u32 {
@@ -79,7 +77,7 @@ pub(crate) use crate::appearance::palette;
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
 static OUTPUT_EVENTS: Mutex<Option<UnboundedReceiver<output::Event>>> = Mutex::new(None);
-static BOOT: Mutex<Option<(Boot, Material, output::Observer)>> = Mutex::new(None);
+static BOOT: Mutex<Option<(Launcher, Task<Message>)>> = Mutex::new(None);
 static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None);
 
 /// What the launcher starts with.
@@ -210,6 +208,7 @@ pub struct Launcher {
     output: output::Observer,
     output_bounds: Option<(u32, u32)>,
     placement: Option<layout::Geometry>,
+    surface_ready: bool,
     window_height: u32,
     preferences: Preferences,
     system_dark: Option<bool>,
@@ -353,18 +352,22 @@ fn status_scroll_id() -> Id {
 
 pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
-    let initial = layout::calculate(boot_data.config.appearance, None, true, false);
-    let (output, output_events) = output::Observer::new((initial.width, initial.height));
+    let provisional = layout::calculate(boot_data.config.appearance, None, Some(0), false);
+    let (output, output_events) = output::Observer::new((provisional.width, provisional.height));
     let shared_output = output.clone();
     *OUTPUT_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(output_events);
     let (material, material_events) = Material::new(
         !boot_data.opaque && boot_data.config.appearance.material == ferroseek_config::appearance::Material::Glass,
-        (initial.width, initial.height),
+        (provisional.width, provisional.height),
     );
     let shared_material = material.clone();
     *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material, output));
+    let (mut state, startup) = boot_from(boot_data, material, output, Icons::new(ICON_SIZE as u16));
+    let initial = state.placement.expect("startup computes the first surface geometry");
+    shared_material.resize((initial.width, initial.height));
+    state.surface_ready = true;
+    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((state, startup));
     iced_layershell::application(boot, namespace, update, view)
         .style(|_, theme| iced::theme::Style {
             background_color: Color::TRANSPARENT,
@@ -400,18 +403,16 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let (data, material, output) =
-        BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
-    boot_from(data, material, output, Icons::new(ICON_SIZE as u16))
+    BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()")
 }
 
 fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let initial = layout::calculate(data.config.appearance, None, true, false);
     Launcher {
         output,
         output_bounds: None,
         placement: None,
-        window_height: initial.height,
+        surface_ready: false,
+        window_height: layout::compact_height(),
         preferences: data.config.appearance,
         system_dark: None,
         opaque: data.opaque,
@@ -459,7 +460,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         file_details: None,
         details_generation: 0,
         preview_enabled: false,
-        window_width: initial.width,
+        window_width: data.config.appearance.width.pixels(),
         text_preview: None,
         preview_generation: 0,
         preview_request: None,
@@ -698,21 +699,27 @@ impl Launcher {
             .collect();
     }
 
-    fn resize(&mut self) -> Task<Message> {
-        // Not while searching: rows would collapse and reappear per key.
-        let compact = self.search_folder.is_none()
+    fn home_rows(&self) -> Option<usize> {
+        // Keep a stable viewport while typing or showing a secondary view.
+        let home = self.search_folder.is_none()
             && self.query.trim().is_empty()
-            && self.items.is_empty()
             && !self.search_suspended()
             && !self.preview_enabled
-            && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
-        let mut geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
+            && self.panel.is_none();
+        let needs_room = matches!(self.status, Status::Searching)
+            || (self.items.is_empty() && matches!(self.status, Status::Error(_) | Status::Notice(_)));
+        (home && !needs_room).then_some(self.items.len())
+    }
+
+    fn resize(&mut self) -> Task<Message> {
+        let mut geometry =
+            layout::calculate(self.preferences, self.output_bounds, self.home_rows(), self.preview_visible());
         if let Some(height) = self.dialog_height() {
             geometry = geometry.with_content_height(height, self.output_bounds);
         }
         self.resize_clipboard(geometry.height);
         self.window_switcher.resize(geometry.height);
-        self.cursor.visible = geometry.rows;
+        self.cursor.visible = geometry.rows.max(1);
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
             panel.cursor.visible = panel.visible_rows(geometry.height, geometry.rows);
@@ -722,15 +729,19 @@ impl Launcher {
         if let Some(panel) = &mut self.application_picker {
             panel.resize(geometry.height, self.opening.is_some());
         }
-        if self.placement == Some(geometry) && compact == self.compact {
+        if self.placement == Some(geometry) {
             return Task::none();
         }
-        self.compact = compact;
+        self.compact = geometry.rows == 0;
         self.window_width = geometry.width;
         self.window_height = geometry.height;
         self.placement = Some(geometry);
         self.output.resize((geometry.width, geometry.height));
         timing::layout(geometry);
+        if !self.surface_ready {
+            // Startup passes the computed size directly to the layer surface.
+            return Task::none();
+        }
         let anchor = if geometry.centered { Anchor::empty() } else { Anchor::Top };
         let size = Task::done(Message::AnchorSizeChange(anchor, (geometry.width, geometry.height)));
         let margin = Task::done(Message::MarginChange((geometry.top as i32, 0, 0, 0)));
@@ -1306,20 +1317,17 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
-    if let Some(task) = s.route_paste(&message) {
-        return task;
-    }
-    let previous = s.preview_context();
-    let query_boundary = matches!(&message, Message::Query(_));
-    let task = match message {
+    let (previous_preview, previous_home) = (s.preview_context(), s.home_rows());
+    let query_boundary = matches!(&message, Message::Query(_)) && !s.paste.busy();
+    let task = s.route_paste(&message).unwrap_or_else(|| match message {
         Message::Ui(UiEvent::OpenCommand(request)) => s.deliver_command(request),
         message => update_inner(s, message),
-    };
-    if previous.1 && !s.preview_visible() && s.preview_enabled {
+    });
+    if previous_preview.1 && !s.preview_visible() && s.preview_enabled {
         let loading = s.preview_request.is_some();
         s.cancel_preview(loading);
     }
-    if previous != s.preview_context() || query_boundary {
+    if (previous_preview, previous_home) != (s.preview_context(), s.home_rows()) || query_boundary {
         let preview = s.sync_preview();
         Task::batch([task, preview, s.resize()])
     } else {

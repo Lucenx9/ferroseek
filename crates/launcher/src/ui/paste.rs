@@ -100,7 +100,9 @@ impl Launcher {
             | Message::ActionQuery(_)
             | Message::Selected(_)
             | Message::Clicked(_)
+            | Message::ResultPrimary(_)
             | Message::ContextMenu(_)
+            | Message::PanelBack { .. }
             | Message::PanelClicked { .. }
             | Message::Scope(_)
             | Message::ContextQuery { .. }

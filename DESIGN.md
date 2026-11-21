@@ -136,6 +136,11 @@ belong in the owning component. Align icons, text starts and shortcut columns
 across repeated rows. Rounded corners should express containment, not make
 every element a pill. Preserve the full hit target around an inset highlight.
 
+Size the empty search to the visible suggestions, including the case where
+there are none. Use the computed size when the launcher first appears. Expand
+for the action panel and restore the suggestions height when it closes. Keep
+the results viewport steady while the user types or waits for results.
+
 Fit the selected output and scale. Short windows show fewer rows; narrow
 headers wrap controls before sacrificing the query or exit action. Test long
 labels and the preview sidebar at Compact width. Respect saved width and

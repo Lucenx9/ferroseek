@@ -564,6 +564,7 @@ fn search_state() -> Launcher {
         output: output::Observer::default(),
         output_bounds: None,
         placement: None,
+        surface_ready: true,
         window_height: full_height(),
         preferences: Preferences::default(),
         system_dark: None,
@@ -3533,7 +3534,7 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
 fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
     for width in [320, 608, 640, 720, 880] {
         let mut state = search_state();
-        let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), false, false);
+        let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), None, false);
         state.placement = Some(layout::Geometry { width, ..geometry });
         let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
         let input = labels.inputs[0];
@@ -3928,6 +3929,32 @@ fn ellipsizing() {
     assert!(ellipsize_middle(&path, 90).ends_with(name));
     assert_eq!(ellipsize_middle("short", 11), "short");
     assert_eq!(ellipsize_middle("日本語のパス/ファイル", 7).chars().count(), 7);
+}
+
+#[test]
+fn startup_geometry_is_ready_before_the_first_surface_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = search_state();
+    s.settings_path = dir.path().join("config.toml");
+    std::fs::write(&s.settings_path, "roots = []").unwrap();
+    s.surface_ready = false;
+    let (s, task) = s.start_destination(Destination::Search(String::new()));
+    assert_eq!(s.placement.unwrap().rows, 1);
+    assert_eq!(s.window_height, compact_height() + ROW_HEIGHT as u32 + PAD as u32);
+    assert_eq!(task.units(), 0);
+}
+
+#[test]
+fn home_sizes_to_suggestions_and_makes_room_for_actions() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query(String::new()));
+    let home = s.placement.unwrap();
+    assert_eq!((home.height, home.rows), (compact_height() + ROW_HEIGHT as u32 + PAD as u32, 1));
+
+    let _ = update(&mut s, Message::Cmd(Command::OpenActions));
+    assert_eq!((s.window_height, s.query.as_str()), (full_height(), ""));
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!((s.placement, s.selected().unwrap().title.as_str()), (Some(home), "Report Viewer"));
 }
 
 #[test]

@@ -31,15 +31,26 @@ fn top_margin(centered: bool, height: u32, bounds: Option<(u32, u32)>) -> u32 {
     if centered { 0 } else { bounds.map_or(200, |(_, h)| 200.min(h.saturating_sub(height + EDGE).max(EDGE))) }
 }
 
-pub fn calculate(preferences: Preferences, bounds: Option<(u32, u32)>, compact: bool, preview: bool) -> Geometry {
+pub fn compact_height() -> u32 {
+    (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32
+}
+
+pub fn calculate(
+    preferences: Preferences,
+    bounds: Option<(u32, u32)>,
+    requested_rows: Option<usize>,
+    preview: bool,
+) -> Geometry {
     let desired = preferences.width.pixels() + if preview { PREVIEW_EXTRA } else { 0 };
     let width = bounds.map_or(desired, |(w, _)| desired.min(w.saturating_sub(2 * EDGE).max(1)));
-    let base = (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32;
+    let base = compact_height();
     let available = available_height(bounds);
-    let rows = ((available.saturating_sub(base + PAD as u32) / (ROW_HEIGHT as u32)) as usize)
+    let capacity = (available.saturating_sub(base + PAD as u32) as usize / ROW_HEIGHT as usize)
         .clamp(1, crate::model::NUMBERED_SLOTS);
-    let full = base + ROW_HEIGHT as u32 * rows as u32 + PAD as u32;
-    let height = (if compact { base } else { full }).min(available);
+    let rows = requested_rows.unwrap_or(capacity).min(capacity);
+    let results_height = if rows == 0 { 0 } else { ROW_HEIGHT as u32 * rows as u32 + PAD as u32 };
+    let height = (base + results_height).min(available);
+    let full = base + ROW_HEIGHT as u32 * capacity as u32 + PAD as u32;
     let centered = preferences.position == Position::Centered;
     let top = top_margin(centered, full, bounds);
     Geometry { width, height, rows, centered, top }

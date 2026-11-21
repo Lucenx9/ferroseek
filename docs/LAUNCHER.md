@@ -390,9 +390,12 @@ captured at 1× on a 1280×800 virtual output in KWin 6.3.6.
 or centered placement. The default remains Standard and Upper. The side preview
 adds 260 logical pixels when space permits. Width is capped to the entered
 output minus 16 pixels on each side. Short outputs show fewer result and action
-rows. The search field has its own full-width row and the same focus outline
-as the other editable fields. Upper
-placement stays stable as results expand; centering follows the current surface height. **Restore default layout**
+rows. At startup, the launcher fits the visible suggestions when the query is
+empty. The surface expands for Actions or a typed search and returns to the
+suggestions height when you close Actions or clear the query. Typing and file
+replies keep the results viewport steady. The search field has its own full-width
+row and the same focus outline as the other editable fields. Upper placement
+stays steady as results expand. Centering follows the current surface height. **Restore default layout**
 previews Standard and Upper without changing themes or material. Save keeps the
 reset; Back and discard restore the last saved settings.
 
@@ -521,7 +524,7 @@ selected result's primary action in the footer to run it.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**
-in the footer. Click **Close actions** in the same place to return to search.
+in the footer. Click **Close actions** in the footer to return to search.
 A click on a result that disappears while results update is
 ignored rather than opening a different row. Action clicks also keep the target
 and action they were drawn for; changing a filter cannot redirect a queued click
