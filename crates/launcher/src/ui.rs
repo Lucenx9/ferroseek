@@ -616,7 +616,7 @@ impl Launcher {
 
     fn home_results(&self) -> Vec<Item> {
         if self.scope == Scope::Commands {
-            return model::command_items(self.scope, "").collect();
+            return model::home_items(&self.apps, &[], self.favorites.items(), self.scope, usize::MAX);
         }
         model::home_items(
             &self.apps,
@@ -843,11 +843,7 @@ impl Launcher {
     }
 
     fn is_favorite(&self, target: &Target) -> bool {
-        match target {
-            Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
-            Target::File(file) => self.favorites.contains(Kind::File, &file.id),
-            _ => false,
-        }
+        target.favorite_key(&self.apps).is_some_and(|(kind, key)| self.favorites.contains(kind, key))
     }
 
     fn actions_for(&self, target: &Target) -> Vec<Action> {
@@ -863,7 +859,7 @@ impl Launcher {
             panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
             panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
         }
-        if matches!(item.target, Target::App(_) | Target::Command(_)) {
+        if matches!(item.target, Target::App(_)) {
             panel.actions.push(Action::EditAlias);
         }
         if matches!(item.target, Target::Snippet(_)) && self.paste.label().is_some() {
@@ -873,15 +869,8 @@ impl Launcher {
     }
 
     fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
-        let (kind, key) = match target {
-            Target::App(i) => {
-                let Some(app) = self.apps.get(*i) else { return Task::none() };
-                (Kind::App, app.id.clone())
-            }
-            Target::File(file) if file.path.is_some() => (Kind::File, file.id.clone()),
-            _ => return Task::none(),
-        };
-        self.status = match self.favorites.set(kind, &key, enabled) {
+        let Some((kind, key)) = target.favorite_key(&self.apps) else { return Task::none() };
+        self.status = match self.favorites.set(kind, key, enabled) {
             Ok(()) => {
                 self.panel = None;
                 self.rebuild(true);

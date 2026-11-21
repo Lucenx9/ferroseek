@@ -727,7 +727,7 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     let _ = command(&mut s, Command::ToggleActions);
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert_eq!(s.selected().unwrap().target, target);
-    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand, Action::EditAlias]);
+    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand, Action::EditAlias, Action::AddFavorite]);
     let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
     assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
     assert!(s.panel.is_none() && s.opening.is_none());
@@ -863,6 +863,27 @@ fn session_favorites_toggle_from_actions_without_changing_ranking() {
     let _ = command(&mut s, Command::Activate);
     assert!(!s.is_favorite(&target));
     assert_eq!(s.items.len(), 1, "unpinning retains the available application suggestion");
+}
+
+#[test]
+fn favorite_command_is_ready_from_an_empty_query_and_can_be_unpinned() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("switch windows".into()));
+    let target = Target::Command(crate::commands::Builtin::SwitchWindows);
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("pin".into()));
+    let _ = command(&mut s, Command::Activate);
+    assert!(s.is_favorite(&target));
+    assert!(s.panel.is_none());
+
+    let _ = update(&mut s, Message::Query(String::new()));
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("unpin".into()));
+    let _ = command(&mut s, Command::Activate);
+    assert!(!s.is_favorite(&target));
+    assert!(s.items.iter().all(|item| item.target != target));
 }
 
 #[test]

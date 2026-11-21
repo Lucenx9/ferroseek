@@ -5,9 +5,44 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::uri;
-use crate::usage::{self, Kind, Usage};
+use crate::usage::{self, Usage};
 
 const MAX_FAVORITES: usize = 400;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    App,
+    File,
+    Command,
+}
+
+impl From<usage::Kind> for Kind {
+    fn from(kind: usage::Kind) -> Self {
+        match kind {
+            usage::Kind::App => Self::App,
+            usage::Kind::File => Self::File,
+        }
+    }
+}
+
+impl Kind {
+    fn parse(tag: &str) -> Option<Self> {
+        match tag {
+            "app" => Some(Self::App),
+            "file" => Some(Self::File),
+            "command" => Some(Self::Command),
+            _ => None,
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::File => "file",
+            Self::Command => "command",
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Favorites {
@@ -66,7 +101,7 @@ impl Favorites {
 fn valid_key(kind: Kind, key: &str) -> bool {
     !key.is_empty()
         && !key.contains(['\n', '\r', '\t'])
-        && (kind == Kind::App || uri::path_from_file_url(key).is_some())
+        && (kind != Kind::File || uri::path_from_file_url(key).is_some())
 }
 
 fn update_items(items: &mut Vec<(Kind, String)>, kind: Kind, key: &str, enabled: bool) -> io::Result<bool> {
@@ -99,11 +134,7 @@ fn read_items(path: &Path) -> io::Result<Vec<(Kind, String)>> {
         }
         let Ok(line) = std::str::from_utf8(line) else { continue };
         let Some((tag, key)) = line.split_once('\t') else { continue };
-        let kind = match tag {
-            "app" => Kind::App,
-            "file" => Kind::File,
-            _ => continue,
-        };
+        let Some(kind) = Kind::parse(tag) else { continue };
         if valid_key(kind, key) && !items.iter().any(|(k, value)| *k == kind && value == key) {
             items.push((kind, key.to_string()));
         }
@@ -117,10 +148,7 @@ fn write_items(path: &Path, items: &[(Kind, String)]) -> io::Result<()> {
     let result = (|| {
         let mut file = usage::private_options().write(true).create_new(true).open(&tmp)?;
         for (kind, key) in items {
-            let tag = match kind {
-                Kind::App => "app",
-                Kind::File => "file",
-            };
+            let tag = kind.tag();
             writeln!(file, "{tag}\t{key}")?;
         }
         file.sync_all()?;
@@ -147,6 +175,7 @@ mod tests {
         favorites.set(Kind::App, "a.desktop", true).unwrap();
         favorites.set(Kind::File, "file:///synthetic/a%20b%FF", true).unwrap();
         favorites.set(Kind::App, "b.desktop", true).unwrap();
+        favorites.set(Kind::Command, "switch-windows", true).unwrap();
         let inode = std::fs::metadata(&path).unwrap().ino();
         favorites.set(Kind::App, "a.desktop", true).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode, "an idempotent request does not replace the file");
@@ -157,6 +186,7 @@ mod tests {
             [
                 (Kind::File, "file:///synthetic/a%20b%FF".to_string()),
                 (Kind::App, "b.desktop".to_string()),
+                (Kind::Command, "switch-windows".to_string()),
                 (Kind::App, "a.desktop".to_string()),
             ]
         );
@@ -317,11 +347,11 @@ mod tests {
         let path = history.with_file_name("launcher-favorites");
         let mut usage = Usage::load(Some(history.clone()));
         let mut favorites = Favorites::load(Some(path.clone()));
-        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        usage.record(usage::Kind::App, "saved.desktop", "sav", 100);
         favorites.set(Kind::App, "saved.desktop", true).unwrap();
-        usage.reset(Kind::App, "saved.desktop").unwrap();
+        usage.reset(usage::Kind::App, "saved.desktop").unwrap();
         assert!(Favorites::load(Some(path.clone())).contains(Kind::App, "saved.desktop"));
-        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        usage.record(usage::Kind::App, "saved.desktop", "sav", 100);
         let disk = std::fs::read(&history).unwrap();
         favorites.set(Kind::App, "saved.desktop", false).unwrap();
         assert_eq!(std::fs::read(&history).unwrap(), disk);

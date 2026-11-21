@@ -356,7 +356,7 @@ mod tests {
         std::os::unix::fs::symlink(&path, &link).unwrap();
         assert_eq!(Usage::load(Some(link.clone())).recent(100, 1), [(Kind::App, "app.desktop".into())]);
         std::fs::write(&path, "app\tapp.desktop\n").unwrap();
-        assert!(crate::favorites::Favorites::load(Some(link)).contains(Kind::App, "app.desktop"));
+        assert!(crate::favorites::Favorites::load(Some(link)).contains(crate::favorites::Kind::App, "app.desktop"));
         for device in ["/dev/null", "/dev/zero"] {
             assert_eq!(read_state_file(Path::new(device)).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
         }
@@ -380,7 +380,7 @@ mod tests {
                 }
                 "favorites-set" => {
                     let mut favorites = crate::favorites::Favorites::load(Some(path));
-                    assert!(favorites.set(Kind::App, "app.desktop", true).is_err());
+                    assert!(favorites.set(crate::favorites::Kind::App, "app.desktop", true).is_err());
                 }
                 _ => unreachable!(),
             }

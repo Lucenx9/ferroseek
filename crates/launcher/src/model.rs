@@ -13,6 +13,7 @@ use iced::keyboard::{
 use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
+use crate::favorites::Kind as FavoriteKind;
 use crate::snippets::Snippet;
 use crate::usage::Kind;
 use crate::{calc, links, matcher, saved, uri};
@@ -101,6 +102,15 @@ pub enum Target {
 }
 
 impl Target {
+    pub(crate) fn favorite_key<'a>(&'a self, apps: &'a [App]) -> Option<(FavoriteKind, &'a str)> {
+        match self {
+            Self::App(index) => apps.get(*index).map(|app| (FavoriteKind::App, app.id.as_str())),
+            Self::File(file) if file.path.is_some() => Some((FavoriteKind::File, &file.id)),
+            Self::Command(command) => Some((FavoriteKind::Command, command.id())),
+            _ => None,
+        }
+    }
+
     /// Display metadata can change without changing the file to act on.
     /// A file/folder replacement must invalidate captured actions.
     pub fn same_identity(&self, other: &Self) -> bool {
@@ -195,69 +205,65 @@ pub fn calc_item(query: &str) -> Option<Item> {
     })
 }
 
-/// Valid saved rows, resolved lazily so a full home needs no further
-/// filesystem checks.
-fn recent_items<'a>(
-    apps: &'a [App],
-    recent: impl Iterator<Item = &'a (Kind, String)> + 'a,
-    scope: Scope,
-) -> impl Iterator<Item = Item> + 'a {
-    recent
-        .filter(move |(kind, _)| match kind {
-            Kind::App => scope.includes_apps(),
-            Kind::File => scope.includes_files(),
-        })
-        .filter_map(move |(kind, key)| match kind {
-            Kind::App => apps.iter().position(|a| a.id == *key).map(|i| app_item(apps, i)),
-            Kind::File => {
-                let path = uri::path_from_file_url(key)?;
-                let meta = std::fs::symlink_metadata(&path).ok()?;
-                let name = path.file_name()?.to_string_lossy().into_owned();
-                let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
-                let is_dir = meta.is_dir();
-                Some(file_item(&FileHit {
-                    id: key.clone(),
-                    icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
-                    subtext: home_relative(&parent),
-                    name,
-                    path: Some(path),
-                    is_dir,
-                }))
-            }
-        })
+fn stored_item(apps: &[App], (kind, key): (FavoriteKind, &str), scope: Scope) -> Option<Item> {
+    match kind {
+        FavoriteKind::App if scope.includes_apps() => {
+            apps.iter().position(|app| app.id == key).map(|i| app_item(apps, i))
+        }
+        FavoriteKind::File if scope.includes_files() => stored_file(key),
+        FavoriteKind::Command if matches!(scope, Scope::All | Scope::Commands) => {
+            Builtin::from_id(key).map(command_item)
+        }
+        _ => None,
+    }
 }
 
-/// For an empty query, list the command catalog or fill from favorites, history,
-/// and available applications. Deduplication precedes resolution and the row limit.
+fn stored_file(key: &str) -> Option<Item> {
+    let path = uri::path_from_file_url(key)?;
+    let meta = std::fs::symlink_metadata(&path).ok()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let parent = path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let is_dir = meta.is_dir();
+    Some(file_item(&FileHit {
+        id: key.into(),
+        icon: if is_dir { "folder" } else { "text-x-generic" }.into(),
+        subtext: home_relative(&parent),
+        name,
+        path: Some(path),
+        is_dir,
+    }))
+}
+
+/// Show pinned rows, recent items, then the catalog for the current scope.
 pub fn home_items(
     apps: &[App],
     recent: &[(Kind, String)],
-    favorites: &[(Kind, String)],
+    favorites: &[(FavoriteKind, String)],
     scope: Scope,
     limit: usize,
 ) -> Vec<Item> {
-    if scope == Scope::Commands {
-        return command_items(scope, "").take(limit).collect();
-    }
+    let pins = favorites.iter().map(|(kind, key)| (*kind, key.as_str()));
+    let visits = recent.iter().map(|(kind, key)| (FavoriteKind::from(*kind), key.as_str()));
     let mut seen = HashSet::new();
-    let ordered = favorites.iter().chain(recent.iter()).filter(move |(kind, key)| seen.insert((*kind, key.clone())));
-    let mut seen_apps = vec![false; apps.len()];
-    let mut items: Vec<_> = recent_items(apps, ordered, scope)
-        .filter(|item| match item.target {
-            Target::App(i) => !std::mem::replace(&mut seen_apps[i], true),
-            _ => true,
-        })
-        .take(limit)
-        .collect();
-    if scope.includes_apps() {
-        for (i, seen) in seen_apps.into_iter().enumerate() {
-            if items.len() == limit {
-                break;
-            }
-            if !seen {
-                items.push(app_item(apps, i));
-            }
-        }
+    let ordered = pins.chain(visits).filter(|key| seen.insert(*key));
+    let mut items: Vec<_> = ordered.filter_map(|key| stored_item(apps, key, scope)).take(limit).collect();
+    let remaining = limit - items.len();
+    if scope == Scope::Commands {
+        items.extend(
+            commands::ALL
+                .into_iter()
+                .filter(|command| !seen.contains(&(FavoriteKind::Command, command.id())))
+                .take(remaining)
+                .map(command_item),
+        );
+    } else if scope.includes_apps() {
+        items.extend(
+            apps.iter()
+                .enumerate()
+                .filter(|(_, app)| !seen.contains(&(FavoriteKind::App, app.id.as_str())))
+                .take(remaining)
+                .map(|(i, _)| app_item(apps, i)),
+        );
     }
     items
 }
@@ -479,12 +485,12 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         }
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
-        Target::Command(_) => vec![Action::OpenCommand],
+        Target::Command(_) => vec![Action::OpenCommand, Action::EditAlias],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],
     };
-    if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
+    if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. }) | Target::Command(_)) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
     }
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: true, .. })) {
@@ -866,7 +872,8 @@ mod tests {
             (Kind::App, "gone.desktop".to_string()),
             (Kind::File, "file:///nonexistent/ferroseek-test".to_string()),
         ];
-        let items: Vec<_> = recent_items(&a, recent.iter(), Scope::All).collect();
+        let keys = recent.iter().map(|(kind, key)| (FavoriteKind::from(*kind), key.as_str()));
+        let items: Vec<_> = keys.filter_map(|key| stored_item(&a, key, Scope::All)).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);
     }
@@ -950,13 +957,13 @@ mod tests {
         let one_key = (Kind::File, format!("file://{}", one.display()));
         let two_key = (Kind::File, format!("file://{}", two.display()));
         let favorites = vec![
-            (Kind::App, "gone.desktop".into()),
-            (Kind::File, "https:///invalid".into()),
-            (Kind::File, format!("file://{}/missing.txt", dir.path().display())),
-            one_key.clone(),
-            (Kind::App, "Kate.desktop".into()),
-            one_key.clone(),
-            (Kind::App, "Kate.desktop".into()),
+            (FavoriteKind::App, "gone.desktop".into()),
+            (FavoriteKind::File, "https:///invalid".into()),
+            (FavoriteKind::File, format!("file://{}/missing.txt", dir.path().display())),
+            (FavoriteKind::File, one_key.1.clone()),
+            (FavoriteKind::App, "Kate.desktop".into()),
+            (FavoriteKind::File, one_key.1.clone()),
+            (FavoriteKind::App, "Kate.desktop".into()),
         ];
         let original = favorites.clone();
         let recent = vec![
@@ -979,10 +986,28 @@ mod tests {
     }
 
     #[test]
+    fn pinned_commands_respect_scope_and_do_not_repeat_in_the_catalog() {
+        let pins = [Builtin::SwitchWindows, Builtin::ClipboardHistory];
+        let mut favorites = vec![(FavoriteKind::Command, "unavailable".into())];
+        favorites.extend(pins.map(|command| (FavoriteKind::Command, command.id().into())));
+        let home = |scope, limit| {
+            home_items(&[], &[], &favorites, scope, limit).into_iter().map(|item| item.target).collect::<Vec<_>>()
+        };
+        let catalog = pins
+            .into_iter()
+            .chain(commands::ALL.into_iter().filter(|command| !pins.contains(command)))
+            .map(Target::Command)
+            .collect::<Vec<_>>();
+        assert_eq!(home(Scope::Commands, usize::MAX), catalog);
+        assert_eq!(home(Scope::All, 2), pins.map(Target::Command));
+        assert!(home(Scope::Files, 8).is_empty());
+    }
+
+    #[test]
     fn temporarily_missing_favorite_files_return_without_readding_them() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("returning.txt");
-        let favorites = [(Kind::File, format!("file://{}", path.display()))];
+        let favorites = [(FavoriteKind::File, format!("file://{}", path.display()))];
         assert!(home_items(&[], &[], &favorites, Scope::Files, 8).is_empty());
         std::fs::write(&path, "").unwrap();
         assert_eq!(home_items(&[], &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");

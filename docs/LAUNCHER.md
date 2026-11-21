@@ -943,11 +943,12 @@ neither indexed nor persisted by this feature.
 
 ## Favorites
 
-Use **Add to favorites** or **Remove from favorites** in an app or file's action
-panel (search for `pin` or `unpin`). A star marks favorite rows. With an empty
-query, favorites appear before recent items, in the order they were added;
-the Applications and Files filters still apply. Missing apps or files do not
-consume a suggestion slot; their preference is retained if they return.
+Use **Add to favorites** or **Remove from favorites** in the action panel for
+an app, file or built-in command (search for `pin` or `unpin`). A star marks
+favorite rows. With an empty query, **All** shows favorites before recent items
+in the order they were added. **Applications** and **Files** show favorites of
+their own type. **Commands** puts favorite commands first, then lists the rest
+of the catalog. Unavailable favorites stay saved and use no suggestion slots.
 Favorites do not change the ranking of a typed query.
 
 Favorites are stored separately in
