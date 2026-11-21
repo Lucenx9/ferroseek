@@ -196,6 +196,26 @@ Clipboard recording requires a compositor exposing
 [ext-data-control](https://github.com/wayland-mirror/wayland-protocols/blob/main/staging/ext-data-control/ext-data-control-v1.xml)
 or [wlr-data-control](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-data-control-unstable-v1.xml).
 
+## Switch windows
+
+![Window results with application names, minimized state and numbered shortcuts](assets/launcher-window-switcher.png)
+
+Search for **Switch windows** in **All** or **Commands**. Filter by window
+title or application name. Results show the application and indicate minimized
+windows. Use Up/Down or Tab to select. Press Enter, use a visible numbered
+shortcut, or double-click a row to switch to its window. Esc or **Back**
+restores the previous search.
+
+The list updates while the command is open. If the selected window closes or
+stops matching after a title change, choose another window. FerroSeek keeps
+window titles in memory while the command is open.
+
+Switching requires a Wayland session with a single input seat and
+[wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml).
+The compositor handles focus and can decline the request. Virtual Labwc 0.7.1
+was tested at 1× using tiny-skia and synthetic application windows. The command
+reports unavailability on the virtual Plasma 5.27 setup.
+
 ## Appearance
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
@@ -422,7 +442,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
   **Appearance**, **Layout**, **Search folders**, **Search status**,
-  **Shortcuts**, **Create link**, **Create snippet** or **Clipboard history**. Strong
+  **Shortcuts**, **Create link**, **Create snippet**, **Clipboard history** or **Switch windows**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.
@@ -844,7 +864,8 @@ ferroseek-launcher
 
 - Focus depends on the receiving application and compositor; activation context
   may be unavailable or declined. Application entries still need a usable `Exec`;
-  D-Bus-only entries and explicit application-window switching are unsupported.
+  D-Bus-only entries are unsupported. See [Switch windows](#switch-windows) for
+  supported window switching sessions.
 - Closing on outside clicks needs the compositor to move keyboard focus away from
   an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
 - The default width is 720 logical px, or 980 with the preview sidebar.
@@ -1000,6 +1021,7 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
 | Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
+| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window filtering, live changes and target focus with keyboard and pointer at 720 and 320 logical px | Other commands, physical outputs and multiple seats |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)

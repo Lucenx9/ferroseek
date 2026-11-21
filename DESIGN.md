@@ -162,6 +162,10 @@ The text field preserves multiline editing and uses Ctrl+S for save.
 Clipboard history has its own filter and result list. Show recording status,
 retention, copy and deletion controls in the view. Ask for confirmation before
 clearing all entries. Preserve the selected entry during live refreshes.
+Switch windows filters the live window list by title and application. Use the
+application name and minimized state as context. Keep the selected window
+through updates and require a new selection if it closes. Back restores the
+parent search. Explain when the desktop cannot provide window switching.
 
 Enter performs the selected result's primary action. Ctrl+K reveals its actions by default;
 Shift+F10, the Menu key, the footer button and context click provide the existing

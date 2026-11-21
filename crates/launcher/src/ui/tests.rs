@@ -571,6 +571,7 @@ fn search_state() -> Launcher {
         settings: None,
         shortcuts: shortcut_settings::State::new(Default::default()),
         clipboard_history: clipboard_view::State::new(true),
+        window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -754,7 +755,8 @@ fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
     let _ = command(&mut s, Command::Back);
-    assert!(s.query.is_empty() && s.items.len() == 9);
+    assert!(s.query.is_empty());
+    assert_eq!(s.items.len(), crate::commands::matching("", true).len());
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
 }
 

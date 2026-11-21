@@ -28,6 +28,9 @@ pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, 
 
 impl Launcher {
     pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
+        if let Some(panel) = &self.window_switcher.panel {
+            return Some(panel.input());
+        }
         if let Some(panel) = &self.clipboard_history.panel {
             return panel.focus();
         }
@@ -52,7 +55,9 @@ impl Launcher {
     }
 
     pub(super) fn dialog_height(&self) -> Option<u32> {
-        if let Some(panel) = &self.clipboard_history.panel {
+        if self.window_switcher.panel.is_some() {
+            Some(super::windows::HEIGHT)
+        } else if let Some(panel) = &self.clipboard_history.panel {
             Some(panel.height())
         } else if self.alias_editor.is_some() {
             Some(super::alias_editor::HEIGHT)
@@ -72,7 +77,7 @@ impl Launcher {
         if let Some(panel) = &self.shortcuts.panel {
             return if panel.recording() { Routing::Recording } else { Routing::Disabled };
         }
-        if self.saved_editor_open() || self.application_picker.is_some() {
+        if self.secondary_filter_owns_input() || self.saved_editor_open() {
             return Routing::Disabled;
         }
         let shortcut = if self.folder_settings.is_some() {
@@ -87,19 +92,25 @@ impl Launcher {
         })
     }
 
+    fn secondary_filter_owns_input(&self) -> bool {
+        self.application_picker.is_some() || self.window_switcher.panel.is_some()
+    }
+
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
-        if let Some(panel) = &self.clipboard_history.panel {
-            Some(panel.context())
-        } else if let Some(editor) = &self.alias_editor {
-            Some(editor.context())
-        } else if let Some(editor) = &self.saved_editor {
-            Some(editor.context())
-        } else {
-            self.appearance.as_ref().map(appearance::Panel::content_id)
-        }
+        self.window_switcher
+            .panel
+            .as_ref()
+            .map(super::windows::Panel::input)
+            .or_else(|| self.clipboard_history.panel.as_ref().map(super::clipboard_view::Panel::context))
+            .or_else(|| self.alias_editor.as_ref().map(super::alias_editor::Editor::context))
+            .or_else(|| self.saved_editor.as_ref().map(super::saved_editor::Editor::context))
+            .or_else(|| self.appearance.as_ref().map(appearance::Panel::content_id))
     }
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.window_switcher.panel {
+            return Some(panel.view(self.window_switcher.generation));
+        }
         if let Some(panel) = &self.clipboard_history.panel {
             return Some(self.clipboard_view(panel));
         }
@@ -305,6 +316,7 @@ impl Launcher {
             Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
             Builtin::Shortcuts => self.show_shortcuts(),
             Builtin::ClipboardHistory => self.show_clipboard_history(),
+            Builtin::SwitchWindows => self.show_windows(),
         }
     }
 

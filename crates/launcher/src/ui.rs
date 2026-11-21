@@ -7,6 +7,7 @@ mod saved_editor;
 mod settings;
 mod shortcut_settings;
 mod views;
+mod windows;
 
 use std::sync::Mutex;
 
@@ -200,6 +201,7 @@ pub struct Launcher {
     settings: Option<settings::Entry>,
     shortcuts: shortcut_settings::State,
     clipboard_history: clipboard_view::State,
+    window_switcher: windows::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
     input_epoch: u64,
@@ -292,6 +294,7 @@ pub enum Message {
     ShortcutRecorded(Result<Chord, &'static str>),
     Clipboard { generation: u64, event: clipboard_view::Event },
     ClipboardShortcut(clipboard_view::Shortcut),
+    Windows { generation: u64, event: windows::Event },
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
     Folder { generation: u64, event: folders::Event },
@@ -394,6 +397,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         settings: None,
         shortcuts: shortcut_settings::State::new(config.shortcuts),
         clipboard_history: clipboard_view::State::new(private),
+        window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -675,6 +679,7 @@ impl Launcher {
             geometry = geometry.with_content_height(height, self.output_bounds);
         }
         self.resize_clipboard(geometry.height);
+        self.window_switcher.resize(geometry.height);
         self.cursor.visible = geometry.rows;
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
@@ -1030,6 +1035,7 @@ impl Launcher {
             || self.settings_form_open()
             || self.saved_editor_open()
             || self.clipboard_history.panel.is_some()
+            || self.window_switcher.panel.is_some()
     }
 
     fn settings_form_open(&self) -> bool {
@@ -1334,7 +1340,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.clipboard_history.panel.is_some() {
+    if s.window_switcher.panel.is_some() {
+        s.update_windows(message)
+    } else if s.clipboard_history.panel.is_some() {
         s.update_clipboard_history(message)
     } else if s.shortcuts.panel.is_some() {
         s.update_shortcut_settings(message)

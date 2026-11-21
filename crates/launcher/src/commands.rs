@@ -14,9 +14,10 @@ pub enum Builtin {
     Shortcuts,
     CreateSnippet,
     ClipboardHistory,
+    SwitchWindows,
 }
 
-const ALL: [Builtin; 9] = [
+const ALL: [Builtin; 10] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
@@ -26,6 +27,7 @@ const ALL: [Builtin; 9] = [
     Builtin::Shortcuts,
     Builtin::CreateSnippet,
     Builtin::ClipboardHistory,
+    Builtin::SwitchWindows,
 ];
 
 struct Metadata {
@@ -35,6 +37,14 @@ struct Metadata {
     icon: &'static str,
     keywords: &'static str,
 }
+
+const SWITCH_WINDOWS: Metadata = Metadata {
+    id: "switch-windows",
+    title: "Switch windows",
+    description: "Find and focus an open window",
+    icon: "focus-windows",
+    keywords: "open windows find running apps activate focus switcher",
+};
 
 impl Builtin {
     fn metadata(self) -> &'static Metadata {
@@ -88,6 +98,7 @@ impl Builtin {
                 icon: "edit-paste",
                 keywords: "copies recent clipboard history paste",
             },
+            Self::SwitchWindows => &SWITCH_WINDOWS,
             Self::CreateSnippet => &Metadata {
                 id: "create-snippet",
                 title: "Create snippet",

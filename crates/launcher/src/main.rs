@@ -34,6 +34,7 @@ mod timing;
 mod ui;
 mod uri;
 mod usage;
+mod window_switcher;
 
 use std::process::ExitCode;
 
