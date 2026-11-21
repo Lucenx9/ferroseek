@@ -102,9 +102,18 @@ impl Operation for CurrentFocus {
     }
 }
 
-pub struct FocusCycle(pub [(iced::widget::Id, Message); 3]);
+pub struct FocusCycle {
+    pub fields: [(iced::widget::Id, Message); 3],
+    pub tab_only: bool,
+}
 
 impl FocusCycle {
+    fn handles(&self, event: &Event) -> bool {
+        !self.tab_only
+            || matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key.as_ref() == keyboard::Key::Named(keyboard::key::Named::Tab))
+    }
+
     fn command<R: iced::advanced::Renderer>(
         &self,
         message: Option<Message>,
@@ -116,15 +125,15 @@ impl FocusCycle {
         use crate::model::Command;
 
         let step = match message {
-            Some(Message::Cmd(Command::Up)) => self.0.len() - 1,
+            Some(Message::Cmd(Command::Up)) => self.fields.len() - 1,
             Some(Message::Cmd(Command::Down)) => 1,
             _ => return message,
         };
         let mut current = CurrentFocus::default();
         content.operate(child, layout, renderer, &mut current);
-        let index = self.0.iter().position(|(id, _)| Some(id) == current.0.as_ref());
-        let next = index.map_or(0, |index| (index + step) % self.0.len());
-        let (id, message) = &self.0[next];
+        let index = self.fields.iter().position(|(id, _)| Some(id) == current.0.as_ref());
+        let next = index.map_or(0, |index| (index + step) % self.fields.len());
+        let (id, message) = &self.fields[next];
         // Move the native caret before releasing subsequent buffered text.
         // The message records the field and keeps it visible on short outputs.
         let mut focus = EnsureFocus { target: id.clone(), found: false, allowed: true };
@@ -265,7 +274,7 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
                     .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
             }
             let mut command = shortcut.or_else(|| ui::input_event(event, inner.event_status()));
-            if let Some(cycle) = &self.focus_cycle {
+            if let Some(cycle) = self.focus_cycle.as_ref().filter(|cycle| cycle.handles(event)) {
                 command = cycle.command(command, self.content.as_widget_mut(), child, layout, renderer);
             }
             let numbered = matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. })

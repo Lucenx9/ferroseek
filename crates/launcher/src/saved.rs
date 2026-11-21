@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Atomic private storage for saved links and command aliases.
+//! Atomic private storage for links, aliases and snippets.
 
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::links::{Link, LinkFields, normalize_keyword};
-use crate::usage;
+use crate::snippets::{Fields as SnippetFields, Snippet};
+use crate::{matcher, usage};
 
-const MAX_LINKS: usize = 128;
+const MAX_NAMED: usize = 128;
 const MAX_ALIASES: usize = 128;
-const MAX_BYTES: u64 = 1024 * 1024;
+// A stored snippet byte can expand into a two-byte JSON escape.
+const MAX_BYTES: u64 = 3 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AliasTarget {
@@ -68,6 +70,7 @@ impl Alias {
 pub struct Store {
     pub links: Vec<Link>,
     pub aliases: Vec<Alias>,
+    pub snippets: Vec<Snippet>,
     pub error: Option<String>,
 }
 
@@ -75,6 +78,55 @@ pub struct Store {
 enum KeywordOwner {
     Link(usize),
     Alias(usize),
+    Snippet(usize),
+}
+
+trait NamedEntry: Sized + PartialEq {
+    const NAME: &'static str;
+    fn entries(store: &mut Store) -> &mut Vec<Self>;
+    fn owner(index: usize) -> KeywordOwner;
+    fn name(&self) -> &str;
+    fn keyword(&self) -> &str;
+}
+
+impl NamedEntry for Link {
+    const NAME: &'static str = "link";
+
+    fn entries(store: &mut Store) -> &mut Vec<Self> {
+        &mut store.links
+    }
+
+    fn owner(index: usize) -> KeywordOwner {
+        KeywordOwner::Link(index)
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn keyword(&self) -> &str {
+        &self.keyword
+    }
+}
+
+impl NamedEntry for Snippet {
+    const NAME: &'static str = "snippet";
+
+    fn entries(store: &mut Store) -> &mut Vec<Self> {
+        &mut store.snippets
+    }
+
+    fn owner(index: usize) -> KeywordOwner {
+        KeywordOwner::Snippet(index)
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn keyword(&self) -> &str {
+        &self.keyword
+    }
 }
 
 impl Store {
@@ -87,49 +139,42 @@ impl Store {
         read(path).unwrap_or_else(|error| Self { error: Some(error.to_string()), ..Self::default() })
     }
 
-    fn link_index(&self, previous: Option<&Link>) -> io::Result<Option<usize>> {
-        previous
-            .map(|old| {
-                self.links.iter().position(|item| item == old).ok_or_else(|| {
-                    io::Error::other("The link changed on disk. Reopen the launcher to load the latest links.")
-                })
-            })
-            .transpose()
-    }
-
     fn check_keyword(&self, word: &str, editing: Option<KeywordOwner>) -> io::Result<()> {
         if word.is_empty() {
             return Ok(());
         }
         let link = self.links.iter().position(|link| link.keyword == word).map(KeywordOwner::Link);
-        let owner = link.or_else(|| self.aliases.iter().position(|alias| alias.word == word).map(KeywordOwner::Alias));
+        let owner = link
+            .or_else(|| self.aliases.iter().position(|alias| alias.word == word).map(KeywordOwner::Alias))
+            .or_else(|| self.snippets.iter().position(|snippet| snippet.keyword == word).map(KeywordOwner::Snippet));
         if owner == editing {
             return Ok(());
         }
         match owner {
             Some(KeywordOwner::Link(_)) => Err(io::Error::other("A saved link already uses this keyword.")),
             Some(KeywordOwner::Alias(_)) => Err(io::Error::other("This keyword is already assigned to an alias.")),
+            Some(KeywordOwner::Snippet(_)) => Err(io::Error::other("A snippet already uses this keyword.")),
             None => Ok(()),
         }
     }
 
-    fn validate_link(&self, link: &Link, index: Option<usize>) -> io::Result<()> {
-        if self.links.iter().enumerate().any(|(i, other)| index != Some(i) && other.has_same_name(link)) {
-            return Err(io::Error::other("A saved link already uses this name."));
+    fn apply_named<T: NamedEntry>(&mut self, previous: Option<&T>, next: Option<T>) -> io::Result<()> {
+        let entries = T::entries(self);
+        let index = previous
+            .map(|old| {
+                entries.iter().position(|item| item == old).ok_or_else(|| {
+                    io::Error::other(format!(
+                        "The {} changed on disk. Reopen the launcher to load the latest entries.",
+                        T::NAME
+                    ))
+                })
+            })
+            .transpose()?;
+        if let Some(entry) = &next {
+            validate_name(entries, index, entry)?;
+            self.check_keyword(entry.keyword(), index.map(T::owner))?;
         }
-        self.check_keyword(&link.keyword, index.map(KeywordOwner::Link))?;
-        if index.is_none() && self.links.len() == MAX_LINKS {
-            return Err(io::Error::other("The saved links limit is 128. Delete a link before adding another."));
-        }
-        Ok(())
-    }
-
-    fn apply_link(&mut self, previous: Option<&Link>, next: Option<Link>) -> io::Result<()> {
-        let index = self.link_index(previous)?;
-        if let Some(link) = &next {
-            self.validate_link(link, index)?;
-        }
-        replace(&mut self.links, index, next)
+        replace(T::entries(self), index, next)
     }
 
     fn validate_alias(&self, alias: &Alias, index: Option<usize>) -> io::Result<()> {
@@ -153,6 +198,20 @@ impl Store {
     }
 }
 
+fn validate_name<T: NamedEntry>(entries: &[T], index: Option<usize>, candidate: &T) -> io::Result<()> {
+    let name = matcher::fold(candidate.name());
+    if entries.iter().enumerate().any(|(i, entry)| index != Some(i) && matcher::fold(entry.name()) == name) {
+        return Err(io::Error::other(format!("A {} already uses this name.", T::NAME)));
+    }
+    if index.is_none() && entries.len() == MAX_NAMED {
+        return Err(io::Error::other(format!(
+            "The {} limit is {MAX_NAMED}. Delete one before adding another.",
+            T::NAME
+        )));
+    }
+    Ok(())
+}
+
 fn replace<T>(items: &mut Vec<T>, index: Option<usize>, next: Option<T>) -> io::Result<()> {
     match (index, next) {
         (Some(i), Some(entry)) => items[i] = entry,
@@ -166,7 +225,11 @@ fn replace<T>(items: &mut Vec<T>, index: Option<usize>, next: Option<T>) -> io::
 }
 
 pub fn change_link(path: &Path, previous: Option<&Link>, next: Option<Link>) -> Result<Store, String> {
-    change(path, |store| store.apply_link(previous, next))
+    change(path, |store| store.apply_named(previous, next))
+}
+
+pub fn change_snippet(path: &Path, previous: Option<&Snippet>, next: Option<Snippet>) -> Result<Store, String> {
+    change(path, |store| store.apply_named(previous, next))
 }
 
 pub fn change_alias(
@@ -188,7 +251,7 @@ fn change(path: &Path, edit: impl FnOnce(&mut Store) -> io::Result<()>) -> Resul
     })
     .map_err(|error| {
         if error.kind() == io::ErrorKind::WouldBlock {
-            "Saved links and aliases are busy. Try again.".into()
+            "Saved entries are busy. Try again.".into()
         } else {
             error.to_string()
         }
@@ -203,15 +266,15 @@ fn read(path: &Path) -> io::Result<Store> {
     {
         Ok(file) => file,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Store::default()),
-        Err(e) => return Err(io::Error::other(format!("Cannot read saved links and aliases: {e}"))),
+        Err(e) => return Err(io::Error::other(format!("Cannot read saved entries: {e}"))),
     };
     if !file.metadata()?.is_file() {
-        return Err(io::Error::other("Saved links and aliases must be a regular file."));
+        return Err(io::Error::other("Saved entries must be in a regular file."));
     }
     let mut source = String::new();
     file.take(MAX_BYTES + 1).read_to_string(&mut source)?;
     if source.len() as u64 > MAX_BYTES {
-        return Err(io::Error::other("The saved links and aliases file is too large."));
+        return Err(io::Error::other("The saved entries file is too large."));
     }
     let mut store = Store::default();
     for line in source.lines() {
@@ -225,19 +288,24 @@ fn read_line(store: &mut Store, line: &str) -> io::Result<()> {
     match (fields.next(), fields.next(), fields.next(), fields.next()) {
         (Some(name), Some(address), Some(keyword), None) => {
             let link = Link::new(LinkFields { name, address, keyword }).map_err(io::Error::other)?;
-            store.apply_link(None, Some(link))
+            store.apply_named(None, Some(link))
         }
         (Some("alias"), Some(kind), Some(id), Some(word)) => {
             let target = AliasTarget::parse(kind, id)?;
             let alias = Alias::new(target.clone(), word).map_err(io::Error::other)?;
             store.apply_alias(&target, None, Some(alias))
         }
+        (Some("snippet"), Some(name), Some(keyword), Some(body)) => {
+            let body: String = serde_json::from_str(body).map_err(|_| invalid_entry())?;
+            let snippet = Snippet::new(SnippetFields { name, keyword, body: &body }).map_err(io::Error::other)?;
+            store.apply_named(None, Some(snippet))
+        }
         _ => Err(invalid_entry()),
     }
 }
 
 fn invalid_entry() -> io::Error {
-    io::Error::other("The saved links and aliases file has an invalid entry.")
+    io::Error::other("The saved entries file has an invalid entry.")
 }
 
 fn write(path: &Path, store: &Store) -> io::Result<()> {
@@ -248,6 +316,10 @@ fn write(path: &Path, store: &Store) -> io::Result<()> {
     }
     for alias in &store.aliases {
         writeln!(tmp, "alias\t{}\t{}\t{}", alias.target.tag(), alias.target.id(), alias.word)?;
+    }
+    for snippet in &store.snippets {
+        let body = serde_json::to_string(&*snippet.body).map_err(io::Error::other)?;
+        writeln!(tmp, "snippet\t{}\t{}\t{body}", snippet.name, snippet.keyword)?;
     }
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
@@ -299,5 +371,31 @@ mod tests {
         change_link(&path, Some(&link), None).unwrap();
         change_alias(&path, target, None, Some("go")).unwrap();
         assert!(change_link(&path, None, Some(link)).is_err());
+    }
+
+    #[test]
+    fn snippets_round_trip_literal_multiline_text_and_refuse_stale_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-links");
+        let original = Snippet::new(SnippetFields {
+            name: "Résumé",
+            keyword: "REPLY",
+            body: "  First line\twith tabs\r\nÉquipe \"quote\" \\ literal\n\n",
+        })
+        .unwrap();
+        let edited =
+            Snippet::new(SnippetFields { name: &original.name, keyword: &original.keyword, body: "Edited\n" }).unwrap();
+        let link = Link::new(LinkFields { name: "Example", address: "https://example.net/", keyword: "docs" }).unwrap();
+        change_link(&path, None, Some(link.clone())).unwrap();
+        change_snippet(&path, None, Some(original.clone())).unwrap();
+        assert_eq!(Store::load(&path).snippets.as_slice(), std::slice::from_ref(&original));
+        assert!(change_snippet(&path, None, Some(edited.clone())).unwrap_err().contains("name"));
+        let target = AliasTarget::Command("shortcuts".into());
+        assert!(change_alias(&path, target, None, Some("reply")).unwrap_err().contains("snippet"));
+        change_snippet(&path, Some(&original), Some(edited.clone())).unwrap();
+        assert!(change_snippet(&path, Some(&original), None).unwrap_err().contains("changed"));
+        let removed = change_snippet(&path, Some(&edited), None).unwrap();
+        assert!(removed.snippets.is_empty());
+        assert_eq!(removed.links, [link]);
     }
 }

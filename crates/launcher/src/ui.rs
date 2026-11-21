@@ -2,7 +2,7 @@
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
 mod alias_editor;
-mod link_editor;
+mod saved_editor;
 mod settings;
 mod shortcut_settings;
 mod views;
@@ -209,7 +209,7 @@ pub struct Launcher {
     favorites: Favorites,
     saved: saved::Store,
     alias_editor: Option<alias_editor::Editor>,
-    link_editor: Option<link_editor::Editor>,
+    saved_editor: Option<saved_editor::Editor>,
     edit_generation: u64,
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
@@ -266,7 +266,7 @@ pub enum Message {
     Output(output::Event),
     ApplicationOpened { id: String, result: Result<(), String> },
     LinkOpened(Result<(), RunError>),
-    LinkEditor { generation: u64, event: link_editor::Event },
+    SavedEditor { generation: u64, event: saved_editor::Event },
     AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
     Query(String),
@@ -399,7 +399,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         favorites,
         saved: saved::Store::load(&saved::Store::path(&settings_path)),
         alias_editor: None,
-        link_editor: None,
+        saved_editor: None,
         edit_generation: 0,
         opening: None,
         launch_task: None,
@@ -609,7 +609,7 @@ impl Launcher {
             }
             items
         };
-        self.merge_links();
+        self.merge_saved_entries();
         self.merge_alias();
         self.sync_result_icons();
         let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
@@ -640,6 +640,7 @@ impl Launcher {
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                     Target::Command(_) => &["preferences-system", "applications-system"],
                     Target::Link(..) => &["insert-link"],
+                    Target::Snippet(_) => &["text-x-generic"],
                     Target::UnavailableAlias(_) => &["dialog-information"],
                 };
                 icons.get(&item.icon, fallbacks)
@@ -706,7 +707,13 @@ impl Launcher {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
             (Action::OpenCommand, Target::Command(command)) => self.open_builtin(*command),
             (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
-            (Action::EditLink, Target::Link(link, _)) => self.open_link_editor(Some(link.clone())),
+            (Action::EditLink, Target::Link(link, _)) => {
+                self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
+            }
+            (Action::EditSnippet, Target::Snippet(snippet)) => {
+                self.open_saved_editor(saved_editor::Kind::Snippet, Some(saved_editor::Entry::Snippet(snippet.clone())))
+            }
+            (Action::CopySnippet, Target::Snippet(snippet)) => self.copy(snippet.body.to_string(), "snippet"),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
@@ -1014,7 +1021,7 @@ impl Launcher {
     }
 
     fn saved_editor_open(&self) -> bool {
-        self.link_editor.is_some() || self.alias_editor.is_some()
+        self.saved_editor.is_some() || self.alias_editor.is_some()
     }
 
     fn preview_visible(&self) -> bool {
@@ -1315,8 +1322,8 @@ fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
         s.update_shortcut_settings(message)
     } else if s.alias_editor.is_some() {
         s.update_alias_editor(message)
-    } else if s.link_editor.is_some() {
-        s.update_link_editor(message)
+    } else if s.saved_editor.is_some() {
+        s.update_saved_editor(message)
     } else if s.appearance.is_some() {
         update_appearance(s, message)
     } else {
@@ -1847,7 +1854,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         s.input_epoch,
         s.input_focus(),
         s.input_context(),
-        s.link_editor.as_ref().and_then(link_editor::Editor::focus_cycle),
+        s.saved_editor.as_ref().and_then(saved_editor::Editor::focus_cycle),
         s.shortcut_routing(),
     )
 }

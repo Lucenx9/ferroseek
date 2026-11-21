@@ -67,20 +67,21 @@ fn settle_widgets(s: &mut Launcher, cache: &mut iced_runtime::user_interface::Ca
     }
 }
 
+fn named(key: keyboard::key::Named) -> Event {
+    Event::Keyboard(keyboard::Event::KeyPressed {
+        key: Key::Named(key),
+        modified_key: Key::Named(key),
+        physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+        location: keyboard::Location::Standard,
+        modifiers: Modifiers::empty(),
+        text: None,
+        repeat: false,
+    })
+}
+
 #[test]
 fn immediate_link_editor_input_follows_each_tab_without_focus_tasks() {
-    use iced::keyboard::key::{Named, NativeCode, Physical};
-    let named = |key| {
-        Event::Keyboard(keyboard::Event::KeyPressed {
-            key: Key::Named(key),
-            modified_key: Key::Named(key),
-            physical_key: Physical::Unidentified(NativeCode::Unidentified),
-            location: keyboard::Location::Standard,
-            modifiers: Modifiers::empty(),
-            text: None,
-            repeat: false,
-        })
-    };
+    use iced::keyboard::key::Named;
     let mut s = search_state();
     let _ = update(&mut s, Message::Query("create link".into()));
     let mut cache = iced_runtime::user_interface::Cache::default();
@@ -93,12 +94,67 @@ fn immediate_link_editor_input_follows_each_tab_without_focus_tasks() {
     }
     widget_batch(&mut s, &mut cache, &events, true);
     settle_widgets(&mut s, &mut cache);
-    let draft = s.link_editor.as_ref().unwrap().draft().unwrap();
+    let saved_editor::Entry::Link(draft) = s.saved_editor.as_ref().unwrap().draft().unwrap() else {
+        panic!("expected a link");
+    };
     assert_eq!(
         (draft.name.as_str(), draft.address.as_str(), draft.keyword.as_str()),
         ("Atlas", "https://example.net/?q={query}", "atlas")
     );
     assert_eq!(s.query, "create link");
+}
+
+#[test]
+fn snippet_editor_keeps_enter_and_arrow_keys_in_the_multiline_field() {
+    use iced::keyboard::key::Named;
+
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Query("create snippet".into()));
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    let events = [
+        named(Named::Enter),
+        typed("N", Modifiers::empty()),
+        named(Named::Tab),
+        typed("a", Modifiers::empty()),
+        named(Named::Enter),
+        typed("b", Modifiers::empty()),
+        named(Named::ArrowUp),
+        named(Named::End),
+        typed("c", Modifiers::empty()),
+        named(Named::Tab),
+        typed("q", Modifiers::empty()),
+    ];
+    widget_batch(&mut state, &mut cache, &events, true);
+    settle_widgets(&mut state, &mut cache);
+    let saved_editor::Entry::Snippet(snippet) = state.saved_editor.as_ref().unwrap().draft().unwrap() else {
+        panic!("expected pending snippet");
+    };
+    assert_eq!((snippet.name.as_str(), &*snippet.body, snippet.keyword.as_str()), ("N", "ac\nb", "q"));
+    assert!(state.saved.snippets.is_empty());
+}
+
+#[test]
+fn exact_snippet_keyword_wins_over_a_saved_link_name() {
+    let mut state = search_state();
+    state.saved.links.push(
+        crate::links::Link::new(crate::links::LinkFields {
+            name: "Brief",
+            address: "https://example.net/",
+            keyword: "",
+        })
+        .unwrap(),
+    );
+    state.saved.snippets.push(
+        crate::snippets::Snippet::new(crate::snippets::Fields {
+            name: "Sprint reply",
+            keyword: "brief",
+            body: "Thanks\nSee you tomorrow",
+        })
+        .unwrap(),
+    );
+    let _ = update(&mut state, Message::Query("BRIEF".into()));
+    assert!(matches!(state.selected().map(|item| &item.target), Some(Target::Snippet(_))));
+    assert!(state.items.iter().any(|item| matches!(item.target, Target::Link(..))));
 }
 
 #[test]
@@ -525,7 +581,7 @@ fn search_state() -> Launcher {
         favorites: Favorites::disabled(),
         saved: saved::Store::default(),
         alias_editor: None,
-        link_editor: None,
+        saved_editor: None,
         edit_generation: 0,
         opening: None,
         launch_task: None,
@@ -696,7 +752,7 @@ fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert!(s.items.is_empty());
     let _ = command(&mut s, Command::Back);
-    assert!(s.query.is_empty() && s.items.len() == 7);
+    assert!(s.query.is_empty() && s.items.len() == 8);
     assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
 }
 

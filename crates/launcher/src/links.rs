@@ -77,10 +77,6 @@ impl Link {
             }
         }
     }
-
-    pub(crate) fn has_same_name(&self, other: &Self) -> bool {
-        matcher::fold(&self.name) == matcher::fold(&other.name)
-    }
 }
 
 pub(crate) fn normalize_keyword(input: &str) -> Result<String, String> {
@@ -141,10 +137,10 @@ fn keyword_match(link: &Link, first: &str, has_terms: bool) -> bool {
     )
 }
 
-pub fn matching<'a>(links: &'a [Link], query: &'a str, all: bool) -> Vec<(&'a Link, &'a str)> {
+pub fn matching<'a>(links: &'a [Link], query: &'a str, all: bool) -> Vec<(&'a Link, &'a str, u32)> {
     let query = query.trim();
     if query.is_empty() {
-        return if all { Vec::new() } else { links.iter().map(|link| (link, "")).collect() };
+        return if all { Vec::new() } else { links.iter().map(|link| (link, "", 0)).collect() };
     }
     let split = query.find(char::is_whitespace).unwrap_or(query.len());
     let (first, terms) = query.split_at(split);
@@ -155,7 +151,7 @@ pub fn matching<'a>(links: &'a [Link], query: &'a str, all: bool) -> Vec<(&'a Li
         (true, _) => 600,
         _ => 0,
     };
-    let mut ranked: Vec<_> = links
+    links
         .iter()
         .filter_map(|link| {
             if keyword_match(link, first, !terms.is_empty()) {
@@ -165,9 +161,7 @@ pub fn matching<'a>(links: &'a [Link], query: &'a str, all: bool) -> Vec<(&'a Li
             let score = matcher::score(&tokens, &[(title.as_str(), 100), (&link.keyword, 80)])?;
             (score >= minimum).then_some((link, "", score))
         })
-        .collect();
-    ranked.sort_by_key(|&(_, _, score)| std::cmp::Reverse(score));
-    ranked.into_iter().map(|(link, terms, _)| (link, terms)).collect()
+        .collect()
 }
 
 #[cfg(test)]
@@ -187,7 +181,10 @@ mod tests {
             link.open("caffè &x=1 + %"),
             Ok(Open::Web("https://example.net/find?lang=en&q=caff%C3%A8+%26x%3D1+%2B+%25#results".into()))
         );
-        assert_eq!(matching(std::slice::from_ref(&link), "WEB  hello world", true), [(&link, "hello world")]);
+        assert_eq!(
+            matching(std::slice::from_ref(&link), "WEB  hello world", true),
+            [(&link, "hello world", matcher::EXACT + 1)]
+        );
     }
 
     #[test]

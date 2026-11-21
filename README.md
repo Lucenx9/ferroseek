@@ -29,8 +29,9 @@ been published yet.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
-- Find built-in launcher commands and saved links in **Commands**.
+- Find built-in launcher commands, saved links and reusable text in **Commands**.
 - Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
+- Save and copy multiline text from [snippets](docs/LAUNCHER.md#snippets).
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
@@ -112,7 +113,7 @@ The next priorities are real desktop validation, reliable activation, clear
 appearance settings and latency checks on real desktops. A first
 [virtual KWin diagnostic baseline](docs/BENCHMARKS.md#12-launcher-interaction-latency)
 is available. Window switching, clipboard
-history, web search and a plugin API are not implemented. See the [roadmap](docs/ROADMAP.md).
+history and a plugin API are planned work. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools
 

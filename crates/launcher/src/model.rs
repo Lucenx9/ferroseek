@@ -13,6 +13,7 @@ use iced::keyboard::{
 use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
+use crate::snippets::Snippet;
 use crate::usage::Kind;
 use crate::{calc, links, matcher, saved, uri};
 
@@ -86,6 +87,7 @@ pub enum Target {
     Calc(String),
     Command(Builtin),
     Link(links::Link, String),
+    Snippet(Snippet),
     UnavailableAlias(saved::Alias),
 }
 
@@ -315,6 +317,17 @@ pub fn link_item(link: &links::Link, terms: &str) -> Item {
     }
 }
 
+pub fn snippet_item(snippet: &Snippet) -> Item {
+    Item {
+        target: Target::Snippet(snippet.clone()),
+        section: Section::Commands,
+        title: snippet.name.clone(),
+        subtitle: snippet.subtitle(),
+        icon: "edit-paste".into(),
+        tag: "Snippet",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Launch,
@@ -322,6 +335,8 @@ pub enum Action {
     OpenCommand,
     OpenLink,
     EditLink,
+    CopySnippet,
+    EditSnippet,
     EditAlias,
     OpenWith,
     Details,
@@ -345,6 +360,8 @@ impl Action {
             Action::Launch => "Launch",
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
             Action::EditLink => "Edit link",
+            Action::CopySnippet => "Copy snippet",
+            Action::EditSnippet => "Edit snippet",
             Action::EditAlias => "Edit alias",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
@@ -384,6 +401,7 @@ impl Action {
             Self::CopyResult => &["answer"],
             Self::UseResult => &["continue"],
             Self::EditAlias => &["set alias", "remove alias", "shortcut"],
+            Self::EditSnippet => &["change text", "delete snippet"],
             Self::AddFavorite => &["pin"],
             Self::RemoveFavorite => &["unpin"],
             Self::Launch
@@ -391,6 +409,7 @@ impl Action {
             | Self::OpenCommand
             | Self::OpenLink
             | Self::EditLink
+            | Self::CopySnippet
             | Self::ResetRanking
             | Self::Desktop(_) => &[],
         };
@@ -401,13 +420,19 @@ impl Action {
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            Action::Launch | Action::Open | Action::OpenCommand | Action::OpenLink | Action::CopyResult => "Enter",
+            Action::Launch
+            | Action::Open
+            | Action::OpenCommand
+            | Action::OpenLink
+            | Action::CopyResult
+            | Action::CopySnippet => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::BrowseFolder => "Alt+Right",
             Action::CopyName
             | Action::EditLink
             | Action::EditAlias
+            | Action::EditSnippet
             | Action::OpenWith
             | Action::Details
             | Action::Preview
@@ -431,6 +456,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
+        Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {

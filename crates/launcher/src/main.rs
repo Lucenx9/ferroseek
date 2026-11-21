@@ -28,6 +28,7 @@ mod output;
 mod preview;
 mod saved;
 mod shortcuts;
+mod snippets;
 mod timing;
 mod ui;
 mod uri;

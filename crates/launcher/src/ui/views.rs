@@ -37,7 +37,7 @@ impl Launcher {
     fn secondary_focus(&self) -> Option<iced::widget::Id> {
         if let Some(editor) = &self.alias_editor {
             editor.focus_target()
-        } else if let Some(editor) = &self.link_editor {
+        } else if let Some(editor) = &self.saved_editor {
             editor.focus_target()
         } else if self.folder_settings.is_some() {
             Some(folders::input_id())
@@ -53,8 +53,10 @@ impl Launcher {
             Some(super::alias_editor::HEIGHT)
         } else if self.shortcuts.panel.is_some() {
             Some(super::shortcut_settings::HEIGHT)
+        } else if self.settings_menu_open() {
+            Some(settings::HEIGHT)
         } else {
-            self.settings_menu_open().then_some(settings::HEIGHT)
+            self.saved_editor.as_ref().and_then(super::saved_editor::Editor::dialog_height)
         }
     }
 
@@ -80,7 +82,7 @@ impl Launcher {
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
         if let Some(editor) = &self.alias_editor {
             Some(editor.context())
-        } else if let Some(editor) = &self.link_editor {
+        } else if let Some(editor) = &self.saved_editor {
             Some(editor.context())
         } else {
             self.appearance.as_ref().map(appearance::Panel::content_id)
@@ -94,8 +96,8 @@ impl Launcher {
         if let Some(editor) = &self.alias_editor {
             return Some(editor.view());
         }
-        if let Some(editor) = &self.link_editor {
-            return Some(self.link_editor_view(editor));
+        if let Some(editor) = &self.saved_editor {
+            return Some(self.saved_editor_view(editor));
         }
         None
     }
@@ -286,7 +288,8 @@ impl Launcher {
             Builtin::Layout => self.show_appearance(appearance::Tab::Layout),
             Builtin::SearchFolders => self.show_folders(false),
             Builtin::SearchStatus => self.toggle_search_status(),
-            Builtin::CreateLink => self.open_link_editor(None),
+            Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
+            Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
             Builtin::Shortcuts => self.show_shortcuts(),
         }
     }

@@ -125,8 +125,8 @@ result to the top of the search. An application alias works in **All** and
 Captured in isolated virtual KWin 5.27 at 1× with the tiny-skia renderer and
 synthetic application entries.
 
-An alias belongs to one target and uses the same keyword namespace as saved
-links. The editor keeps your draft when a word is already assigned. Use
+An alias belongs to one target and shares its keyword namespace with saved
+links and snippets. The editor keeps your draft when a word is already assigned. Use
 **Remove** or Ctrl+D to open the removal confirmation, then press Ctrl+D
 to confirm. Escape keeps editing at the confirmation. If an application is
 unavailable, searching for its alias still lets you edit or remove it.
@@ -134,6 +134,29 @@ unavailable, searching for its alias still lets you edit or remove it.
 Aliases are stored beside the main configuration in the owner-only
 `launcher-links` file. They remain available in private sessions and are
 independent of launch history. The launcher supports up to 128 aliases.
+
+## Snippets
+
+![Editing a multiline snippet with a reusable keyword](assets/launcher-snippet-editor.png)
+
+Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
+Search for **Create snippet**. Enter a name, the text to save and an optional
+keyword. Tab and Shift+Tab move between fields. In the text field, Enter adds
+a line break and the arrow keys move the caret. Press Ctrl+S or click **Save**.
+The launcher selects the saved snippet in **Commands**.
+
+Find snippets by name or keyword in **All** or **Commands**. Use Enter or
+**Copy snippet** to put the full text on the clipboard. The launcher stays open
+to serve the clipboard while you paste into the destination application. The
+result displays the keyword and line count. Open **Actions → Edit snippet**
+to read or change the full text. To delete, press Ctrl+D in the editor and
+confirm with Ctrl+D. Escape at the confirmation keeps editing.
+
+FerroSeek keeps up to 128 snippets with unique names and up to 8 KiB of text
+each. Keywords share the same namespace as saved links and aliases. Snippets
+are saved only when you explicitly save them, including in private sessions.
+They use the owner-only `launcher-links` file beside the main configuration.
 
 ## Appearance
 
@@ -360,13 +383,13 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   fallback are not supported. These commands use argument vectors, the app's
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
-  **Appearance**, **Layout**, **Search folders**, **Search status** or
-  **Create link**. Strong
+  **Appearance**, **Layout**, **Search folders**, **Search status**,
+  **Shortcuts**, **Create link** or **Create snippet**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.
   Back returns to the same search. Applying new search folders refreshes the
-  results. [Saved links](#saved-links) also appear in this scope.
+  results. [Saved links](#saved-links) and [snippets](#snippets) also appear here.
 
   ![Built-in commands with keyboard access](assets/launcher-commands.png)
 

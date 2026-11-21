@@ -1130,6 +1130,7 @@ dependencies = [
  "iced_tiny_skia",
  "libc",
  "log",
+ "serde_json",
  "tempfile",
  "url",
  "wayland-client",
