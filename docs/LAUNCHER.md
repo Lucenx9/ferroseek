@@ -25,7 +25,7 @@ ferroseek-launcher            # opens; run it again to close it
 Bind the command to a key yourself, e.g. in KDE System Settings → Keyboard →
 Shortcuts → *Add New* → *Command or Script*. The launcher never registers
 global shortcuts or changes desktop settings. Running it while it is open
-closes the open instance (single instance via the session-bus name
+without a command ID closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
 while Search folders, Appearance or Shortcuts is shown, or after a copy in
@@ -35,6 +35,8 @@ closes it.
 | Option | Effect |
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
+| `--command ID` | open a built-in command directly |
+| `--list-commands` | print built-in command IDs and titles |
 | `--private` | skip launch history, hide clipboard history and pause clipboard recording |
 | `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
@@ -79,6 +81,18 @@ to edit the latest version.
 
 The bindings apply inside the launcher window. Set the global shortcut for
 launching FerroSeek through your [desktop configuration](#build-and-run).
+To bind an individual command, use its ID from `ferroseek-launcher --list-commands`.
+For example, bind the following command to open **Clipboard history** directly.
+
+```sh
+ferroseek-launcher --command clipboard-history
+```
+
+If search is already open, the launcher opens the command in the existing
+window and Back returns to the previous search. Return to search first if
+another view is open. If folder setup is required, the command opens after
+setup is applied. Add `--private` to require a private session. Close an
+existing regular window first.
 
 ## Saved links
 

@@ -5,7 +5,7 @@ use super::{
     Launcher, Message, SearchStatusPanel, Shortcut, actions_id, hint, page_header, search_id, search_status_view,
     settings, status_button_style, update,
 };
-use crate::backend::SearchStatus;
+use crate::backend::{CommandRequest, SearchStatus};
 use crate::commands::Builtin;
 use crate::model::ClickTracker;
 use crate::shortcuts::Routing;
@@ -318,6 +318,22 @@ impl Launcher {
             Builtin::ClipboardHistory => self.show_clipboard_history(),
             Builtin::SwitchWindows => self.show_windows(),
         }
+    }
+
+    pub(super) fn deliver_command(&mut self, request: CommandRequest) -> Task<Message> {
+        let Some(reply) = request.take_reply() else { return Task::none() };
+        if self.opening.is_some() || self.search_suspended() {
+            let _ = reply.send(Err("Return to the launcher search before opening another command."));
+            return Task::none();
+        }
+        let open = self.open_direct_command(request.command);
+        let _ = reply.send(Ok(()));
+        open
+    }
+
+    pub(super) fn open_direct_command(&mut self, command: Builtin) -> Task<Message> {
+        timing::event("direct_command_opened");
+        self.open_builtin(command)
     }
 
     pub(super) fn show_appearance(&mut self, tab: appearance::Tab) -> Task<Message> {

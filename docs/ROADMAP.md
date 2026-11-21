@@ -49,8 +49,13 @@ published release or verified compatibility with every Linux desktop.
   validation remains open.
 - [x] Configurable in-window shortcuts for Actions and settings pages, with
   conflict feedback, restore defaults and recovery controls.
+- [x] Direct built-in command entry points for desktop-assigned shortcuts,
+  preserving the running search and protecting open edits.
 - [ ] Evaluate compositor support for setting global launch and command shortcuts
-  from the application.
+  from the application. In virtual Plasma 5.27, the XDG GlobalShortcuts v1
+  portal created a session, listed its shortcuts and closed it. The test
+  client had no application ID. App identity, binding and activation through
+  the portal remain to be validated.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon

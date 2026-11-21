@@ -69,6 +69,9 @@ Running the command again closes the open launcher. Clicking another window also
 compositor moves keyboard focus away; the [launcher guide](docs/LAUNCHER.md) lists exceptions. The installer does not
 register a global shortcut or change desktop settings.
 
+Use `ferroseek-launcher --list-commands` to find IDs for direct shortcuts such
+as `ferroseek-launcher --command clipboard-history`.
+
 Choose **Settings → Appearance** for System/Light/Dark mode, paired color themes and a
 saved Glass/Solid preference. Glass has a solid fallback;
 `ferroseek-launcher --opaque` forces Solid for the session. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).

@@ -243,7 +243,7 @@ fn query_prefill_is_applied_before_the_first_input_event() {
             apps: search_state().apps,
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
-            initial_query: "report".into(),
+            destination: Destination::Search("report".into()),
             settings_path: config,
         },
         Material::default(),
@@ -617,7 +617,7 @@ fn search_state() -> Launcher {
         folder_settings: None,
         folder_generation: 0,
         settings_path: "/synthetic/config.toml".into(),
-        deferred_query: None,
+        deferred_destination: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
@@ -2852,14 +2852,14 @@ fn captured_input_copy_also_runs_the_copy_path_command() {
 #[test]
 fn first_run_defers_file_queries_until_folders_are_applied() {
     let mut s = search_state();
-    s.deferred_query = Some("report".into());
+    s.deferred_destination = Some(Destination::Search("report".into()));
     let _ = s.show_folders(true);
     let _ = update(&mut s, Message::Query("report".into()));
     assert_eq!(s.generation, 0);
     assert!(s.query.is_empty());
     let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
     assert!(s.folder_settings.is_none());
-    assert!(s.deferred_query.is_none());
+    assert!(s.deferred_destination.is_none());
     assert_eq!(s.query, "report");
     assert_eq!(s.generation, 1);
     assert!(s.files.is_empty());
@@ -2867,6 +2867,45 @@ fn first_run_defers_file_queries_until_folders_are_applied() {
         crate::shortcuts::Routing::Commands(s.shortcuts.bindings).message(&typed(",", Modifiers::CTRL)),
         Some(Message::ShowFolders)
     ));
+}
+
+#[test]
+fn direct_command_waits_for_first_run_setup() {
+    let mut s = search_state();
+    s.deferred_destination = Some(Destination::Command(crate::commands::Builtin::Settings));
+    let _ = s.show_folders(true);
+    assert!(s.settings.is_none());
+    let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
+    assert!(s.folder_settings.is_none());
+    assert!(s.deferred_destination.is_none());
+    assert!(s.settings_menu_open());
+}
+
+#[test]
+fn forwarded_commands_keep_parent_search_and_respect_the_active_view() {
+    use crate::backend::CommandRequest;
+    use crate::commands::Builtin;
+
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("report".into()));
+    let (request, mut reply) = CommandRequest::new(Builtin::Shortcuts);
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert_eq!(reply.try_recv().unwrap(), Some(Ok(())));
+    assert_eq!((s.shortcuts.panel.is_some(), s.query.as_str()), (true, "report"));
+
+    let (request, mut reply) = CommandRequest::new(Builtin::Appearance);
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert!(matches!(reply.try_recv().unwrap(), Some(Err(_))));
+    assert_eq!((s.shortcuts.panel.is_some(), s.appearance.is_none(), s.query.as_str()), (true, true, "report"));
+}
+
+#[test]
+fn a_command_whose_caller_timed_out_never_opens_a_view() {
+    let mut s = search_state();
+    let (request, reply) = crate::backend::CommandRequest::new(crate::commands::Builtin::Settings);
+    drop(reply);
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert!(s.settings.is_none());
 }
 
 #[test]

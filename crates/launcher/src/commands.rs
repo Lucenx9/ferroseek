@@ -17,7 +17,7 @@ pub enum Builtin {
     SwitchWindows,
 }
 
-const ALL: [Builtin; 10] = [
+pub const ALL: [Builtin; 10] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,

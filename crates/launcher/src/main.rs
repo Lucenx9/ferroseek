@@ -38,14 +38,18 @@ mod window_switcher;
 
 use std::process::ExitCode;
 
+use commands::Builtin;
+
 const USAGE: &str = "\
-Usage: ferroseek-launcher [--private] [--opaque] [--query TEXT]
-       ferroseek-launcher --forget-history | --help | --version
+Usage: ferroseek-launcher [--private] [--opaque] [--query TEXT | --command ID]
+       ferroseek-launcher --list-commands | --forget-history | --help | --version
 
 Opens the launcher, or closes it when it is already open. Bind the command
 to a global shortcut in the desktop settings.
 
   --query TEXT       start with TEXT already typed
+  --command ID       open a built-in command directly
+  --list-commands    print built-in command IDs and titles
   --opaque           use a solid surface without background blur
   --private          skip launch history and pause clipboard recording
   --forget-history   delete the launch history and exit
@@ -60,9 +64,24 @@ folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Ctrl+Tab switches
 search scopes, and Esc clears the query and then closes.";
 
 struct LaunchOptions {
-    initial_query: String,
+    destination: Destination,
     private: bool,
     opaque: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Destination {
+    Search(String),
+    Command(Builtin),
+}
+
+impl Destination {
+    fn command(&self) -> Option<Builtin> {
+        match self {
+            Self::Command(command) => Some(*command),
+            Self::Search(_) => None,
+        }
+    }
 }
 
 fn main() -> ExitCode {
@@ -74,16 +93,19 @@ fn main() -> ExitCode {
 }
 
 fn parse_options() -> Result<LaunchOptions, ExitCode> {
-    let mut initial_query = String::new();
+    let mut destination = None;
     let mut private = false;
     let mut opaque = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
-            "-q" | "--query" => match args.next() {
-                Some(q) => initial_query = q,
-                None => return Err(usage_error("--query needs a value")),
-            },
+            "-q" | "--query" | "--command" => destination = Some(parse_destination(&a, args.next(), destination)?),
+            "--list-commands" => {
+                for command in commands::ALL {
+                    println!("{}\t{}", command.id(), command.title());
+                }
+                return Err(ExitCode::SUCCESS);
+            }
             "--private" => private = true,
             "--watch-clipboard" => return Err(clipboard_watcher()),
             "--opaque" => opaque = true,
@@ -110,17 +132,38 @@ fn parse_options() -> Result<LaunchOptions, ExitCode> {
             other => return Err(usage_error(&format!("unknown argument {other:?}"))),
         }
     }
-    Ok(LaunchOptions { initial_query, private, opaque })
+    Ok(LaunchOptions {
+        destination: destination.unwrap_or_else(|| Destination::Search(String::new())),
+        private,
+        opaque,
+    })
 }
 
-fn launch_ui(LaunchOptions { initial_query, private, opaque }: LaunchOptions) -> ExitCode {
+fn parse_destination(
+    flag: &str,
+    value: Option<String>,
+    previous: Option<Destination>,
+) -> Result<Destination, ExitCode> {
+    let value = value.ok_or_else(|| usage_error(&format!("{flag} needs a value")))?;
+    if previous.as_ref().is_some_and(|target| target.command().is_some() != (flag == "--command")) {
+        return Err(usage_error("choose either --query or --command"));
+    }
+    if flag == "--command" {
+        return Builtin::from_id(&value)
+            .map(Destination::Command)
+            .ok_or_else(|| usage_error("unknown built-in command ID. Use --list-commands to list them."));
+    }
+    Ok(Destination::Search(value))
+}
+
+fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> ExitCode {
     // Applications are scanned while the bus connection is set up.
     let scan =
         std::thread::spawn(|| apps::scan(&apps::data_dirs(), &apps::current_locales(), &apps::current_desktops()));
     let activation = activation::Activation::default();
-    let (backend, events) = match backend::start(activation.clone()) {
+    let (backend, events) = match backend::start(activation.clone(), destination.command(), private) {
         Ok(backend::Startup::Primary(b, ev)) => (b, ev),
-        Ok(backend::Startup::Toggled) => return ExitCode::SUCCESS,
+        Ok(backend::Startup::Forwarded) => return ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("ferroseek-launcher: {e}");
             return ExitCode::from(1);
@@ -151,7 +194,7 @@ fn launch_ui(LaunchOptions { initial_query, private, opaque }: LaunchOptions) ->
             apps,
             usage: history,
             favorites,
-            initial_query,
+            destination,
             settings_path,
             private,
         },

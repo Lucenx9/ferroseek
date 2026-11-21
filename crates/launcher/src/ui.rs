@@ -25,6 +25,7 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
+use crate::Destination;
 use crate::activation::Activation;
 use crate::appearance;
 use crate::apps::App;
@@ -88,7 +89,7 @@ pub struct Boot {
     pub apps: Vec<App>,
     pub usage: Usage,
     pub favorites: Favorites,
-    pub initial_query: String,
+    pub destination: Destination,
     pub settings_path: std::path::PathBuf,
 }
 
@@ -254,7 +255,7 @@ pub struct Launcher {
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
-    deferred_query: Option<String>,
+    deferred_destination: Option<Destination>,
     status_generation: u64,
     generation: u64,
     status: Status,
@@ -383,7 +384,7 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, initial_query, settings_path, config, opaque, private } =
+    let Boot { activation, backend, apps, usage, favorites, destination, settings_path, config, opaque, private } =
         data;
     let initial = layout::calculate(config.appearance, None, true, false);
     Launcher {
@@ -443,13 +444,13 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         folder_settings: None,
         folder_generation: 0,
         settings_path,
-        deferred_query: None,
+        deferred_destination: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
     }
-    .start_search(initial_query)
+    .start_destination(destination)
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -531,18 +532,25 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
-    fn start_search(mut self, initial_query: String) -> (Self, Task<Message>) {
+    fn start_destination(mut self, destination: Destination) -> (Self, Task<Message>) {
         self.rebuild(false);
         let prefill = if !self.settings_path.exists() {
-            self.deferred_query = Some(initial_query);
+            self.deferred_destination = Some(destination);
             self.show_folders(true)
-        } else if initial_query.is_empty() {
+        } else if matches!(&destination, Destination::Search(query) if query.is_empty()) {
             Task::none()
         } else {
-            update(&mut self, Message::Query(initial_query))
+            self.open_destination(destination)
         };
         let startup = Task::batch([self.resize(), prefill]);
         (self, startup)
+    }
+
+    fn open_destination(&mut self, destination: Destination) -> Task<Message> {
+        match destination {
+            Destination::Search(query) => update(self, Message::Query(query)),
+            Destination::Command(command) => self.open_direct_command(command),
+        }
     }
 
     fn resume_query(&mut self, query: String) -> Task<Message> {
@@ -1269,10 +1277,12 @@ impl Launcher {
                 if let Some(root) = root {
                     self.restore_folder_search(root);
                 }
-                let query = self.deferred_query.take().unwrap_or_else(|| self.query.clone());
-                let search = update(self, Message::Query(query));
+                let destination =
+                    self.deferred_destination.take().unwrap_or_else(|| Destination::Search(self.query.clone()));
+                let open = self.open_destination(destination);
                 self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
-                Task::batch([task, search, self.resize(), crate::input::focus(search_id())])
+                let focus = self.input_focus().map_or_else(Task::none, crate::input::focus);
+                Task::batch([task, open, self.resize(), focus])
             }
         }
     }
@@ -1281,7 +1291,10 @@ impl Launcher {
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     let previous = s.preview_context();
     let query_boundary = matches!(&message, Message::Query(_));
-    let task = update_inner(s, message);
+    let task = match message {
+        Message::Ui(UiEvent::OpenCommand(request)) => s.deliver_command(request),
+        message => update_inner(s, message),
+    };
     if previous.1 && !s.preview_visible() && s.preview_enabled {
         let loading = s.preview_request.is_some();
         s.cancel_preview(loading);
