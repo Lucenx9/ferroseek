@@ -148,8 +148,10 @@ placement; never impose a new default solely to improve a promotional capture.
 Keep the query on its own full-width row, filters and utility actions beneath,
 results in the main region, and current action hints in the footer. Show the
 result name first and useful distinguishing context second: parent path for
-files, description for applications. Avoid repeated type badges or metadata
-that does not help choose a result.
+files, description for applications. The active search filter uses an accent
+underline and primary text. Type labels distinguish results in All. Applications
+and Files omit their redundant type labels and keep useful distinctions such
+as Folder and Calculator. The preview layout gives the space to names and paths.
 
 Enter performs the selected result's primary action. Ctrl+K reveals its actions;
 Shift+F10, the Menu key, the footer button and context click provide the existing
