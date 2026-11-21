@@ -598,7 +598,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         actions.push(Action::Preview);
     }
     if matches!(t, Target::Command(_)) {
-        actions.push(Action::GlobalShortcut);
+        actions.extend([Action::GlobalShortcut, Action::ResetRanking]);
     }
     actions
 }

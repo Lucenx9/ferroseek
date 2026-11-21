@@ -1055,8 +1055,9 @@ in saved order. **Move favorite up** and **Move favorite down** swap the selecte
 favorite with the previous or next favorite shown in that scope. The moved
 favorite stays selected. Open Actions again and use the opposite move to undo.
 **Applications** and **Files** show favorites of
-their own type. **Commands** lists favorite commands, links and snippets before
-the rest of the catalog. Renaming a link or snippet keeps its favorite.
+their own type. **Commands** lists favorite commands, links and snippets first,
+then recently used built-in commands and the rest of the catalog. Renaming a
+link or snippet keeps its favorite.
 After deleting a saved item, a new entry with the same name has its own identity.
 Unavailable favorites use no suggestion slots. Favorites do not change the
 ranking of a typed query.
@@ -1085,12 +1086,16 @@ every 14 days. It is used only to order results:
 - Updates are a locked read-modify-write, so several instances and
   `--forget-history` do not overwrite each other.
 
-Use **Reset ranking** in an application or file's action panel to remove that
-item's overall and query-specific history. Other items keep their history, and
-the results update immediately. The application or file remains searchable;
-opening it again starts a new history. In a `--private` session, reset changes
-only the session's in-memory history. A failed reset is shown in the launcher;
-if another instance is updating history, retry after it finishes.
+Opening a built-in command from search or a desktop shortcut counts toward
+the suggestions in an empty **All** or **Commands** search. This history stores
+the command ID, a usage weight and the time of last use. Typed search uses
+the usual match order.
+
+Use **Reset ranking** in an application, file or built-in command's action panel
+to remove its history. The launcher updates results immediately and keeps the
+item searchable. Opening it again starts a new history. In a `--private`
+session, reset changes only the session's in-memory history. If another
+instance is updating history, retry after it finishes.
 
 ## Design
 

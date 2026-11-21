@@ -731,7 +731,7 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     assert_eq!(s.selected().unwrap().target, target);
     assert_eq!(
         s.panel.as_ref().unwrap().actions,
-        [Action::OpenCommand, Action::EditAlias, Action::AddFavorite, Action::GlobalShortcut]
+        [Action::OpenCommand, Action::EditAlias, Action::AddFavorite, Action::GlobalShortcut, Action::ResetRanking]
     );
     let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
     assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
@@ -742,6 +742,48 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert!(s.appearance.is_none());
     assert_eq!((s.query.as_str(), s.generation, &s.selected().unwrap().target), ("window width", generation, &target));
+}
+
+#[test]
+fn opening_a_builtin_promotes_it_after_favorites_in_empty_searches() {
+    use crate::commands::Builtin;
+    use crate::favorites::Kind as FavoriteKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("launcher-usage");
+    let mut state = search_state();
+    state.usage = Usage::load(Some(history.clone()));
+    state.favorites.set(FavoriteKind::Command, Builtin::Settings.id(), true).unwrap();
+
+    let target = Target::Command(Builtin::CreateScript);
+    let _ = update(&mut state, Message::Query("create local command".into()));
+    assert_eq!(state.selected().unwrap().target, target);
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.query, "create local command");
+
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!(state.items[1].target, target);
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+    assert_eq!(state.items[1].target, target);
+    assert_eq!(state.items.iter().filter(|item| item.target == target).count(), 1);
+
+    let saved = std::fs::read_to_string(&history).unwrap();
+    assert!(saved.ends_with("\tcreate-script\n"));
+    assert!(!saved.contains("create local command"));
+
+    state.usage = Usage::load(Some(history.clone()));
+    state.rebuild(false);
+    assert_eq!(state.items[1].target, target);
+    let _ = command(&mut state, Command::Down);
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("reset ranking".into()));
+    let _ = command(&mut state, Command::Activate);
+    assert_eq!(state.selected().unwrap().target, target);
+    assert_eq!(state.items[1].target, Target::Command(Builtin::Appearance));
+
+    assert!(state.favorites.contains(FavoriteKind::Command, Builtin::Settings.id()));
+    assert!(std::fs::read_to_string(history).unwrap().is_empty());
 }
 
 #[test]

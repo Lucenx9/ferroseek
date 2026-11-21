@@ -635,15 +635,13 @@ impl Launcher {
 
     fn home_results(&self) -> Vec<Item> {
         let catalog = model::Catalog { apps: &self.apps, saved: &self.saved };
-        if self.scope == Scope::Commands {
-            return model::home_items(catalog, &[], self.favorites.items(), self.scope, usize::MAX);
-        }
+        let limit = if self.scope == Scope::Commands { usize::MAX } else { VISIBLE_ROWS };
         model::home_items(
             catalog,
             &self.usage.recent(usage::now(), usize::MAX),
             self.favorites.items(),
             self.scope,
-            VISIBLE_ROWS,
+            limit,
         )
     }
 
@@ -907,6 +905,7 @@ impl Launcher {
         let (kind, key) = match target {
             Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
             Target::File(f) => (Kind::File, f.id.as_str()),
+            Target::Command(command) => (Kind::Command, command.id()),
             _ => return Task::none(),
         };
         self.panel = None;
@@ -1956,11 +1955,14 @@ fn search_placeholder(s: &Launcher) -> &'static str {
     if s.search_folder.is_some() {
         return "Search this folder and subfolders…";
     }
-    match s.scope {
-        Scope::All => "Search apps, files and commands…",
-        Scope::Applications => "Search applications…",
-        Scope::Files => "Search indexed files…",
-        Scope::Commands => "Search commands…",
+    match (s.scope, s.window_width < NARROW_SEARCH_WIDTH) {
+        (Scope::All, true) => "Search…",
+        (Scope::Applications, true) => "Search apps…",
+        (Scope::Files, true) => "Search files…",
+        (Scope::All, false) => "Search apps, files and commands…",
+        (Scope::Applications, false) => "Search applications…",
+        (Scope::Files, false) => "Search indexed files…",
+        (Scope::Commands, _) => "Search commands…",
     }
 }
 

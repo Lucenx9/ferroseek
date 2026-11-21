@@ -23,6 +23,7 @@ impl From<usage::Kind> for Kind {
         match kind {
             usage::Kind::App => Self::App,
             usage::Kind::File => Self::File,
+            usage::Kind::Command => Self::Command,
         }
     }
 }

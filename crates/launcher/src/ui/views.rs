@@ -9,6 +9,7 @@ use crate::backend::{CommandRequest, FileHit, SearchStatus};
 use crate::commands::Builtin;
 use crate::model::{ClickTracker, Item, Scope, Section, Target};
 use crate::shortcuts::Routing;
+use crate::usage;
 use crate::{appearance, details, folders, open_with, preview, timing};
 use iced::alignment::Vertical;
 use iced::widget::{button, column, container, responsive, row, space, text};
@@ -383,7 +384,7 @@ impl Launcher {
         if self.opening.is_some() || self.search_suspended() {
             return Task::none();
         }
-        match command {
+        let open = match command {
             Builtin::Settings => self.toggle_settings(),
             Builtin::Appearance => self.show_appearance(appearance::Tab::Colors),
             Builtin::Layout => self.show_appearance(appearance::Tab::Layout),
@@ -397,7 +398,12 @@ impl Launcher {
             Builtin::GlobalShortcuts => self.show_global_shortcuts(None),
             Builtin::ClipboardHistory => self.show_clipboard_history(),
             Builtin::SwitchWindows => self.show_windows(),
+        };
+        self.usage.record(usage::Kind::Command, command.id(), "", usage::now());
+        if self.query.trim().is_empty() && self.search_folder.is_none() {
+            self.rebuild(true);
         }
+        open
     }
 
     pub(super) fn deliver_command(&mut self, request: CommandRequest) -> Task<Message> {

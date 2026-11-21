@@ -158,6 +158,8 @@ use the same selection and action affordances as other results. All shows
 strong command matches. Commands browses the catalog with an empty search.
 Keep favorite commands, links and snippets ahead of the rest of that catalog and include them
 among the ordered favorites in All. Preserve the ranking of typed queries.
+Opened built-in commands join the empty-query suggestions after favorites.
+Record only the built-in command ID for this purpose.
 A renamed saved item keeps its favorite. Deleting it retires that identity.
 In an empty search, offer actions to move a shown favorite up or down among
 the shown favorites in its scope. Keep it selected after moving it.

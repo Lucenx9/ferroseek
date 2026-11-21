@@ -30,6 +30,7 @@ pub const MAX_BOOST: u32 = 120;
 pub enum Kind {
     App,
     File,
+    Command,
 }
 
 impl Kind {
@@ -37,6 +38,7 @@ impl Kind {
         match self {
             Kind::App => ("app", "qapp"),
             Kind::File => ("file", "qfile"),
+            Kind::Command => ("command", "qcommand"),
         }
     }
 }
@@ -132,14 +134,14 @@ impl Usage {
     /// Records one open of `key` from `query`. With a backing file, the
     /// update is a locked read-modify-write of the file, so several
     /// launchers (or a concurrent `--forget-history`) never overwrite each
-    /// other's changes. Keys are single-line (desktop IDs and
-    /// percent-encoded file URLs); others are ignored. A busy history is
+    /// other's changes. Keys are single-line (desktop IDs, percent-encoded
+    /// file URLs or built-in command IDs). A busy history is
     /// left unchanged so recording after a successful launch cannot block the UI.
     pub fn record(&mut self, kind: Kind, key: &str, query: &str, now: u64) {
         if key.is_empty() || key.contains(['\n', '\r', '\t']) {
             return;
         }
-        let query = normalize_query(query);
+        let query = if kind == Kind::Command { None } else { normalize_query(query) };
         let Some(path) = self.path.clone() else {
             add_use(&mut self.entries, kind, key, query.as_deref(), now);
             return;
@@ -228,7 +230,7 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
     }
 }
 
-/// Lines: `app|file <weight> <last> <key>` for overall use and
+/// Lines: `app|file|command <weight> <last> <key>` for overall use and
 /// `qapp|qfile <weight> <last> <query> <key>` per query, tab-separated.
 /// Unknown or malformed lines are skipped.
 fn read_entries(path: &Path) -> Records {
@@ -250,6 +252,7 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
         let (kind, with_query) = match tag {
             "app" => (Kind::App, false),
             "file" => (Kind::File, false),
+            "command" => (Kind::Command, false),
             "qapp" => (Kind::App, true),
             "qfile" => (Kind::File, true),
             _ => continue,
