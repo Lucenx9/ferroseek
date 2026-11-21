@@ -1259,4 +1259,7 @@ Diagnostics can affect the timing they observe. See
 - Graphical smoke tests use nested `kwin_wayland --virtual`, temp HOME/XDG and
   a private bus with an EMPTY activation dir to exclude user daemons and portals.
 - Launch activation shares iced's Wayland connection; preserve input
-  context, bounded waits and cancellation. See the application activation section above.
+  context, bounded waits and cancellation. Iced reads this connection and the
+  activation worker only dispatches events already routed to its queue, so it
+  cannot drain the socket during surface setup. See the application activation
+  section above.

@@ -2,14 +2,17 @@
 //! Fresh activation context from the same Wayland client as the layer surface.
 //!
 //! Another event queue receives focus/input serials without reading key contents.
+//! Iced remains the sole socket reader on this connection.
 //! A display sync both wakes the worker and orders input before a token request.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::poll_fn;
+use std::pin::pin;
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
-use iced::futures::channel::oneshot;
+use iced::futures::{channel::oneshot, executor::block_on, future::select};
 use wayland_client::backend::WaylandError;
 use wayland_client::protocol::{wl_callback, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum, delegate_noop};
@@ -23,7 +26,7 @@ pub struct Activation(Arc<Mutex<Option<Arc<Client>>>>);
 struct Client {
     connection: Connection,
     queue: QueueHandle<Worker>,
-    alive: Arc<AtomicBool>,
+    stop: oneshot::Sender<()>,
 }
 
 impl Activation {
@@ -31,37 +34,38 @@ impl Activation {
         let mut events = connection.new_event_queue::<Worker>();
         let queue = events.handle();
         connection.display().get_registry(&queue, ());
-        let alive = Arc::new(AtomicBool::new(true));
-        let running = alive.clone();
+        let (stop, stopped) = oneshot::channel();
         let started = std::thread::Builder::new().name("activation".into()).spawn(move || {
             let mut worker = Worker::with_material(material);
             worker.output = output;
-            while !worker.stop && events.blocking_dispatch(&mut worker).is_ok() {}
+            // Reading here can drain the socket while iced is waiting for
+            // readability, leaving its startup events queued without a wake.
+            let dispatch = poll_fn(|cx| {
+                if events.poll_dispatch_pending(cx, &mut worker).is_ready() || !can_flush(events.flush()) {
+                    return Poll::Ready(());
+                }
+                Poll::Pending
+            });
+            let _ = block_on(select(pin!(dispatch), stopped));
             worker.material.disconnect();
             worker.output.disconnect();
-            running.store(false, Ordering::Release);
         });
         if started.is_ok()
             && let Ok(mut client) = self.0.lock()
         {
-            *client = Some(Arc::new(Client { connection, queue, alive }));
+            *client = Some(Arc::new(Client { connection, queue, stop }));
         }
     }
 
     pub async fn token(&self, app_id: String) -> Option<String> {
         let client = self.0.lock().ok()?.clone()?;
-        if !client.alive.load(Ordering::Acquire) {
+        if client.stop.is_canceled() {
             return None;
         }
         let (send, receive) = oneshot::channel();
-        client
-            .connection
-            .display()
-            .sync(&client.queue, Wake::Request { app_id, reply: Arc::new(Mutex::new(Some(send))) });
-        match client.connection.flush() {
-            Ok(()) => {}
-            Err(WaylandError::Io(error)) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => return None,
+        client.connection.display().sync(&client.queue, Request { app_id, reply: Arc::new(Mutex::new(Some(send))) });
+        if !can_flush(client.connection.flush()) {
+            return None;
         }
         // This awaits only a protocol reply, never a zbus future on iced's executor.
         let runtime = zruntime::SharedRuntime::current().ok()?;
@@ -69,16 +73,18 @@ impl Activation {
     }
 }
 
-impl Drop for Client {
-    fn drop(&mut self) {
-        self.connection.display().sync(&self.queue, Wake::Stop);
-        let _ = self.connection.flush();
+fn can_flush(result: Result<(), WaylandError>) -> bool {
+    match result {
+        Ok(()) => true,
+        // Iced's Wayland event source will flush once the socket is writable.
+        Err(WaylandError::Io(error)) => error.kind() == std::io::ErrorKind::WouldBlock,
+        Err(_) => false,
     }
 }
 
-enum Wake {
-    Request { app_id: String, reply: Reply },
-    Stop,
+struct Request {
+    app_id: String,
+    reply: Reply,
 }
 
 struct Seat {
@@ -116,7 +122,6 @@ pub(super) struct Worker {
     seats: HashMap<u32, Seat>,
     context: Option<Context>,
     pending: Vec<xdg_activation_token_v1::XdgActivationTokenV1>,
-    stop: bool,
 }
 
 impl Worker {
@@ -128,7 +133,6 @@ impl Worker {
             seats: HashMap::new(),
             context: None,
             pending: Vec::new(),
-            stop: false,
         }
     }
 }
@@ -294,19 +298,16 @@ impl Dispatch<wl_pointer::WlPointer, u32> for Worker {
     }
 }
 
-impl Dispatch<wl_callback::WlCallback, Wake> for Worker {
+impl Dispatch<wl_callback::WlCallback, Request> for Worker {
     fn event(
         state: &mut Self,
         _: &wl_callback::WlCallback,
         _: wl_callback::Event,
-        wake: &Wake,
+        request: &Request,
         _: &Connection,
         queue: &QueueHandle<Self>,
     ) {
-        let Wake::Request { app_id, reply: send } = wake else {
-            state.stop = true;
-            return;
-        };
+        let Request { app_id, reply: send } = request;
         state.pending.retain(|token| {
             let canceled = token.data::<Reply>().is_some_and(|reply| {
                 reply.lock().map_or(true, |send| send.as_ref().is_none_or(oneshot::Sender::is_canceled))
@@ -374,14 +375,17 @@ pub(crate) mod tests {
     pub(crate) struct Server {
         socket: UnixStream,
         thread: Option<std::thread::JoinHandle<()>>,
+        reader: Option<std::thread::JoinHandle<()>>,
     }
 
     impl Drop for Server {
         fn drop(&mut self) {
             let _ = self.socket.shutdown(Shutdown::Both);
             let result = self.thread.take().unwrap().join();
+            let read_result = self.reader.take().unwrap().join();
             if !std::thread::panicking() {
                 assert!(result.is_ok(), "protocol peer failed");
+                assert!(read_result.is_ok(), "protocol reader failed");
             }
         }
     }
@@ -418,17 +422,8 @@ pub(crate) mod tests {
                     1 => {
                         // get_registry: optionally advertise activation, but no seat
                         if matches!(mode, Mode::NoSeat) {
-                            let mut global = 7_u32.to_ne_bytes().to_vec();
-                            let name = b"xdg_activation_v1\0";
-                            global.extend_from_slice(&(name.len() as u32).to_ne_bytes());
-                            global.extend_from_slice(name);
-                            global.resize(global.len().next_multiple_of(4), 0);
-                            global.extend_from_slice(&1_u32.to_ne_bytes());
                             let registry = u32::from_ne_bytes(body[..4].try_into().unwrap());
-                            let mut message = registry.to_ne_bytes().to_vec();
-                            message.extend_from_slice(&((global.len() as u32 + 8) << 16).to_ne_bytes());
-                            message.extend(global);
-                            if peer.write_all(&message).is_err() {
+                            if peer.write_all(&activation_global(registry)).is_err() {
                                 break;
                             }
                         }
@@ -450,13 +445,56 @@ pub(crate) mod tests {
                 }
             }
         });
+        let connection = Connection::from_socket(client).unwrap();
         let activation = Activation::default();
-        activation.attach(
-            Connection::from_socket(client).unwrap(),
-            crate::material::Material::default(),
-            crate::output::Observer::default(),
-        );
-        (activation, Server { socket, thread: Some(thread) }, seen)
+        activation.attach(connection.clone(), crate::material::Material::default(), crate::output::Observer::default());
+        let reader = std::thread::spawn(move || read_display(connection));
+        (activation, Server { socket, thread: Some(thread), reader: Some(reader) }, seen)
+    }
+
+    // Read the test connection on behalf of iced.
+    fn read_display(connection: Connection) {
+        let mut events = connection.new_event_queue();
+        let mut worker = Worker::default();
+        while events.blocking_dispatch(&mut worker).is_ok() {}
+    }
+
+    fn activation_global(registry: u32) -> Vec<u8> {
+        let name = b"xdg_activation_v1\0";
+        let mut global = 7_u32.to_ne_bytes().to_vec();
+        global.extend_from_slice(&(name.len() as u32).to_ne_bytes());
+        global.extend_from_slice(name);
+        global.resize(global.len().next_multiple_of(4), 0);
+        global.extend_from_slice(&1_u32.to_ne_bytes());
+        let mut message = registry.to_ne_bytes().to_vec();
+        message.extend_from_slice(&((global.len() as u32 + 8) << 16).to_ne_bytes());
+        message.extend(global);
+        message
+    }
+
+    #[test]
+    fn activation_queue_waits_for_the_primary_wayland_reader() {
+        let (client, mut peer) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(client).unwrap();
+        let activation = Activation::default();
+        activation.attach(connection.clone(), crate::material::Material::default(), crate::output::Observer::default());
+        connection.flush().unwrap();
+
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let mut registry_request = [0; 12];
+        peer.read_exact(&mut registry_request).unwrap();
+        let registry = u32::from_ne_bytes(registry_request[8..].try_into().unwrap());
+        peer.write_all(&activation_global(registry)).unwrap();
+
+        let mut bind_header = [0; 8];
+        peer.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let error = peer.read_exact(&mut bind_header).expect_err("activation must leave socket reads to iced");
+        assert!(matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut));
+
+        connection.prepare_read().unwrap().read().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        peer.read_exact(&mut bind_header).expect("activation binds after iced reads the registry event");
+        assert_eq!(u32::from_ne_bytes(bind_header[..4].try_into().unwrap()), registry);
     }
 
     fn request(activation: &Activation) -> Option<String> {
