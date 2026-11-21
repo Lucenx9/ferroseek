@@ -168,7 +168,10 @@ In an empty search, offer actions to move a shown favorite up or down among
 the shown favorites in its scope. Keep it selected after moving it.
 The active search filter uses an accent underline and primary text. On narrow
 windows, shorten Applications to Apps and tighten the gaps so all filters and
-Settings remain on the navigation row. Type labels distinguish results in All.
+Settings remain on the navigation row. In the footer, hide the action button
+keycaps on narrow windows and let status text wrap within the footer height.
+Keep the button labels and keyboard bindings available.
+Type labels distinguish results in All.
 On narrow windows, give names priority over generic type labels. Dedicated scopes
 omit labels that repeat the scope. Keep the Folder distinction when the preview
 is closed. The preview layout prioritizes names and paths.

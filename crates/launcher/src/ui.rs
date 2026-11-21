@@ -69,7 +69,7 @@ const ACTION_ROW_HEIGHT: f32 = 34.0;
 const ACTION_ROW_GAP: f32 = 2.0;
 /// Below this, file search is not run (the daemon needs two characters).
 const MIN_FILE_QUERY: usize = 2;
-const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
+const UNCONFIRMED_OPEN: &str = "Open unconfirmed. Check the desktop, then reopen FerroSeek.";
 
 #[cfg(test)]
 use crate::layout::compact_height;
@@ -2460,7 +2460,7 @@ fn search_status_text(s: &Launcher) -> (String, palette::Role) {
     let listing_folder = s.search_folder.is_some() && query.is_empty();
     let calculating = s.search_folder.is_none() && calc::is_explicit(query);
     match &s.status {
-        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
+        Status::Error(e) => (e.clone(), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching if listing_folder => ("Loading folder…".into(), palette::DIM),
         Status::Searching => ("Searching…".into(), palette::DIM),
@@ -2491,37 +2491,42 @@ fn result_count_text(s: &Launcher) -> String {
 }
 
 fn footer(s: &Launcher) -> Element<'_, Message> {
-    if s.unconfirmed_open {
-        return container(text(UNCONFIRMED_OPEN).size(12).style(move |theme: &iced::Theme| {
-            iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
-        }))
-        .width(Length::Fill)
-        .height(FOOTER_HEIGHT)
-        .padding([0, 16])
+    let compact = s.window_width < NARROW_SEARCH_WIDTH;
+    let (message, color) =
+        if s.unconfirmed_open { (UNCONFIRMED_OPEN.to_owned(), palette::ERROR) } else { search_status_text(s) };
+    let mut controls = row![footer_status(message, color)]
+        .spacing(if compact { 8 } else { 12 })
         .align_y(Vertical::Center)
-        .style(footer_style)
-        .into();
+        .padding(if compact { padding::left(8).right(8) } else { padding::left(16).right(10) });
+    if !s.unconfirmed_open {
+        controls = controls.push(search_hints(s, compact));
     }
-    let (msg, color) = search_status_text(s);
-    let status = widget::responsive(move |size| {
-        text(label_for_width(&msg, size.width, 12.0, false))
-            .size(12)
-            .style(move |theme: &Theme| text::Style { color: Some(color.resolve(theme)) })
-            .wrapping(text::Wrapping::None)
-            .into()
-    })
-    .height(Length::Shrink);
-    container(row![status, search_hints(s)].spacing(12).align_y(Vertical::Center).padding(padding::left(16).right(10)))
-        .height(FOOTER_HEIGHT)
-        .align_y(Vertical::Center)
-        .style(footer_style)
-        .into()
+    container(controls).height(FOOTER_HEIGHT).align_y(Vertical::Center).style(footer_style).into()
 }
 
-fn search_hints(s: &Launcher) -> Element<'_, Message> {
+fn footer_status(message: String, color: palette::Role) -> Element<'static, Message> {
+    widget::responsive(move |size| {
+        let wrapping = text::Wrapping::WordOrGlyph;
+        let available = iced::Size::new(size.width, f32::INFINITY);
+        let label = fit_label(&message, false, |candidate| {
+            let measured = measure_text(candidate, 12.0, available, wrapping);
+            measured.width <= size.width && measured.height <= size.height
+        });
+        text(label)
+            .size(12)
+            .style(move |theme: &Theme| text::Style { color: Some(color.resolve(theme)) })
+            .wrapping(wrapping)
+            .into()
+    })
+    .height(Length::Shrink)
+    .into()
+}
+
+fn search_hints(s: &Launcher, compact: bool) -> Element<'_, Message> {
     let shortcut = s.shortcuts.bindings.get(Shortcut::Actions).to_string();
     if s.panel.is_some() {
-        return footer_button(primary_hint(shortcut, "Close actions"), Message::Cmd(Command::ToggleActions));
+        let close = search_hint(shortcut, "Close actions", compact, true);
+        return footer_button(close, Message::Cmd(Command::ToggleActions));
     }
     let Some(item) = s.selected() else {
         // Same inset as the Actions button, so the last hint keeps the right edge.
@@ -2534,10 +2539,9 @@ fn search_hints(s: &Launcher) -> Element<'_, Message> {
         return container(hint("Esc", label)).padding([3, 6]).into();
     };
     let acts = s.actions_for(&item.target);
+    let primary = search_hint("Enter", acts[0].label(), compact, true);
     let mut hints =
-        row![footer_button(primary_hint("Enter", acts[0].label()), Message::ResultPrimary(item.target.clone()),)]
-            .spacing(8)
-            .align_y(Vertical::Center);
+        row![footer_button(primary, Message::ResultPrimary(item.target.clone()))].spacing(8).align_y(Vertical::Center);
     if s.window_width >= 640 {
         if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
@@ -2546,7 +2550,23 @@ fn search_hints(s: &Launcher) -> Element<'_, Message> {
             hints = hints.push(hint("Alt+→", "Browse here"));
         }
     }
-    hints.push(footer_button(hint(shortcut, "Actions"), Message::Cmd(Command::ToggleActions))).into()
+    let actions = search_hint(shortcut, "Actions", compact, false);
+    hints.push(footer_button(actions, Message::Cmd(Command::ToggleActions))).into()
+}
+
+fn search_hint<'a>(
+    shortcut: impl text::IntoFragment<'a>,
+    label: &'static str,
+    compact: bool,
+    primary: bool,
+) -> Element<'a, Message> {
+    if compact {
+        text(label).size(12).into()
+    } else if primary {
+        primary_hint(shortcut, label)
+    } else {
+        hint(shortcut, label)
+    }
 }
 
 fn footer_button(content: Element<'_, Message>, message: Message) -> Element<'_, Message> {
@@ -2778,26 +2798,33 @@ fn action_list<'a>(
 }
 
 fn text_width(content: &str, size: f32) -> f32 {
+    measure_text(content, size, iced::Size::INFINITE, text::Wrapping::None).width
+}
+
+fn measure_text(content: &str, size: f32, bounds: iced::Size, wrapping: text::Wrapping) -> iced::Size {
     use iced::advanced::text::{Paragraph, Renderer};
 
     // Measure the same default font and shaping as the labels; character counts
     // cannot predict wide glyphs or the space left by icons, tags and the sidebar.
     <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
         content,
-        bounds: iced::Size::INFINITE,
+        bounds,
         size: iced::Pixels(size),
         line_height: Default::default(),
         font: iced::Font::DEFAULT,
         align_x: Default::default(),
         align_y: Vertical::Top,
         shaping: Default::default(),
-        wrapping: text::Wrapping::None,
+        wrapping,
     })
-    .min_width()
+    .min_bounds()
 }
 
 pub(crate) fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
-    let fits = |content: &str| text_width(content, size) <= width;
+    fit_label(value, middle, |content| text_width(content, size) <= width)
+}
+
+fn fit_label(value: &str, middle: bool, fits: impl Fn(&str) -> bool) -> String {
     if fits(value) {
         return value.to_string();
     }

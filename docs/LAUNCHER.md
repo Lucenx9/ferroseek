@@ -511,6 +511,9 @@ to run the selected action. Click **Clear filter** or **Close actions** in the
 panel footer to take the current Escape step. With no matches, the panel
 suggests another action name and omits **Run**.
 
+On narrow windows, the search footer gives the status room to wrap and shows
+action buttons without their keycaps. The keyboard bindings still work.
+
 ![Searchable actions showing the selected file's parent folder](assets/launcher-actions.png)
 
 Captured at 1× in isolated Labwc with tiny-skia.

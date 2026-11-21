@@ -4169,6 +4169,40 @@ fn narrow_file_details_footer_keeps_copy_feedback_and_actions_visible() {
 }
 
 #[test]
+fn narrow_search_footer_keeps_feedback_and_both_actions_readable() {
+    let mut state = search_state();
+    state.output_bounds = Some((320, 332));
+    let _ = update(&mut state, Message::Query(String::new()));
+    let _ = state.resize();
+    let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+    for (label, status) in [
+        ("Moved up", Status::Notice as fn(String) -> Status),
+        ("Added to favorites for this session", Status::Notice),
+        ("Favorites are busy. Try again.", Status::Error),
+    ] {
+        state.status = status(label.into());
+        let labels = rendered_labels(view_content(&state), size).text;
+        let mut end = PAD;
+        for name in [label, "Launch", "Actions"] {
+            let (_, bounds) = labels
+                .iter()
+                .find(|(value, _)| value == name)
+                .unwrap_or_else(|| panic!("missing complete footer text {name:?}"));
+            assert!(bounds.x >= end && bounds.x + bounds.width <= size.width - PAD, "{name}: {bounds:?}");
+            assert!(
+                bounds.y >= size.height - PAD - FOOTER_HEIGHT && bounds.y + bounds.height <= size.height - PAD,
+                "{name}: {bounds:?}"
+            );
+            end = bounds.x + bounds.width;
+        }
+    }
+    state.unconfirmed_open = true;
+    let labels = rendered_labels(view_content(&state), size).text;
+    assert!(labels.iter().any(|(value, _)| value == UNCONFIRMED_OPEN));
+    assert!(!labels.iter().any(|(value, _)| value == "Launch" || value == "Actions"));
+}
+
+#[test]
 fn folder_settings_only_repeat_locations_that_are_actually_shortened() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("config.toml");
