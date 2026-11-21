@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A short-lived catalog of switchable Wayland windows.
 
+pub mod client;
+pub mod ipc;
 mod paste;
 mod plasma;
 mod plasma_keys;
@@ -63,7 +65,7 @@ impl Window {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct Entry {
     pub id: u64,
     pub title: String,
@@ -73,7 +75,7 @@ pub struct Entry {
     pub activated: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum Action {
     Switch,
     Maximize(bool),
@@ -110,10 +112,10 @@ impl Action {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum Update {
     Windows(Vec<Entry>),
-    Unavailable(&'static str),
+    Unavailable(String),
 }
 
 pub struct Session {
@@ -138,7 +140,7 @@ impl Session {
                 let mut catalog =
                     Catalog { observe_paste_target: matches!(observer, Observer::Paste(_)), ..Catalog::default() };
                 if let (Err(message), Observer::Windows(send)) = (catalog.follow(&mut events, &observer), &observer) {
-                    let _ = send.unbounded_send(Update::Unavailable(message));
+                    let _ = send.unbounded_send(Update::Unavailable(message.into()));
                 }
                 catalog.stop();
                 let _ = events.flush();
@@ -155,7 +157,7 @@ impl Session {
             runtime
                 .timeout(Duration::from_secs(2), receive)
                 .await
-                .map_err(|_| "The desktop did not confirm the request. Check the window and try again.")?
+                .map_err(|_| UNCONFIRMED)?
                 .map_err(|_| DISCONNECTED)?
         }
     }
@@ -173,6 +175,7 @@ impl Drop for Session {
 }
 
 const DISCONNECTED: &str = "Could not read open windows. Go back and reopen Switch windows.";
+const UNCONFIRMED: &str = "The desktop did not confirm the request. Check the window and try again.";
 const CLOSED: &str = "That window closed. Choose another window.";
 type Reply = std::sync::Mutex<Option<oneshot::Sender<Result<(), &'static str>>>>;
 

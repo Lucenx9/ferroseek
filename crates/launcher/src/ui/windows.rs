@@ -13,7 +13,7 @@ use crate::apps::App;
 use crate::icons::{Icon, Icons};
 use crate::layout::{FOOTER_HEIGHT, PAD, ROW_HEIGHT};
 use crate::model::{Command, Cursor, NUMBERED_SLOTS};
-use crate::window_switcher::{Action, Entry, Session, Update};
+use crate::window_switcher::{Action, Entry, Update, client::Client};
 
 const LIST_CHROME: u32 = 172;
 pub(super) const HEIGHT: u32 = LIST_CHROME + ROW_HEIGHT as u32 * 5;
@@ -26,7 +26,7 @@ pub enum Event {
     DoubleClick(u64),
     OpenActions(u64),
     Run(u64, Action),
-    Finished(Result<(), &'static str>),
+    Finished(Result<(), String>),
     Back,
 }
 
@@ -54,11 +54,11 @@ pub(super) struct Panel {
     cursor: Cursor,
     selected_closed: bool,
     press: Option<(u64, bool)>,
-    session: Option<Session>,
+    session: Option<Client>,
     pending: Option<Action>,
     menu: Option<usize>,
     confirmation: Option<&'static str>,
-    error: Option<&'static str>,
+    error: Option<String>,
 }
 
 impl Panel {
@@ -207,10 +207,10 @@ impl Panel {
     }
 
     fn run(&mut self, id: u64, action: Action) -> Task<Event> {
-        let Some(session) = &self.session else { return Task::none() };
         if self.selected() != Some(id) || self.menu.is_some() == (action == Action::Switch) {
             return Task::none();
         }
+        let Some(session) = &mut self.session else { return Task::none() };
         self.pending = Some(action);
         self.error = None;
         self.confirmation = None;
@@ -249,7 +249,7 @@ impl Panel {
         Task::none()
     }
 
-    fn finish(&mut self, result: Result<(), &'static str>) {
+    fn finish(&mut self, result: Result<(), String>) {
         let Some(action) = self.pending.take() else { return };
         match result {
             Ok(()) => self.confirmation = Some(action.confirmation()),
@@ -258,8 +258,8 @@ impl Panel {
     }
 
     fn notice(&self) -> String {
-        if let Some(error) = self.error {
-            return error.into();
+        if let Some(error) = &self.error {
+            return error.clone();
         }
         if let Some(action) = self.pending {
             return if action == Action::Switch {
@@ -483,7 +483,7 @@ impl Launcher {
         self.window_switcher.generation += 1;
         let generation = self.window_switcher.generation;
         let mut panel = Panel::new();
-        let task = match Session::start() {
+        let task = match Client::start() {
             Ok((session, updates)) => {
                 panel.session = Some(session);
                 Task::run(updates, move |update| Message::Windows { generation, event: Event::Update(update) })

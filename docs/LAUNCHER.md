@@ -324,12 +324,18 @@ window titles in memory while the command is open.
 Switching requires a Wayland session with a single input seat and either
 [wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml)
 or [Plasma window management](https://github.com/KDE/plasma-wayland-protocols/blob/master/src/protocols/plasma-window-management.xml).
-FerroSeek uses the interfaces the compositor advertises. KWin 6.8 exposes
-Plasma window management to native apps outside the sandbox. The command
-reports unavailability on the virtual Plasma 5.27 setup with default permissions.
+FerroSeek uses the interfaces the compositor advertises. The launcher installer
+registers a small helper for **Switch windows** on Plasma. On KWin 5.27, which
+restricts window management, the helper receives that permission through its own
+desktop entry. The command starts the helper when opened and closes it when
+you leave. Direct paste still needs the separate input support described under
+[Clipboard history](#clipboard-history).
+
 The compositor manages focus and window state and may decline a request.
 Keyboard, pointer and live updates were tested at 1× on virtual Labwc 0.7.1
-and KWin 6.8.3 with tiny-skia and synthetic application windows.
+and KWin 6.8.3 with tiny-skia and synthetic application windows. An isolated
+KWin 5.27.11 installation also verified keyboard switching, maximize and restore,
+live title changes and focus in the selected window after switching.
 
 ## Appearance
 

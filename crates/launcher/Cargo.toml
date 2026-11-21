@@ -1,5 +1,6 @@
 [package]
 name = "ferroseek-launcher"
+default-run = "ferroseek-launcher"
 description = "FerroSeek Linux launcher for applications, files, commands and calculations on Wayland"
 keywords = ["launcher", "linux", "wayland", "file-search"]
 categories = ["gui"]

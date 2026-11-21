@@ -131,8 +131,8 @@ Complete desktop validation before expanding the platform.
 - [x] Maximize, restore and minimize selected windows with compositor feedback.
 - [x] Switch and manage windows on Plasma sessions that expose its window
   management interface, verified on virtual KWin 6.8.3.
-- [ ] Evaluate window switching on older Plasma releases where the interface
-  is restricted.
+- [x] Register a dedicated window-management helper for restricted Plasma
+  sessions, with the installed command verified on virtual KWin 5.27.11.
 - [ ] Evaluate user-defined script commands before designing workflows or a
   general extension API; keep execution explicit and separate from search.
 

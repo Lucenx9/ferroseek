@@ -10,11 +10,9 @@ mod appearance;
 mod apps;
 mod backend;
 mod calc;
-mod clipboard_history;
 mod commands;
 mod desktop_settings;
 mod details;
-mod favorites;
 mod folders;
 mod global_shortcuts;
 mod icons;
@@ -22,7 +20,6 @@ mod input;
 mod launch;
 mod layout;
 mod links;
-mod matcher;
 mod material;
 mod model;
 mod open_with;
@@ -33,13 +30,11 @@ mod shortcuts;
 mod snippets;
 mod timing;
 mod ui;
-mod uri;
-mod usage;
-mod window_switcher;
 
 use std::process::ExitCode;
 
 use commands::Builtin;
+use ferroseek_launcher::{clipboard_history, favorites, matcher, uri, usage, window_switcher};
 
 const USAGE: &str = "\
 Usage: ferroseek-launcher [--private] [--opaque] [--query TEXT | --command ID]

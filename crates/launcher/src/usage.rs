@@ -277,7 +277,7 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
 
 /// State is read on the UI thread, including during locked updates. Open
 /// without waiting for FIFO writers and validate the descriptor before reading.
-pub(crate) fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
+pub fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path)?;
     if !file.metadata()?.is_file() {
@@ -289,7 +289,7 @@ pub(crate) fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 /// Owner-only file creation: the history names files the user opened.
-pub(crate) fn private_options() -> std::fs::OpenOptions {
+pub fn private_options() -> std::fs::OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
     let mut o = std::fs::OpenOptions::new();
     o.mode(0o600);
@@ -298,7 +298,7 @@ pub(crate) fn private_options() -> std::fs::OpenOptions {
 
 /// Runs `f` holding an exclusive lock on `<path>.lock`, creating the
 /// directory owner-only if needed. Without `wait`, contention returns an error.
-pub(crate) fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+pub fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;

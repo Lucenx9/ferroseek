@@ -73,6 +73,18 @@ exit 0
             assert False, 'cancel must not install'
     env = environment()
     home = Path(env['HOME'])
+    def assert_plasma_helper(registered):
+        helper = home / '.local/bin/ferroseek-plasma-windows'
+        desktop = home / '.local/share/applications/io.github.ferroseek.PlasmaWindows.desktop'
+        assert helper.exists() == desktop.exists() == registered
+        if registered:
+            lines = desktop.read_text().splitlines()
+            assert f'Exec="{helper}"' in lines
+            assert 'NoDisplay=true' in lines
+            assert [line for line in lines if line.startswith('X-KDE-')] == [
+                'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management']
+            assert helper.read_bytes() == (repo / 'target/release/ferroseek-plasma-windows').read_bytes()
+            assert helper.stat().st_mode & 0o777 == 0o755
     def run(*args, expected=0, custom=None, text=''):
         r = subprocess.run([str(repo / 'scripts/install.sh'), '--no-build', *args], env=custom or env,
                            cwd=repo, input=text, capture_output=True, text=True)
@@ -100,16 +112,20 @@ exit 0
     bindir = home / '.local/bin'
     assert (bindir / 'ferroseekd').read_bytes() == (repo / 'target/release/ferroseekd').read_bytes()
     assert not (bindir / 'ferroseek-mcp').exists()
+    assert_plasma_helper(False)
     run('--launcher')
     launcher = bindir / 'ferroseek-launcher'
     desktop = home / '.local/share/applications/io.github.ferroseek.Launcher.desktop'
     shortcut_unit = home / '.config/systemd/user/app-io.github.ferroseek.Launcher.service'
     assert f'Exec="{launcher}"' in desktop.read_text()
+    assert 'X-KDE-Wayland-Interfaces' not in desktop.read_text()
+    assert_plasma_helper(True)
     assert '--global-shortcuts' in shortcut_unit.read_text()
     assert launcher.read_bytes() == (repo / 'target/release/ferroseek-launcher').read_bytes()
     assert launcher.stat().st_mode & 0o777 == 0o755
     run('--core')
     assert launcher.exists()  # Core upgrades retain the installed UI.
+    assert_plasma_helper(True)
     uninstall('--core', expected=1)
     launcher.write_bytes(b'local override')
     uninstall('--launcher', expected=1)
@@ -123,6 +139,7 @@ exit 0
     uninstall('--launcher', '--stop', custom=dict(env, TEST_SHORTCUT_ACTIVE='yes', TEST_SHORTCUT_OWNER='yes'))
     assert 'disable --now app-io.github.ferroseek.Launcher.service' in log.read_text()
     assert not desktop.exists() and not shortcut_unit.exists()
+    assert_plasma_helper(False)
     assert not launcher.exists() and (bindir / 'ferroseekd').exists()
     config = home / '.config/ferroseek/config.toml'
     config.write_text('# preserve custom config\nroots = []\n')
