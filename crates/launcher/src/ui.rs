@@ -58,6 +58,7 @@ pub(crate) use views::back_refresh_header;
 
 #[cfg(test)]
 pub const WIDTH: u32 = 720;
+const NARROW_SEARCH_WIDTH: u32 = 336;
 #[cfg(test)]
 const PREVIEW_WIDTH: u32 = 980;
 const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
@@ -1986,25 +1987,6 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let input =
         stack![input, container(search_icon).height(Length::Fill).align_y(Vertical::Center).padding(padding::left(10))]
             .clip(true);
-    let scopes = Scope::ALL.into_iter().fold(row![].spacing(4), |choices, scope| {
-        let selected = s.scope == scope;
-        choices.push(
-            button(
-                column![
-                    text(scope.to_string()).size(12),
-                    container(space().width(14)).height(2).style(move |theme| container::Style {
-                        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
-                        border: Border { radius: 1.0.into(), ..Default::default() },
-                        ..Default::default()
-                    })
-                ]
-                .spacing(2),
-            )
-            .on_press(Message::Scope(scope))
-            .padding([3, 5])
-            .style(move |theme, status| tab_style(theme, status, selected, None)),
-        )
-    });
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
         let path = folder.path.as_deref().and_then(|path| path.to_str());
@@ -2039,12 +2021,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
-        column![
-            input,
-            row![scopes, space::horizontal(), settings::header_button(s.shortcuts.bindings)].align_y(Vertical::Center)
-        ]
-        .spacing(8)
-        .into()
+        column![input, views::search_navigation(s)].spacing(8).into()
     };
     let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
@@ -2435,12 +2412,8 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    let show_tag = !s.scope.implies_result_type(&item.target) && !s.preview_visible();
-    if show_tag && !matches!(item.section, model::Section::Calculator | model::Section::Fallback) {
-        content =
-            content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(palette::DIM.resolve(theme)),
-            }));
+    if let Some(tag) = views::result_tag(s, item) {
+        content = content.push(tag);
     }
     content = content.push(numbered_slot(slot, selected, s.panel.is_none()));
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(12));

@@ -472,8 +472,9 @@ Search folders and Search status are configurable in [Shortcuts](#shortcuts).
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
 Choose **All**, **Applications**, **Files** or **Commands** below the search
-field to narrow results without rewriting the query. An accent underline marks
-the active filter. Ctrl+Tab cycles forward
+field to narrow results without rewriting the query. **Applications** appears
+as **Apps** on narrow windows. An accent underline marks the active filter.
+Ctrl+Tab cycles forward
 and Ctrl+Shift+Tab cycles backward. The choice lasts for this launcher session.
 Applications and Commands search locally. Files shows indexed files and recent
 file suggestions. Calculator expressions without `=` appear only in All; an explicit

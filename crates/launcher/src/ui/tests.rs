@@ -3614,18 +3614,23 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
 
 #[test]
 fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
-    for width in [320, 608, 640, 720, 880] {
+    for width in [256, 288, 320, 336, 608, 640, 720, 880] {
         let mut state = search_state();
-        let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), None, false);
-        state.placement = Some(layout::Geometry { width, ..geometry });
+        state.output_bounds = Some((width + 32, 800));
+        let _ = state.resize();
+        let _ = update(&mut state, Message::Query("window width".into()));
         let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
         let input = labels.inputs[0];
         assert_eq!(input.width, width as f32 - 32.0);
-        for name in ["All", "Applications", "Files", "Commands", "Settings"] {
+        let applications = if width < 336 { "Apps" } else { "Applications" };
+        assert!(labels.text.iter().any(|(name, _)| name == "Layout"), "result name must fit at {width}px");
+        for name in ["All", applications, "Files", "Commands", "Settings"] {
             let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(bounds.y >= input.y + input.height, "{name} overlaps the query at {width}px");
             assert!(
-                bounds.width >= 12.0 && bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD,
+                bounds.width + 0.5 >= text_width(name, 12.0)
+                    && bounds.x >= PAD
+                    && bounds.x + bounds.width <= width as f32 - PAD,
                 "{width}px {name}: {bounds:?}"
             );
             assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT);
@@ -3682,7 +3687,7 @@ fn settings_navigation_keeps_search_and_ignores_stale_search_input() {
 #[test]
 fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
     let mut state = search_state();
-    state.output_bounds = Some((352, 800));
+    state.output_bounds = Some((320, 800));
     let _ = state.resize();
     let click = |state: &mut Launcher, label: &str| {
         let width = state.window_width as f32;
@@ -3699,6 +3704,8 @@ fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
             let _ = update(state, message);
         }
     };
+    click(&mut state, "Apps");
+    assert_eq!(state.scope, Scope::Applications);
     click(&mut state, "Settings");
     for (label, entry) in [
         ("Appearance", settings::Entry::Appearance),
@@ -3853,18 +3860,22 @@ fn dedicated_scopes_hide_only_their_redundant_result_type() {
     state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &files);
     state.items.push(model::calc_item("= 40 + 2").unwrap());
 
-    for (scope, tag, visible) in [
-        (Scope::All, "Application", true),
-        (Scope::All, "File", true),
-        (Scope::Applications, "Application", false),
-        (Scope::Files, "File", false),
-        (Scope::Files, "Folder", true),
-        (Scope::Applications, "Calculator", false),
-        (Scope::Files, "Calculator", false),
+    for (width, scope, tag, visible) in [
+        (640, Scope::All, "Application", true),
+        (640, Scope::All, "File", true),
+        (640, Scope::Applications, "Application", false),
+        (640, Scope::Files, "File", false),
+        (640, Scope::Files, "Folder", true),
+        (640, Scope::Applications, "Calculator", false),
+        (640, Scope::Files, "Calculator", false),
+        (288, Scope::All, "Application", false),
+        (288, Scope::All, "File", false),
+        (288, Scope::Files, "Folder", true),
     ] {
+        state.window_width = width;
         state.scope = scope;
         let index = state.items.iter().position(|item| item.tag == tag).unwrap();
-        let labels = rendered_labels(result_row(&state, index, 0), iced::Size::new(640.0, ROW_HEIGHT));
+        let labels = rendered_labels(result_row(&state, index, 0), iced::Size::new(width as f32, ROW_HEIGHT));
         assert_eq!(labels.text.iter().any(|(value, _)| value == tag), visible, "{scope}: {tag}");
     }
 }

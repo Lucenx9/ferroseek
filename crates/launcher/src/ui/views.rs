@@ -1,18 +1,58 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Secondary-view presentation, transitions and replies.
+//! Launcher navigation and secondary views.
 
 use super::{
-    Launcher, Message, SearchStatusPanel, Shortcut, actions_id, hint, page_header, search_id, search_status_view,
-    settings, status_button_style, update,
+    Launcher, Message, NARROW_SEARCH_WIDTH, SearchStatusPanel, Shortcut, actions_id, hint, page_header, palette,
+    search_id, search_status_view, settings, status_button_style, tab_style, update,
 };
-use crate::backend::{CommandRequest, SearchStatus};
+use crate::backend::{CommandRequest, FileHit, SearchStatus};
 use crate::commands::Builtin;
-use crate::model::{ClickTracker, Target};
+use crate::model::{ClickTracker, Item, Scope, Section, Target};
 use crate::shortcuts::Routing;
 use crate::{appearance, details, folders, open_with, preview, timing};
 use iced::alignment::Vertical;
-use iced::widget::{button, container, responsive, row, text};
-use iced::{Element, Length, Task};
+use iced::widget::{button, column, container, responsive, row, space, text};
+use iced::{Background, Border, Element, Length, Task, Theme};
+
+pub(super) fn search_navigation(launcher: &Launcher) -> Element<'static, Message> {
+    let compact = launcher.window_width < NARROW_SEARCH_WIDTH;
+    let scopes = Scope::ALL.into_iter().fold(row![].spacing(if compact { 1 } else { 4 }), |choices, scope| {
+        let selected = launcher.scope == scope;
+        let label = if compact && scope == Scope::Applications { "Apps".into() } else { scope.to_string() };
+        choices.push(
+            button(
+                column![
+                    text(label).size(12).wrapping(text::Wrapping::None),
+                    container(space().width(14)).height(2).style(move |theme| container::Style {
+                        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
+                        border: Border { radius: 1.0.into(), ..Default::default() },
+                        ..Default::default()
+                    })
+                ]
+                .spacing(2),
+            )
+            .on_press(Message::Scope(scope))
+            .padding([3, if compact { 3 } else { 5 }])
+            .style(move |theme, status| tab_style(theme, status, selected, None)),
+        )
+    });
+    row![scopes, space::horizontal(), settings::header_button(launcher.shortcuts.bindings, compact)]
+        .align_y(Vertical::Center)
+        .into()
+}
+
+pub(super) fn result_tag(launcher: &Launcher, item: &Item) -> Option<Element<'static, Message>> {
+    if launcher.preview_visible() || launcher.scope.implies_result_type(&item.target) {
+        return None;
+    }
+    if matches!(item.section, Section::Calculator | Section::Fallback) {
+        return None;
+    }
+    let folder = matches!(item.target, Target::File(FileHit { is_dir: true, .. }));
+    (launcher.window_width >= NARROW_SEARCH_WIDTH || folder).then(|| {
+        text(item.tag).size(11).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }).into()
+    })
+}
 
 pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
     title: &'static str,

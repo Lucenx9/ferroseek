@@ -161,9 +161,12 @@ among the ordered favorites in All. Preserve the ranking of typed queries.
 A renamed saved item keeps its favorite. Deleting it retires that identity.
 In an empty search, offer actions to move a shown favorite up or down among
 the shown favorites in its scope. Keep it selected after moving it.
-The active search filter uses an accent underline and primary text. Type labels
-distinguish results in All. Dedicated scopes omit labels that repeat the scope
-and keep distinctions such as Folder. The preview layout prioritizes names and paths.
+The active search filter uses an accent underline and primary text. On narrow
+windows, shorten Applications to Apps and tighten the gaps so all filters and
+Settings remain on the navigation row. Type labels distinguish results in All.
+On narrow windows, give names priority over generic type labels. Dedicated scopes
+omit labels that repeat the scope. Keep the Folder distinction when the preview
+is closed. The preview layout prioritizes names and paths.
 Give calculator answers and destination units the available width. Copying
 a conversion includes its destination unit. Using the answer for further
 arithmetic keeps its numeric value at full precision.

@@ -127,11 +127,11 @@ fn dim(label: &'static str) -> iced::widget::Text<'static> {
     text(label).size(12).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) })
 }
 
-pub(super) fn header_button(bindings: Bindings) -> Element<'static, Message> {
+pub(super) fn header_button(bindings: Bindings, compact: bool) -> Element<'static, Message> {
     tooltip(
-        button(text("Settings").size(12))
+        button(text("Settings").size(12).wrapping(text::Wrapping::None))
             .on_press(Message::ShowSettings)
-            .padding([4, 8])
+            .padding([4, if compact { 3 } else { 8 }])
             .height(24)
             .style(status_button_style),
         container(keycap(bindings.get(Shortcut::Settings).to_string(), true)).padding(4).style(surface_style),
