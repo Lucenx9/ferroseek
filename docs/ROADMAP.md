@@ -121,7 +121,7 @@ Complete desktop validation before expanding the platform.
 - [x] Assign and remove aliases for application and built-in command results.
 - [x] Save searchable text snippets with explicit creation, edit, copy and
   delete actions.
-- [x] Opt-in Wayland text clipboard history with search, copy, retention,
+- [x] Opt-in Wayland text clipboard history with search, copy, pinning, retention,
   individual deletion, clear confirmation and a private-session pause.
 - [x] Search and switch open windows on compositors exposing wlr foreign
   toplevel management, with live updates and a return to the parent search.

@@ -230,10 +230,11 @@ They use the owner-only `launcher-links` file beside the main configuration.
 
 ## Clipboard history
 
-![Clipboard history with recording controls and keyboard actions](assets/launcher-clipboard-history.png)
+![Clipboard history with a selected pin, recording controls and keyboard actions](assets/launcher-clipboard-history.png)
 
-[Full text preview](assets/launcher-clipboard-preview.png). Captured at 1×
-in isolated virtual KWin 5.27.11 with tiny-skia and synthetic clipboard text.
+The history view was captured in nested Labwc and the
+[full text preview](assets/launcher-clipboard-preview.png) in virtual KWin
+5.27.11, both at 1× with tiny-skia and synthetic clipboard text.
 
 Search for **Clipboard history**. Choose **Start recording** or press Ctrl+S
 to opt in. FerroSeek saves new plain-text copies from the Wayland clipboard,
@@ -244,14 +245,20 @@ the KDE password hint. It accepts UTF-8 text up to 8 KiB per entry.
 Filter with the search field. Use **Preview** or Ctrl+Enter to read the full
 text. Esc returns to the same filter and selection. Press Enter, use a
 numbered shortcut, or double-click to copy the selected text again. The launcher stays open to serve
-the clipboard while you paste. Ctrl+D deletes the selected entry. **Clear
-history** or Ctrl+Shift+Delete opens a confirmation. Ctrl+D confirms and Esc
-keeps the entries. Clearing history leaves the current desktop clipboard
-available.
+the clipboard while you paste. Use **Pin** or Ctrl+Shift+P to keep the selected
+entry. Pinned entries appear first. **Pinned** or Ctrl+G narrows the current
+search to pins. **Show all** or the same shortcut restores all entries.
+
+Ctrl+D deletes the selected entry, including a pinned one. **Clear history**
+or Ctrl+Shift+Delete opens a confirmation to remove all entries. Ctrl+D
+confirms and Esc keeps the entries. Clearing history leaves the current desktop
+clipboard available.
 
 FerroSeek keeps up to 100 distinct entries. **Keep … days** or Ctrl+T cycles
-through 1, 7 and 30 days. Shortening retention removes older entries. The
-recorder and the history view remove expired entries while they are active.
+through 1, 7 and 30 days. Up to 20 entries can be pinned within that limit.
+Pins survive age-based expiration and new copies. Unpinning an entry that
+exceeds the current retention removes it immediately. The recorder and the
+history view remove expired entries while they are active.
 **Stop recording** retains existing entries. A private launcher pauses the
 recorder and hides its history. Open a regular launcher and choose **Resume
 recording** when you are ready to start capturing again.

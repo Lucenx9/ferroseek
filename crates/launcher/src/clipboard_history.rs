@@ -14,6 +14,7 @@ use crate::usage;
 
 pub const TEXT_LIMIT: usize = 8192;
 pub const ENTRY_LIMIT: usize = 100;
+const PIN_LIMIT: usize = 20;
 const FILE_LIMIT: u64 = 6 * TEXT_LIMIT as u64 * ENTRY_LIMIT as u64 + 16384;
 const SECONDS_PER_DAY: u64 = 86400;
 
@@ -68,6 +69,8 @@ pub struct Entry {
     pub id: u64,
     pub text: String,
     pub copied_at: u64,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -80,7 +83,7 @@ impl History {
     fn expire(&mut self, retention: Retention, now: u64) -> bool {
         let keep_after = now.saturating_sub(retention.days() * SECONDS_PER_DAY);
         let previous = self.entries.len();
-        self.entries.retain(|entry| entry.copied_at >= keep_after && accepts(&entry.text));
+        self.entries.retain(|entry| accepts(&entry.text) && (entry.pinned || entry.copied_at >= keep_after));
         self.entries.truncate(ENTRY_LIMIT);
         previous != self.entries.len()
     }
@@ -91,10 +94,29 @@ impl History {
             Entry { copied_at: now, ..self.entries.remove(index) }
         } else {
             self.next_id = self.next_id.saturating_add(1);
-            Entry { id: self.next_id, text, copied_at: now }
+            Entry { id: self.next_id, text, copied_at: now, pinned: false }
         };
         self.entries.insert(0, entry);
+        self.entries.sort_by_key(|entry| !entry.pinned);
         self.entries.truncate(ENTRY_LIMIT);
+    }
+
+    fn set_pinned(&mut self, id: u64, pinned: bool) -> io::Result<()> {
+        let already_pinned = self.entries.iter().filter(|entry| entry.pinned).count();
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| io::Error::other("This clipboard entry was removed."))?;
+        if entry.pinned == pinned {
+            return Ok(());
+        }
+        if pinned && already_pinned >= PIN_LIMIT {
+            return Err(io::Error::other(format!("You can pin up to {PIN_LIMIT} entries. Unpin one to make room.")));
+        }
+        entry.pinned = pinned;
+        self.entries.sort_by_key(|entry| (!entry.pinned, std::cmp::Reverse(entry.copied_at)));
+        Ok(())
     }
 }
 
@@ -104,6 +126,7 @@ pub enum Edit {
     Stop,
     Retain(Retention),
     Delete(u64),
+    Pin { id: u64, pinned: bool },
     Clear,
     Private,
 }
@@ -213,6 +236,7 @@ impl Profile {
                     policy.retention = retention;
                     Some(None)
                 }
+                Edit::Pin { id, pinned } => return self.set_pinned(id, pinned, policy.retention),
                 Edit::Delete(id) => Some(Some(id)),
                 Edit::Clear => Some(Some(0)),
             };
@@ -224,6 +248,15 @@ impl Profile {
             }
             Ok(())
         })
+    }
+
+    fn set_pinned(&self, id: u64, pinned: bool, retention: Retention) -> io::Result<()> {
+        let mut history: History = read_private(&self.0, FILE_LIMIT)?;
+        let now = usage::now();
+        history.expire(retention, now);
+        history.set_pinned(id, pinned)?;
+        history.expire(retention, now);
+        write_atomic(&self.0, &history)
     }
 
     fn delete_expired_and_selected(&self, retention: Retention, delete: Option<u64>) -> io::Result<()> {
@@ -378,9 +411,63 @@ mod tests {
         assert_eq!(data.entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), [payload, "Other"]);
         profile.edit(Edit::Delete(data.entries[0].id)).unwrap();
         profile.record(initial, payload.into()).unwrap();
-        assert_eq!(profile.snapshot().unwrap().entries.len(), 1);
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.len(), 1);
+        let remaining = entries[0].id;
+        profile.edit(Edit::Pin { id: remaining, pinned: true }).unwrap();
         profile.edit(Edit::Clear).unwrap();
         assert!(profile.snapshot().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn legacy_entries_can_be_pinned_and_keep_their_id_when_copied_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile(dir.path().join("history"));
+        let initial = recording(&profile);
+        let now = usage::now();
+        let legacy = serde_json::json!({
+            "next_id": 1,
+            "entries": [{"id": 1, "text": "Keep", "copied_at": now}],
+        });
+        write_atomic(&profile.0, &legacy).unwrap();
+        assert!(!profile.snapshot().unwrap().entries[0].pinned);
+        profile.edit(Edit::Pin { id: 1, pinned: true }).unwrap();
+        profile.record(initial, "Recent".into()).unwrap();
+        profile.record(initial, "Keep".into()).unwrap();
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.len(), 2);
+        assert_eq!((entries[0].id, entries[0].text.as_str(), entries[0].pinned), (1, "Keep", true));
+
+        let mut aged: History = read_private(&profile.0, FILE_LIMIT).unwrap();
+        aged.entries[0].copied_at = now.saturating_sub(2 * SECONDS_PER_DAY);
+        write_atomic(&profile.0, &aged).unwrap();
+        profile.edit(Edit::Retain(Retention::Day)).unwrap();
+        assert_eq!(profile.snapshot().unwrap().entries.len(), 2);
+        profile.edit(Edit::Pin { id: 1, pinned: false }).unwrap();
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "Recent");
+    }
+
+    #[test]
+    fn history_capacity_preserves_pins_and_room_for_recent_copies() {
+        let mut history = History::default();
+        for i in 1..=PIN_LIMIT as u64 {
+            history.record(i.to_string(), Retention::Day, i);
+            history.set_pinned(i, true).unwrap();
+        }
+        for i in (PIN_LIMIT + 1)..=(PIN_LIMIT + ENTRY_LIMIT) {
+            history.record(i.to_string(), Retention::Day, i as u64);
+        }
+        assert_eq!(history.entries.len(), ENTRY_LIMIT);
+        assert!(history.entries[..PIN_LIMIT].iter().all(|entry| entry.pinned));
+        assert!(!history.entries[PIN_LIMIT].pinned);
+        let recent = history.entries[PIN_LIMIT].id;
+        assert_eq!(recent, (PIN_LIMIT + ENTRY_LIMIT) as u64);
+        assert!(history.set_pinned(recent, true).is_err());
+        history.set_pinned(1, false).unwrap();
+        history.set_pinned(recent, true).unwrap();
+        assert!(history.entries[0].pinned && history.entries[0].id == recent);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use iced::{Element, Length, Task, Theme};
 
 use super::{
     Launcher, Message, divider, field_style, footer_style, hint, keycap, label_for_width, page_header, palette,
-    primary_hint, status_button_style, surface_style, update_content,
+    primary_hint, status_button_style, surface_style, tab_style, update_content,
 };
 use crate::clipboard_history::{Edit, Entry, Mode, Profile, Recorder, Snapshot};
 use crate::layout::{FOOTER_HEIGHT, PAD, ROW_HEIGHT};
@@ -23,6 +23,8 @@ const LIST_HEADER: u32 = 198;
 pub enum Shortcut {
     Clear,
     Retention,
+    Pin,
+    PinnedOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +41,8 @@ pub enum Event {
     Clear,
     Confirm,
     Delete(u64),
+    Pin(u64),
+    PinnedOnly,
     Refresh,
     Copy(u64),
     Back,
@@ -61,6 +65,7 @@ pub(super) struct Panel {
     private: bool,
     snapshot: Option<Snapshot>,
     query: String,
+    pinned_only: bool,
     matches: Vec<usize>,
     cursor: Cursor,
     press: Option<(u64, bool)>,
@@ -82,6 +87,7 @@ impl Panel {
             private,
             snapshot: None,
             query: String::new(),
+            pinned_only: false,
             matches: Vec::new(),
             cursor: Cursor::new(NUMBERED_SLOTS),
             press: None,
@@ -134,7 +140,9 @@ impl Panel {
             .entries()
             .iter()
             .enumerate()
-            .filter_map(|(index, entry)| matches_text(&terms, &entry.text).then_some(index))
+            .filter_map(|(index, entry)| {
+                ((!self.pinned_only || entry.pinned) && matches_text(&terms, &entry.text)).then_some(index)
+            })
             .collect();
         let selected = selected.and_then(|id| self.matches.iter().position(|&index| self.entries()[index].id == id));
         self.cursor.reset();
@@ -284,7 +292,7 @@ impl Panel {
     fn input_event(&mut self, message: Message, generation: u64) -> Option<Event> {
         match message {
             Message::Clipboard { generation: current, event } if current == generation => Some(event),
-            Message::ClipboardShortcut(shortcut) => Some(shortcut.event()),
+            Message::ClipboardShortcut(shortcut) => shortcut.event(self.selected()),
             Message::Cmd(command) => self.key_command(command),
             Message::FolderShortcut(folders::Shortcut::Remove) => self.remove_event(),
             Message::FolderShortcut(folders::Shortcut::Save) => Some(Event::Toggle),
@@ -327,6 +335,18 @@ impl Panel {
                 Task::none()
             }
             Event::Delete(id) => self.edit(Some(Edit::Delete(id))),
+            Event::Pin(id) => {
+                let edit =
+                    self.selected().filter(|entry| entry.id == id).map(|entry| Edit::Pin { id, pinned: !entry.pinned });
+                edit.map_or_else(Task::none, |edit| self.edit(Some(edit)))
+            }
+            Event::PinnedOnly if self.can_act() && self.snapshot.is_some() => {
+                let selected = self.selected().map(|entry| entry.id);
+                self.pinned_only = !self.pinned_only;
+                self.note = "";
+                self.filter(selected);
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -336,8 +356,12 @@ impl Panel {
     }
 
     fn view(&self, generation: u64, width: u32) -> Element<'_, Message> {
-        let mut title = row![text("Clipboard history").size(20), space::horizontal()].spacing(8).align_y(iced::Center);
+        let label = if width < 400 { "Clipboard" } else { "Clipboard history" };
+        let mut title = row![text(label).size(20), space::horizontal()].spacing(8).align_y(iced::Center);
         if self.preview.is_none() {
+            if self.snapshot.is_some() {
+                title = title.push(self.pin_filter(width));
+            }
             title = title.push(
                 button(text("Refresh").size(12))
                     .on_press_maybe((self.profile.is_some() && self.can_act()).then_some(Event::Refresh))
@@ -356,6 +380,17 @@ impl Panel {
         crate::shortcuts::capture_numbered(
             Element::from(view).map(move |event| Message::Clipboard { generation, event }),
         )
+    }
+
+    fn pin_filter(&self, width: u32) -> Element<'_, Event> {
+        let active = self.pinned_only;
+        let label = if active { "Show all" } else { "Pinned" };
+        let content = if width < 460 { text(label).size(12).into() } else { hint("Ctrl+G", label) };
+        button(content)
+            .on_press_maybe(self.can_act().then_some(Event::PinnedOnly))
+            .padding([6, 8])
+            .style(move |theme, status| tab_style(theme, status, active, Some(palette::SELECTED)))
+            .into()
     }
 
     fn preview_view(&self) -> Element<'_, Event> {
@@ -433,7 +468,7 @@ impl Panel {
 
     fn message(&self) -> (&str, palette::Role) {
         if self.confirm {
-            return ("Clear all saved clipboard entries?", palette::TEXT);
+            return ("Clear all entries, including pins?", palette::TEXT);
         }
         if let Some(error) = &self.error {
             return (error, palette::ERROR);
@@ -458,9 +493,13 @@ impl Panel {
         )
         .padding([4, 10]);
         let empty = self.snapshot.is_some() && self.matches.is_empty() && !self.confirm;
-        let available = self.query.is_empty();
         let list = if empty {
-            let message = if available { "No copied text yet." } else { "No matching text. Try another search." };
+            let message = match (self.pinned_only, self.query.is_empty()) {
+                (true, true) => "No pinned text. Show all to pin an entry.",
+                (true, false) => "No matching pins. Show all or try another search.",
+                (false, true) => "No copied text yet.",
+                (false, false) => "No matching text. Try another search.",
+            };
             column![container(text(message).size(13)).padding([6, 10])]
         } else {
             self.cursor.window(self.matches.len()).enumerate().fold(column![], |column, (slot, index)| {
@@ -477,7 +516,8 @@ impl Panel {
             (_, true) => "Back to history",
             _ => "Back",
         };
-        let back = button(hint("Esc", label)).on_press(Event::Back).padding([4, 6]).style(status_button_style);
+        let back_label = if width < 360 { text(label).size(12).into() } else { hint("Esc", label) };
+        let back = button(back_label).on_press(Event::Back).padding([4, 6]).style(status_button_style);
         let mut actions = row![back, space::horizontal()].spacing(4).align_y(iced::Center);
         if self.confirm {
             actions = actions
@@ -494,14 +534,14 @@ impl Panel {
 
     fn list_actions(&self, width: u32) -> Vec<Element<'_, Event>> {
         let Some(entry) = self.selected().filter(|_| !self.busy) else { return Vec::new() };
-        let (preview, delete) = if width < 460 {
-            (text("Preview").size(12).into(), text("Delete").size(12).into())
-        } else {
-            (hint("Ctrl+Enter", "Preview"), hint("Ctrl+D", "Delete"))
+        let action = |key, label, event| {
+            let content = if width < 600 { text(label).size(12).into() } else { hint(key, label) };
+            button(content).on_press(event).style(status_button_style).into()
         };
         vec![
-            button(preview).on_press(Event::Preview(entry.id)).style(status_button_style).into(),
-            button(delete).on_press(Event::Delete(entry.id)).style(status_button_style).into(),
+            action("Ctrl+Enter", "Preview", Event::Preview(entry.id)),
+            action("Ctrl+Shift+P", if entry.pinned { "Unpin" } else { "Pin" }, Event::Pin(entry.id)),
+            action("Ctrl+D", "Delete", Event::Delete(entry.id)),
             copy_button(entry.id, width >= 360),
         ]
     }
@@ -517,10 +557,12 @@ fn copy_button(id: u64, shortcut: bool) -> Element<'static, Event> {
 }
 
 impl Shortcut {
-    fn event(self) -> Event {
+    fn event(self, selected: Option<&Entry>) -> Option<Event> {
         match self {
-            Self::Clear => Event::Clear,
-            Self::Retention => Event::Retention,
+            Self::Clear => Some(Event::Clear),
+            Self::Retention => Some(Event::Retention),
+            Self::Pin => selected.map(|entry| Event::Pin(entry.id)),
+            Self::PinnedOnly => Some(Event::PinnedOnly),
         }
     }
 }
@@ -552,12 +594,13 @@ fn history_row(entry: &Entry, slot: usize, selected: bool, enabled: bool) -> Ele
         3600..86400 => format!("{} hr ago", age / 3600),
         _ => format!("{} days ago", age / 86400),
     };
+    let subtitle = if entry.pinned { format!("Pinned · {when}") } else { when };
     let title = responsive(move |size| {
         text(label_for_width(&title, size.width, 15.0, false)).size(15).wrapping(text::Wrapping::None).into()
     })
     .height(Length::Shrink);
     let item = row![
-        column![title, text(when).size(12)].width(Length::Fill).spacing(2),
+        column![title, text(subtitle).size(12)].width(Length::Fill).spacing(2),
         keycap(format!("Ctrl+{}", slot + 1), selected),
     ]
     .spacing(8)

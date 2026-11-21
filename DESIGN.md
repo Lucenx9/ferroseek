@@ -168,8 +168,10 @@ subtitle. The editor identifies the target and preserves the search on return.
 Snippets show their keyword and line count. Copy is an explicit action.
 The text field preserves multiline editing and uses Ctrl+S for save.
 Clipboard history has its own filter and result list. Show recording status,
-retention, copy and deletion controls in the view. Ask for confirmation before
-clearing all entries. Preserve the selected entry during live refreshes.
+retention, copy and deletion controls in the view. Mark pinned entries in their
+rows and provide a pinned-only filter that keeps the query. Ask for confirmation
+before clearing all entries, including pins. Preserve the selected entry during
+live refreshes.
 Switch windows filters the live window list by title and application. Use the
 application name and window state as context. Keep the selected window
 through updates and require a new selection if it closes. Back restores the

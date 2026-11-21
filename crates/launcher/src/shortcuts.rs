@@ -42,13 +42,15 @@ impl Routing {
 
 fn clipboard_shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     use crate::ui::clipboard_view::Shortcut;
-    if modifiers == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Named(Named::Delete) {
-        return Some(Message::ClipboardShortcut(Shortcut::Clear));
-    }
-    if modifiers == Modifiers::CTRL && matches!(key.as_ref(), Key::Character("t" | "T")) {
-        return Some(Message::ClipboardShortcut(Shortcut::Retention));
-    }
-    None
+    const SHIFT_CTRL: Modifiers = Modifiers::CTRL.union(Modifiers::SHIFT);
+    let shortcut = match (modifiers, key.as_ref()) {
+        (Modifiers::CTRL, Key::Character("g" | "G")) => Shortcut::PinnedOnly,
+        (Modifiers::CTRL, Key::Character("t" | "T")) => Shortcut::Retention,
+        (SHIFT_CTRL, Key::Named(Named::Delete)) => Shortcut::Clear,
+        (SHIFT_CTRL, Key::Character("p" | "P")) => Shortcut::Pin,
+        _ => return None,
+    };
+    Some(Message::ClipboardShortcut(shortcut))
 }
 
 fn idle_recording_key(key: &Key) -> bool {
