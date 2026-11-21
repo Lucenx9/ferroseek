@@ -3662,6 +3662,30 @@ fn open_with_labels_use_available_width_and_keep_suffixes() {
 }
 
 #[test]
+fn dedicated_scopes_hide_only_their_redundant_result_type() {
+    let mut state = search_state();
+    let mut files = file_hits();
+    files[1].is_dir = true;
+    state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &files);
+    state.items.push(model::calc_item("= 40 + 2").unwrap());
+
+    for (scope, tag, visible) in [
+        (Scope::All, "Application", true),
+        (Scope::All, "File", true),
+        (Scope::Applications, "Application", false),
+        (Scope::Files, "File", false),
+        (Scope::Files, "Folder", true),
+        (Scope::Applications, "Calculator", false),
+        (Scope::Files, "Calculator", false),
+    ] {
+        state.scope = scope;
+        let index = state.items.iter().position(|item| item.tag == tag).unwrap();
+        let labels = rendered_labels(result_row(&state, index, 0), iced::Size::new(640.0, ROW_HEIGHT));
+        assert_eq!(labels.text.iter().any(|(value, _)| value == tag), visible, "{scope}: {tag}");
+    }
+}
+
+#[test]
 fn narrow_result_labels_fit_and_keep_distinguishing_text() {
     use iced::Size;
     use iced::advanced::text::Paragraph;

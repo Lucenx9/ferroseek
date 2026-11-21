@@ -226,7 +226,7 @@ impl Panel {
             .width(Length::Fill)
             .padding([6, 10])
             .on_press_maybe((self.mode == Mode::Editing && self.document.is_some()).then_some(Event::Select(slot)))
-            .style(move |theme, status| tab_style(theme, status, selected))
+            .style(move |theme, status| tab_style(theme, status, selected, Some(palette::SELECTED)))
             .into()
     }
 

@@ -301,7 +301,7 @@ impl Panel {
                 button(text(name).size(12))
                     .on_press(Event::Tab(value))
                     .padding([6.0, horizontal])
-                    .style(move |theme, status| ui::tab_style(theme, status, active == value))
+                    .style(move |theme, status| ui::tab_style(theme, status, active == value, Some(palette::SELECTED)))
             };
             let reload = if compact { text("Reload").size(12).into() } else { ui::hint("Ctrl+R", "Reload") };
             let header = row![

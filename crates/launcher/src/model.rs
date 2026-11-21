@@ -46,6 +46,15 @@ impl Scope {
         matches!(self, Self::All | Self::Files)
     }
 
+    pub fn implies_result_type(self, target: &Target) -> bool {
+        matches!(
+            (self, target),
+            (Self::Applications, Target::App(_))
+                | (Self::Files, Target::File(FileHit { is_dir: false, .. }))
+                | (Self::Commands, _)
+        )
+    }
+
     pub fn shows_calculator(self, query: &str) -> bool {
         self == Self::All || calc::is_explicit(query)
     }

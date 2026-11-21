@@ -59,8 +59,9 @@ shortcut shown next to its name when one is available.
 
 ![Settings grouped by launcher and file search](assets/launcher-settings.png)
 
-Captured at 1× in isolated Labwc with the tiny-skia renderer. Search and
-Search status were captured at 1× in isolated virtual KWin 5.27.11.
+Settings and the README search screenshot were captured at 1× in isolated
+Labwc with tiny-skia. Search status was captured at 1× in isolated virtual
+KWin 5.27.11.
 
 ## Shortcuts
 
@@ -401,7 +402,7 @@ or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
 Choose **All**, **Applications**, **Files** or **Commands** below the search
 field to narrow results without rewriting the query. An accent underline marks
-the active filter alongside its background highlight. Ctrl+Tab cycles forward
+the active filter. Ctrl+Tab cycles forward
 and Ctrl+Shift+Tab cycles backward. The choice lasts for this launcher session.
 Applications and Commands search locally. Files shows indexed files and recent
 file suggestions. Calculator expressions without `=` appear only in All; an explicit
@@ -437,8 +438,7 @@ it suggests another action name and omits the Enter hint.
 
 ![Searchable actions for a synthetic application](assets/launcher-actions.png)
 
-Native capture at 1× using Compact, Iron and Solid with tiny-skia in an isolated
-KWin 6.3.6 session nested in Xvfb.
+Captured at 1× in isolated Labwc with tiny-skia.
 
 Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
 applies the command and focuses the current field before delivering later input
@@ -466,9 +466,12 @@ Numbered shortcuts stay visible on every result and application choice. The
 selected row keeps its keycap; other rows use quieter text with the same spacing.
 The action panel uses the same numbering treatment and an accent bar for its
 highlighted command. Footer shortcuts keep their keycaps. The Enter action uses
-stronger text in the result and application-chooser footers. Result types appear
-as plain secondary labels, except beside the preview, where names and paths use
-that space. Paths and numbered shortcuts remain visible in both layouts.
+stronger text in the result and application-chooser footers. All shows result
+types as secondary labels. Applications and Files omit the redundant Application
+and File labels. Folder retains its label in Files. Calculator rows give that
+space to the answer and its unit. Beside the preview, names and paths use the
+space reserved for type labels. Paths and
+numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
 preview. Action labels and target titles also shorten to keep shortcuts visible.
 File names keep both ends so their extension remains visible; application
@@ -686,7 +689,7 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 ![Indexed folder contents](assets/launcher-folder-browser.png)
 
-Rendered in a private virtual KWin session with a synthetic indexed tree.
+Folder captures use a synthetic indexed tree at 1× in isolated Labwc with tiny-skia.
 
 Select a folder result and press **Alt+Right**, or choose **Browse folder** from
 Actions (Ctrl+K; `within` and `search in folder` remain aliases). The header shows
@@ -811,7 +814,7 @@ daemon versions are required.
 
 ![Text preview](assets/launcher-text-preview.png)
 
-Rendered in a private virtual KWin session with a synthetic file.
+Captured at 1× in isolated Labwc with tiny-skia and a synthetic file.
 
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
 `preview` or `contents`), or press Enter in **File details**. It enables a sidebar
@@ -1102,7 +1105,7 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
 | Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
-| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window filtering, live changes and target focus with keyboard and pointer at 720 and 320 logical px | Other commands, physical outputs and multiple seats |
+| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width, with a 320 px calculator check | Physical outputs, other keyboard layouts and multiple seats |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)

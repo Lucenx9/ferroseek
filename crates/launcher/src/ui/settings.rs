@@ -64,7 +64,7 @@ impl Entry {
             .width(Length::Fill)
             .padding([4, 10])
             .on_press(Message::SettingsSelected(self))
-            .style(move |theme, status| tab_style(theme, status, selected))
+            .style(move |theme, status| tab_style(theme, status, selected, Some(palette::SELECTED)))
             .into()
     }
 }

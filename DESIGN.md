@@ -151,7 +151,9 @@ result name first and useful distinguishing context second: parent path for
 files, description for applications and a short purpose for commands. Commands
 use the same selection and action affordances as other results. All shows
 strong command matches. Commands browses the catalog with an empty search.
-Avoid repeated type badges or metadata that does not help choose a result.
+The active search filter uses an accent underline and primary text. Type labels
+distinguish results in All. Dedicated scopes omit labels that repeat the scope
+and keep distinctions such as Folder. The preview layout prioritizes names and paths.
 Give calculator answers and destination units the available width. Copying
 a conversion includes its destination unit. Using the answer for further
 arithmetic keeps its numeric value at full precision.

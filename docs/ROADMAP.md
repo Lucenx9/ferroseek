@@ -18,8 +18,9 @@ published release or verified compatibility with every Linux desktop.
   the engine and CLI; guided setup recommends the launcher on Wayland.
 - [ ] Validate real desktop sessions and publish an explicit compositor support
   matrix, including multiple monitors, display scaling and keyboard layouts.
-  Current graphical evidence is nested virtual KWin only: US 1×, AZERTY 1×,
-  US 1.5× and two disjoint outputs with live mixed-scale changes. See the [validation matrix](LAUNCHER.md#desktop-validation).
+  Isolated KWin checks cover US 1×, AZERTY 1×, US 1.5× and two disjoint
+  outputs with live mixed-scale changes. Labwc covers targeted launcher
+  flows at 1×. See the [validation matrix](LAUNCHER.md#desktop-validation).
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
   Application results/actions, file opens, selected handlers and reveal now request

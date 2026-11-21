@@ -10,12 +10,11 @@ Rust file search engine and keeps launch history locally.
 
 ![FerroSeek showing application and indexed file results](docs/assets/launcher.png)
 
-Screenshot from a nested test session with sample files.
+Captured at 1× in isolated Labwc with tiny-skia and synthetic files.
 
 **Status: experimental, 0.1 development.** Requires Wayland with
-`wlr-layer-shell` and session D-Bus. Graphical testing currently uses nested
-virtual KWin; other compositors have not been verified. No binary release has
-been published yet.
+`wlr-layer-shell` and session D-Bus. Graphical testing uses isolated KWin
+and Labwc sessions. No binary release has been published yet.
 
 ## What you can do
 
