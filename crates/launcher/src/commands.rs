@@ -14,11 +14,12 @@ pub enum Builtin {
     Shortcuts,
     GlobalShortcuts,
     CreateSnippet,
+    CreateScript,
     ClipboardHistory,
     SwitchWindows,
 }
 
-pub const ALL: [Builtin; 11] = [
+pub const ALL: [Builtin; 12] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
@@ -30,6 +31,7 @@ pub const ALL: [Builtin; 11] = [
     Builtin::CreateSnippet,
     Builtin::ClipboardHistory,
     Builtin::SwitchWindows,
+    Builtin::CreateScript,
 ];
 
 struct Metadata {
@@ -39,6 +41,22 @@ struct Metadata {
     icon: &'static str,
     keywords: &'static str,
 }
+
+const CREATE_SCRIPT: Metadata = Metadata {
+    id: "create-script",
+    title: "Create local command",
+    description: "Register an executable to run from search",
+    icon: "utilities-terminal",
+    keywords: "add script automation register executable",
+};
+
+const CREATE_LINK: Metadata = Metadata {
+    id: "create-link",
+    title: "Create link",
+    description: "Save a website, indexed path or web search",
+    icon: "insert-link",
+    keywords: "new saved shortcut quicklink bookmark",
+};
 
 const SWITCH_WINDOWS: Metadata = Metadata {
     id: "switch-windows",
@@ -117,13 +135,8 @@ impl Builtin {
                 icon: "edit-paste",
                 keywords: "new text template snippets reusable clipboard",
             },
-            Self::CreateLink => &Metadata {
-                id: "create-link",
-                title: "Create link",
-                description: "Save a website, indexed path or web search",
-                icon: "insert-link",
-                keywords: "new saved shortcut quicklink bookmark",
-            },
+            Self::CreateScript => &CREATE_SCRIPT,
+            Self::CreateLink => &CREATE_LINK,
         }
     }
 

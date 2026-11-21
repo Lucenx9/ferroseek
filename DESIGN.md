@@ -232,6 +232,8 @@ Local command results use Run as their primary action. When confirmation is
 configured, show the executable and arguments and keep Back available. Show
 progress and cancellation during execution, then the outcome and readable,
 copyable text output. Back restores the captured query and selection.
+Use labeled fields for registration and editing. Confirm discard and deletion
+explicitly. Save returns to Commands with the entry selected.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve

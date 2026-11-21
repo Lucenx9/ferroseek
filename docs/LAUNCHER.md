@@ -572,7 +572,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
   **Appearance**, **Layout**, **Search folders**, **Search status**,
-  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**,
+  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**, **Create local command**,
   **Clipboard history**, or **Switch windows**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
@@ -947,10 +947,22 @@ neither indexed nor persisted by this feature.
 
 ## Local commands
 
-Register an executable by adding an entry to `launcher-scripts.toml` beside
-the main configuration file. Reopen the launcher to load changes. The Commands
-filter lists the registered commands. Strong title and description matches also
-appear in All.
+Search for **Create local command** to register an executable. Enter a title and
+absolute executable path. Add a description and a quoted argument list if
+needed, for example `["--summary", "Project name"]`. Tab moves between fields.
+**Confirmation on** asks before running. Click it or use Ctrl+Enter to change it.
+Ctrl+S or **Save** returns to Commands with the saved entry selected.
+
+Select a registered command and choose **Actions → Edit command** to change it.
+Use **Delete** or Ctrl+D in the editor, then **Delete** or Ctrl+Enter to confirm.
+Escape returns to the captured search and asks before discarding a changed draft.
+The Commands filter lists the registered commands. Strong title and description
+matches also appear in All.
+
+The launcher saves commands in `launcher-scripts.toml` beside its main
+configuration file. Edits preserve comments on retained fields and entries.
+You can also edit the file directly and reopen FerroSeek to load your changes.
+If the file is a symbolic link, edit its target directly.
 
 ```toml
 [[command]]

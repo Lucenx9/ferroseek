@@ -8,6 +8,7 @@ mod global_shortcut_settings;
 mod paste;
 mod saved_editor;
 mod saved_results;
+mod script_editor;
 mod scripts;
 mod settings;
 mod shortcut_settings;
@@ -291,6 +292,7 @@ pub enum Message {
     ApplicationOpened { id: String, result: Result<(), String> },
     LinkOpened(Result<(), RunError>),
     Script { generation: u64, event: scripts::Event },
+    ScriptEdit { generation: u64, event: script_editor::Event },
     SavedEditor { generation: u64, event: saved_editor::Event },
     AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
@@ -777,7 +779,9 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
-            (Action::OpenCommand | Action::RunScript, _) => self.activate_command(&item.target),
+            (Action::OpenCommand | Action::RunScript | Action::EditScript, _) => {
+                self.activate_command(&item.target, action)
+            }
             (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
             (Action::EditLink, Target::Link(link, _)) => {
                 self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
@@ -787,15 +791,7 @@ impl Launcher {
             }
             (_, Target::Snippet(snippet)) => self.snippet_action(action, snippet),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
-            (Action::Open | Action::Reveal, Target::File(f)) => {
-                let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
-                self.opening = Some((f.id.clone(), self.query.clone()));
-                self.status = Status::Notice("Opening…".into());
-                let (task, handle) =
-                    Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened).abortable();
-                self.launch_task = Some(handle.abort_on_drop());
-                task
-            }
+            (Action::Open | Action::Reveal, Target::File(file)) => self.open_indexed_file(file, action),
             (Action::BrowseFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
                 self.enter_folder_search(folder.clone())
             }
@@ -830,6 +826,16 @@ impl Launcher {
             (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
+    }
+
+    fn open_indexed_file(&mut self, file: &FileHit, action: Action) -> Task<Message> {
+        let operation = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
+        self.opening = Some((file.id.clone(), self.query.clone()));
+        self.status = Status::Notice("Opening…".into());
+        let (task, handle) =
+            Task::perform(self.backend.clone().run(file.id.clone(), operation), Message::Opened).abortable();
+        self.launch_task = Some(handle.abort_on_drop());
+        task
     }
 
     fn open_application(&mut self, index: usize, action: Action) -> Task<Message> {
@@ -1360,7 +1366,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.scripts.panel.is_some() {
+    if s.scripts.is_open() {
         s.update_scripts(message)
     } else if s.window_switcher.panel.is_some() {
         s.update_windows(message)
@@ -1931,7 +1937,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         s.input_epoch,
         s.input_focus(),
         s.input_context(),
-        s.saved_editor.as_ref().and_then(saved_editor::Editor::focus_cycle),
+        s.form_focus_cycle(),
         s.shortcut_routing(),
     )
 }

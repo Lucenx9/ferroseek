@@ -12,17 +12,22 @@ use super::{Launcher, Message, Status, divider, footer_button, footer_style, hin
 use super::{palette, primary_hint, surface_style, update_content};
 use crate::backend::UiEvent;
 use crate::layout::{FOOTER_HEIGHT, PAD};
-use crate::model::{Command, Scope, Target};
+use crate::model::{Action, Command, Scope, Target};
 use crate::script_commands::{Catalog, Completion, Job, Report, Script};
 
 #[derive(Default)]
 pub(super) struct State {
     pub catalog: Catalog,
     pub panel: Option<Panel>,
+    pub editor: Option<super::script_editor::Editor>,
     pub generation: u64,
 }
 
 impl State {
+    pub fn is_open(&self) -> bool {
+        self.panel.is_some() || self.editor.is_some()
+    }
+
     pub fn load(settings: &Path) -> Self {
         let catalog = Catalog::load(settings);
         if let Some(error) = &catalog.error {
@@ -165,13 +170,14 @@ fn report_body(report: &Report) -> iced::widget::Column<'_, Message> {
 }
 
 impl Launcher {
-    pub(super) fn activate_command(&mut self, target: &Target) -> Task<Message> {
+    pub(super) fn activate_command(&mut self, target: &Target, action: Action) -> Task<Message> {
         if self.opening.is_some() || self.search_suspended() {
             return Task::none();
         }
-        match target {
-            Target::Command(command) => self.open_builtin(*command),
-            Target::Script(script) => self.open_script(script.clone()),
+        match (target, action) {
+            (Target::Command(command), Action::OpenCommand) => self.open_builtin(*command),
+            (Target::Script(script), Action::RunScript) => self.open_script(script.clone()),
+            (Target::Script(script), Action::EditScript) => self.open_script_editor(Some(script.clone())),
             _ => Task::none(),
         }
     }
@@ -186,6 +192,9 @@ impl Launcher {
     }
 
     pub(super) fn update_scripts(&mut self, message: Message) -> Task<Message> {
+        if self.scripts.editor.is_some() {
+            return self.update_script_editor(message);
+        }
         match message {
             Message::Script { generation, event } if generation == self.scripts.generation => self.script_event(event),
             Message::Cmd(Command::Back) => self.script_event(Event::Back),

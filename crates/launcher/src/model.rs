@@ -406,6 +406,7 @@ pub enum Action {
     Open,
     OpenCommand,
     RunScript,
+    EditScript,
     OpenLink,
     EditLink,
     CopySnippet,
@@ -436,6 +437,7 @@ impl Action {
             Action::Launch => "Launch",
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
             Action::RunScript => "Run",
+            Action::EditScript => "Edit command",
             Action::EditLink => "Edit link",
             Action::CopySnippet => "Copy snippet",
             Action::PasteSnippet => "Paste snippet",
@@ -482,6 +484,7 @@ impl Action {
             Self::UseResult => &["continue"],
             Self::EditAlias => &["set alias", "remove alias", "shortcut"],
             Self::EditSnippet => &["change text", "delete snippet"],
+            Self::EditScript => &["edit script", "delete command"],
             Self::AddFavorite => &["pin"],
             // Keep "up" from selecting removal when a favorite is already first.
             Self::RemoveFavorite if matches!(tokens, [word] if "unpin".starts_with(word)) => &["unpin"],
@@ -521,6 +524,7 @@ impl Action {
             | Action::EditLink
             | Action::EditAlias
             | Action::EditSnippet
+            | Action::EditScript
             | Action::OpenWith
             | Action::Details
             | Action::Preview
@@ -545,7 +549,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand, Action::EditAlias],
-        Target::Script(_) => vec![Action::RunScript],
+        Target::Script(_) => vec![Action::RunScript, Action::EditScript],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],

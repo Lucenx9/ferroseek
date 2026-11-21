@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Local executable commands with explicit registration and bounded output.
 
+mod edit;
 mod run;
 
 use std::collections::HashSet;
@@ -14,12 +15,13 @@ use serde::Deserialize;
 
 use crate::matcher;
 
+pub use edit::{change, format_arguments, parse_arguments};
 pub use run::{Completion, Job, Report};
 
 const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 const MAX_COMMANDS: usize = 128;
 
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Script {
     pub title: String,
@@ -32,7 +34,7 @@ pub struct Script {
     pub confirm: bool,
 }
 
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Catalog {
     commands: Vec<Arc<Script>>,
     pub error: Option<String>,
@@ -47,12 +49,14 @@ struct Manifest {
 
 impl Catalog {
     pub fn load(settings: &Path) -> Self {
-        let path = settings.with_file_name("launcher-scripts.toml");
-        match read_manifest(&path) {
-            Ok(commands) => Self { commands: commands.into_iter().map(Arc::new).collect(), error: None },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Self::default(),
+        match read_source(&manifest_path(settings)).and_then(|source| parse_manifest(source.as_deref().unwrap_or(""))) {
+            Ok(commands) => Self::from_commands(commands),
             Err(error) => Self { commands: Vec::new(), error: Some(format!("Check launcher-scripts.toml. {error}")) },
         }
+    }
+
+    fn from_commands(commands: Vec<Script>) -> Self {
+        Self { commands: commands.into_iter().map(Arc::new).collect(), error: None }
     }
 
     pub fn matching(&self, query: &str, all: bool) -> Vec<(&Arc<Script>, u32)> {
@@ -79,18 +83,37 @@ impl Catalog {
     }
 }
 
-fn read_manifest(path: &Path) -> io::Result<Vec<Script>> {
+fn manifest_path(settings: &Path) -> PathBuf {
+    let path = settings.with_file_name("launcher-scripts.toml");
+    if path.is_absolute() { path } else { Path::new(".").join(path) }
+}
+
+fn read_source(path: &Path) -> io::Result<Option<String>> {
     // A replaced manifest must not block launcher startup if it is a FIFO.
-    let file = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path)?;
+    let file = match OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
     if !file.metadata()?.is_file() {
         return Err(io::Error::other("Use a regular file."));
     }
     let mut source = String::new();
     file.take(MAX_CONFIG_BYTES + 1).read_to_string(&mut source)?;
+    ensure_size(&source)?;
+    Ok(Some(source))
+}
+
+fn ensure_size(source: &str) -> io::Result<()> {
     if source.len() as u64 > MAX_CONFIG_BYTES {
         return Err(io::Error::other("The file is larger than 256 KiB."));
     }
-    let mut manifest: Manifest = toml::from_str(&source).map_err(io::Error::other)?;
+    Ok(())
+}
+
+fn parse_manifest(source: &str) -> io::Result<Vec<Script>> {
+    let mut manifest: Manifest =
+        toml::from_str(source).map_err(|error| io::Error::other(error.message().to_owned()))?;
     if manifest.command.len() > MAX_COMMANDS {
         return Err(io::Error::other("Keep at most 128 commands."));
     }
@@ -104,16 +127,23 @@ fn read_manifest(path: &Path) -> io::Result<Vec<Script>> {
 }
 
 fn validate(command: &Script, titles: &mut HashSet<String>) -> Result<(), &'static str> {
-    if command.title.is_empty() || command.title.chars().any(char::is_control) {
-        return Err("Enter a single-line title.");
-    }
-    if !command.executable.is_absolute() || command.executable.file_name().is_none() {
-        return Err("Use an absolute path to the executable.");
-    }
+    command.validate()?;
     if !titles.insert(matcher::fold(&command.title)) {
         return Err("Use a different title for each command.");
     }
     Ok(())
+}
+
+impl Script {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.title.is_empty() || self.title.chars().any(char::is_control) {
+            return Err("Enter a single-line title.");
+        }
+        if !self.executable.is_absolute() || self.executable.file_name().is_none() {
+            return Err("Use an absolute path to the executable.");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

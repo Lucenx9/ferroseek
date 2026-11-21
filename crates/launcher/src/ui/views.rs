@@ -34,7 +34,7 @@ pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
 
 impl Launcher {
     pub(super) fn command_view_open(&self) -> bool {
-        self.clipboard_history.panel.is_some() || self.window_switcher.panel.is_some() || self.scripts.panel.is_some()
+        self.clipboard_history.panel.is_some() || self.window_switcher.panel.is_some() || self.scripts.is_open()
     }
 
     pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
@@ -51,17 +51,13 @@ impl Launcher {
     }
 
     fn secondary_focus(&self) -> Option<iced::widget::Id> {
-        if let Some(editor) = &self.alias_editor {
-            editor.focus_target()
-        } else if let Some(editor) = &self.saved_editor {
-            editor.focus_target()
-        } else if self.folder_settings.is_some() {
-            Some(folders::input_id())
-        } else if self.application_picker.is_some() {
-            Some(open_with::input_id())
-        } else {
-            None
-        }
+        self.alias_editor
+            .as_ref()
+            .and_then(super::alias_editor::Editor::focus_target)
+            .or_else(|| self.saved_editor.as_ref().and_then(super::saved_editor::Editor::focus_target))
+            .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_target))
+            .or_else(|| self.folder_settings.is_some().then(folders::input_id))
+            .or_else(|| self.application_picker.is_some().then(open_with::input_id))
     }
 
     pub(super) fn dialog_height(&self) -> Option<u32> {
@@ -119,7 +115,7 @@ impl Launcher {
         self.application_picker.is_some()
             || self.global_shortcuts.panel.is_some()
             || self.saved_editor_open()
-            || self.scripts.panel.is_some()
+            || self.scripts.is_open()
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
@@ -130,7 +126,15 @@ impl Launcher {
             .or_else(|| self.clipboard_history.panel.as_ref().map(super::clipboard_view::Panel::context))
             .or_else(|| self.alias_editor.as_ref().map(super::alias_editor::Editor::context))
             .or_else(|| self.saved_editor.as_ref().map(super::saved_editor::Editor::context))
+            .or_else(|| self.scripts.editor.as_ref().map(super::script_editor::Editor::context))
             .or_else(|| self.appearance.as_ref().map(appearance::Panel::content_id))
+    }
+
+    pub(super) fn form_focus_cycle(&self) -> Option<crate::input::FocusCycle> {
+        self.saved_editor
+            .as_ref()
+            .and_then(super::saved_editor::Editor::focus_cycle)
+            .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_cycle))
     }
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {
@@ -153,7 +157,7 @@ impl Launcher {
         if let Some(editor) = &self.saved_editor {
             return Some(self.saved_editor_view(editor));
         }
-        None
+        self.scripts.editor.as_ref().map(super::script_editor::Editor::view)
     }
 
     pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
@@ -347,6 +351,7 @@ impl Launcher {
             Builtin::SearchStatus => self.toggle_search_status(),
             Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
             Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
+            Builtin::CreateScript => self.open_script_editor(None),
             Builtin::Shortcuts => self.show_shortcuts(),
             Builtin::GlobalShortcuts => self.show_global_shortcuts(),
             Builtin::ClipboardHistory => self.show_clipboard_history(),

@@ -291,7 +291,9 @@ impl Editor {
         let generation = self.generation;
         (self.mode == Mode::Editing).then(|| crate::input::FocusCycle {
             fields: FIELDS
-                .map(|field| (self.input_id(field), Message::SavedEditor { generation, event: Event::Focus(field) })),
+                .into_iter()
+                .map(|field| (self.input_id(field), Message::SavedEditor { generation, event: Event::Focus(field) }))
+                .collect(),
             tab_only: self.kind == Kind::Snippet,
         })
     }

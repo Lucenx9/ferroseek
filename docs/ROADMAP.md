@@ -137,8 +137,10 @@ Complete desktop validation before expanding the platform.
   sessions, with the installed command verified on virtual KWin 5.27.11.
 - [x] Run registered local commands from search, with optional confirmation,
   bounded output and a cancellable command view.
-- [ ] Evaluate visual command registration, user-supplied arguments and
-  reusable workflows before designing a general extension API.
+- [x] Create, edit and delete local commands in the launcher, with explicit save,
+  discard, and delete confirmation.
+- [ ] Evaluate arguments supplied at run time and reusable workflows before
+  designing a general extension API.
 
 ## Optional AI agent integration
 

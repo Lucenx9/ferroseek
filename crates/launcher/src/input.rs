@@ -103,7 +103,7 @@ impl Operation for CurrentFocus {
 }
 
 pub struct FocusCycle {
-    pub fields: [(iced::widget::Id, Message); 3],
+    pub fields: Vec<(iced::widget::Id, Message)>,
     pub tab_only: bool,
 }
 
