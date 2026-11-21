@@ -120,7 +120,8 @@ Complete desktop validation before expanding the platform.
 - [x] Save and edit links to websites and indexed paths. Open saved links by
   name or keyword, and use query values for keyword-based web searches.
 - [x] Let saved web searches appear as explicit actions when All has no matches.
-- [x] Assign and remove aliases for application and built-in command results.
+- [x] Assign and remove aliases for applications, built-in commands, local
+  commands and workflows.
 - [x] Save searchable text snippets with explicit creation, edit, copy and
   delete actions.
 - [x] Opt-in Wayland text clipboard history with search, copy, pinning, retention,

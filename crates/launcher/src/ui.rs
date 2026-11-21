@@ -898,11 +898,13 @@ impl Launcher {
             // Keep Paste immediately after the two original snippet actions.
             panel.actions.insert(panel.actions.len() - 1, Action::PasteSnippet);
         }
-        if self.scripts.history_key(&item.target).is_some() {
+        let runnable_local = self.scripts.history_key(&item.target).is_some();
+        if runnable_local {
             panel.actions.push(Action::ResetRanking);
             panel.actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
         }
         self.add_favorite_move_actions(&item.target, &mut panel.actions);
+        panel.actions.extend(runnable_local.then_some(Action::EditAlias));
         panel
     }
 

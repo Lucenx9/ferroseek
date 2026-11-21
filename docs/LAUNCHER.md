@@ -189,7 +189,7 @@ each affected link so the older launcher can read the saved entries file.
 
 ## Aliases
 
-Select an application or built-in command and choose **Edit alias** from
+Select an application, built-in command, local command or workflow and choose **Edit alias** from
 **Actions**. Enter a word using a–z, digits, hyphens, or underscores and press
 Enter or Ctrl+S. Type the exact alias, in either case, to bring its original
 result to the top of the search. An application alias works in **All** and
@@ -204,7 +204,10 @@ An alias belongs to one target and shares its keyword namespace with saved
 links and snippets. The editor keeps your draft when a word is already assigned. Use
 **Remove** or Ctrl+D to open the removal confirmation, then press Ctrl+D
 to confirm. Escape keeps editing at the confirmation. If an application is
-unavailable, searching for its alias still lets you edit or remove it.
+unavailable, searching for its alias still lets you edit or remove it. An alias
+for a local command or workflow identifies the runnable definition. If you edit
+the executable, arguments or workflow steps, find and remove the old alias,
+then set it on the updated result.
 
 Aliases are stored beside the main configuration in the owner-only
 `launcher-links` file. They remain available in private sessions and are

@@ -186,6 +186,9 @@ search with no local matches. Show the provider name and destination
 host. Use the captured query only when the user opens the action.
 An exact alias promotes its original result with the alias visible in the
 subtitle. The editor identifies the target and preserves the search on return.
+On narrow windows, keep its footer control labels visible without keycaps.
+Local command and workflow aliases identify the runnable definition. If it
+changes or is removed, keep the alias available for editing or removal.
 Snippets show their keyword and line count. Copy is an explicit action.
 The text field preserves multiline editing and uses Ctrl+S for save.
 Use the same destination check and recovery for pasting snippets and history

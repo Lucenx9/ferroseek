@@ -706,15 +706,89 @@ fn exact_alias_promotes_the_original_target_once_and_obeys_scope() {
 #[test]
 fn unavailable_alias_can_be_edited_without_dispatching_an_application() {
     let mut s = search_state();
+    s.output_bounds = Some((320, 332));
     let alias = saved::Alias::new(saved::AliasTarget::Application("missing.desktop".into()), "missing").unwrap();
     s.saved.aliases.push(alias.clone());
     let _ = update(&mut s, Message::Query("missing".into()));
     assert_eq!(s.selected().unwrap().target, Target::UnavailableAlias(alias));
     let _ = update(&mut s, Message::Cmd(Command::Activate));
     assert!(s.alias_editor.is_some() && s.opening.is_none());
+    let width = s.window_width as f32;
+    let size = iced::Size::new(width, s.window_height as f32);
+    let labels = rendered_labels(view_content(&s), size).text;
+    for name in ["Back", "Remove", "Save"] {
+        let (_, bounds) = labels.iter().find(|(value, _)| value == name).unwrap();
+        assert!(bounds.width >= text_width(name, 12.0) && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
+    }
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert!(s.alias_editor.is_none());
     assert_eq!(s.query, "missing");
+}
+
+#[test]
+fn local_aliases_resolve_only_the_saved_runnable_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("launcher-scripts.toml");
+    let source = r#"
+[[command]]
+title = "Launch check"
+executable = "/synthetic/launch-check"
+args = ["before"]
+confirm = true
+
+[[workflow]]
+title = "Daily review"
+steps = ["Launch check", "Launch check"]
+"#;
+    std::fs::write(&manifest, source).unwrap();
+    let mut state = search_state();
+    state.settings_path = dir.path().join("config.toml");
+    state.scripts = scripts::State::load(&state.settings_path);
+    let aliases = [("Launch check", "check-now"), ("Daily review", "review-now")];
+
+    for (title, alias) in aliases {
+        let _ = update(&mut state, Message::Query(title.into()));
+        let target = state.selected().unwrap().target.clone();
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("edit alias".into()));
+        assert_eq!(state.panel.as_ref().unwrap().filtered_actions(), [Action::EditAlias]);
+        let _ = update(&mut state, Message::PanelClicked { target: target.clone(), action: Action::EditAlias });
+        let generation = state.edit_generation;
+        let _ =
+            update(&mut state, Message::AliasEditor { generation, event: alias_editor::Event::Input(alias.into()) });
+        let save = update(&mut state, Message::Cmd(Command::Activate));
+        let mut stream = iced_runtime::task::into_stream(save).unwrap();
+        let Some(iced_runtime::Action::Output(result)) = iced::futures::executor::block_on(stream.next()) else {
+            panic!("alias save must report a result");
+        };
+        let _ = update(&mut state, result);
+        assert_eq!(state.status, Status::Notice("Alias saved".into()));
+        assert_eq!(state.query, title);
+        assert_eq!(state.selected().unwrap().target, target);
+    }
+
+    state.saved = saved::Store::load(&saved::Store::path(&state.settings_path));
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+    for (title, alias) in aliases {
+        let _ = update(&mut state, Message::Query(alias.to_uppercase()));
+        assert_eq!(state.items[0].title, title);
+        assert_eq!(state.items[0].subtitle, format!("Alias · {alias}"));
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.scripts.panel.is_some());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+        assert_eq!(state.query, alias.to_uppercase());
+    }
+
+    std::fs::write(&manifest, source.replace("before", "after")).unwrap();
+    state.scripts = scripts::State::load(&state.settings_path);
+    for (_, alias) in aliases {
+        let _ = update(&mut state, Message::Query(alias.into()));
+        assert!(matches!(state.selected().unwrap().target, Target::UnavailableAlias(_)));
+        assert_eq!(state.items[0].subtitle, "Command unavailable");
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.alias_editor.is_some() && state.scripts.panel.is_none());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+    }
 }
 
 #[test]

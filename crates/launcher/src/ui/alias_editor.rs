@@ -8,7 +8,6 @@ use super::{
     Launcher, Message, Scope, Status, divider, field_style, footer_style, hint, label_for_width, page_header, palette,
     primary_hint, status_button_style, surface_style, update_content,
 };
-use crate::commands::Builtin;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{self, ClickTracker, Command, Item, Target};
 use crate::saved::{self, Alias, AliasTarget};
@@ -121,31 +120,34 @@ impl Editor {
     }
 
     fn footer(&self) -> Element<'_, Event> {
+        let controls = responsive(move |size| self.footer_controls(size.width < 320.0)).height(FOOTER_HEIGHT);
+        container(controls).height(FOOTER_HEIGHT).padding([0.0, PAD]).align_y(iced::Center).style(footer_style).into()
+    }
+
+    fn footer_controls(&self, compact: bool) -> Element<'_, Event> {
+        let label = |key, name| if compact { text(name).size(12).into() } else { hint(key, name) };
         let confirm = matches!(self.mode, Mode::Discard | Mode::Remove);
         let editing = self.mode == Mode::Editing;
-        let back = button(hint("Esc", if confirm { "Keep editing" } else { "Back" }))
+        let back = button(label("Esc", if confirm { "Keep editing" } else { "Back" }))
             .on_press_maybe((editing || confirm).then_some(Event::Back))
             .padding([4, 6])
             .style(status_button_style);
         let accept = if confirm {
-            button(hint("Ctrl+D", if self.mode == Mode::Remove { "Remove" } else { "Discard" })).on_press(Event::Remove)
+            button(label("Ctrl+D", if self.mode == Mode::Remove { "Remove" } else { "Discard" }))
+                .on_press(Event::Remove)
         } else {
-            button(primary_hint("Enter", "Save")).on_press_maybe(editing.then_some(Event::Save))
+            let save = if compact { text("Save").size(12).into() } else { primary_hint("Enter", "Save") };
+            button(save).on_press_maybe(editing.then_some(Event::Save))
         }
         .padding([4, 6])
         .style(status_button_style);
         let mut controls = row![back].spacing(4).align_y(iced::Center);
         if editing && self.previous.is_some() {
             controls = controls.push(
-                button(hint("Ctrl+D", "Remove")).on_press(Event::Remove).padding([4, 6]).style(status_button_style),
+                button(label("Ctrl+D", "Remove")).on_press(Event::Remove).padding([4, 6]).style(status_button_style),
             );
         }
-        container(controls.push(space::horizontal()).push(accept))
-            .height(FOOTER_HEIGHT)
-            .padding([0.0, PAD])
-            .align_y(iced::Center)
-            .style(footer_style)
-            .into()
+        container(controls.push(space::horizontal()).push(accept)).center_y(Length::Fill).into()
     }
 
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -198,15 +200,12 @@ impl Launcher {
             return Task::none();
         }
         let Some(target) = self.alias_target(&item.target) else { return Task::none() };
-        let title = match item.target {
-            Target::UnavailableAlias(_) => format!("Unavailable · {}", target.id()),
-            _ => item.title.clone(),
-        };
+        let title = if matches!(item.target, Target::UnavailableAlias(_)) { &item.subtitle } else { &item.title };
         let previous = self.saved.aliases.iter().find(|alias| alias.target == target).map(|alias| alias.word.clone());
         self.panel = None;
         self.clicks = ClickTracker::default();
         self.edit_generation += 1;
-        let mut editor = Editor::new(target, title, previous, self.edit_generation);
+        let mut editor = Editor::new(target, title.clone(), previous, self.edit_generation);
         editor.error = self.saved.error.clone();
         self.alias_editor = Some(editor);
         timing::event("alias_editor_opened");
@@ -218,7 +217,8 @@ impl Launcher {
             Target::App(index) => self.apps.get(*index).map(|app| AliasTarget::Application(app.id.clone())),
             Target::Command(command) => Some(AliasTarget::Command(command.id().into())),
             Target::UnavailableAlias(alias) => Some(alias.target.clone()),
-            _ => None,
+            // The saved command namespace accepts both built-in IDs and local definition keys.
+            target => self.scripts.history_key(target).map(|key| AliasTarget::Command(key.into())),
         }
     }
 
@@ -291,7 +291,9 @@ impl Launcher {
             (AliasTarget::Application(id), Scope::All | Scope::Applications) => {
                 self.apps.iter().position(|app| &app.id == id).map(|index| model::app_item(&self.apps, index))
             }
-            (AliasTarget::Command(id), Scope::All | Scope::Commands) => Builtin::from_id(id).map(model::command_item),
+            (AliasTarget::Command(id), Scope::All | Scope::Commands) => {
+                model::stored_command(&self.scripts.catalog, id)
+            }
             _ => return None,
         };
         Some(match matched {

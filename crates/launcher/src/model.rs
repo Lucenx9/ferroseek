@@ -224,14 +224,16 @@ fn stored_item(catalog: Catalog<'_>, (kind, key): (FavoriteKind, &str), scope: S
             catalog.apps.iter().position(|app| app.id == key).map(|i| app_item(catalog.apps, i))
         }
         FavoriteKind::File if scope.includes_files() => stored_file(key),
-        FavoriteKind::Command if matches!(scope, Scope::All | Scope::Commands) => {
-            Builtin::from_id(key).map(command_item).or_else(|| catalog.scripts.history_entry(key).map(history_item))
-        }
+        FavoriteKind::Command if matches!(scope, Scope::All | Scope::Commands) => stored_command(catalog.scripts, key),
         FavoriteKind::Link | FavoriteKind::Snippet if matches!(scope, Scope::All | Scope::Commands) => {
             stored_named_item(catalog.saved, kind, key)
         }
         _ => None,
     }
+}
+
+pub(crate) fn stored_command(scripts: &script_commands::Catalog, key: &str) -> Option<Item> {
+    Builtin::from_id(key).map(command_item).or_else(|| scripts.history_entry(key).map(history_item))
 }
 
 fn history_item(entry: &HistoryEntry) -> Item {
@@ -353,11 +355,15 @@ pub(crate) fn command_item(command: Builtin) -> Item {
 }
 
 pub(crate) fn unavailable_alias(alias: &saved::Alias) -> Item {
+    let subtitle = match &alias.target {
+        saved::AliasTarget::Application(id) => format!("Target unavailable · {id}"),
+        saved::AliasTarget::Command(_) => "Command unavailable".into(),
+    };
     Item {
         target: Target::UnavailableAlias(alias.clone()),
         section: Section::Commands,
         title: alias.word.clone(),
-        subtitle: format!("Target unavailable · {}", alias.target.id()),
+        subtitle,
         icon: "dialog-warning".into(),
         tag: "Alias",
     }
