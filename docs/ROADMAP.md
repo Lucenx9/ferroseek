@@ -125,6 +125,7 @@ Complete desktop validation before expanding the platform.
   individual deletion, clear confirmation and a private-session pause.
 - [x] Search and switch open windows on compositors exposing wlr foreign
   toplevel management, with live updates and a return to the parent search.
+- [x] Maximize, restore and minimize selected windows with compositor feedback.
 - [ ] Evaluate supported window switching interfaces for Plasma.
 - [ ] Evaluate user-defined script commands before designing workflows or a
   general extension API; keep execution explicit and separate from search.

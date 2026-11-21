@@ -22,6 +22,44 @@ pub struct Entry {
     pub title: String,
     pub app_id: String,
     pub minimized: bool,
+    pub maximized: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Switch,
+    Maximize(bool),
+    Minimize(bool),
+}
+
+impl Action {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Switch => "Switch",
+            Self::Maximize(true) => "Maximize",
+            Self::Maximize(false) => "Restore size",
+            Self::Minimize(true) => "Minimize",
+            Self::Minimize(false) => "Unminimize",
+        }
+    }
+
+    pub fn confirmation(self) -> &'static str {
+        match self {
+            Self::Switch => "Switched window",
+            Self::Maximize(true) => "Window maximized",
+            Self::Maximize(false) => "Window size restored",
+            Self::Minimize(true) => "Window minimized",
+            Self::Minimize(false) => "Window unminimized",
+        }
+    }
+
+    fn reached(self, entry: &Entry) -> bool {
+        match self {
+            Self::Switch => false,
+            Self::Maximize(value) => entry.maximized == value,
+            Self::Minimize(value) => entry.minimized == value,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,15 +94,15 @@ impl Session {
         Ok((Self { connection, queue }, receive))
     }
 
-    pub fn activate(&self, id: u64) -> impl Future<Output = Result<(), &'static str>> + use<> {
+    pub fn perform(&self, id: u64, action: Action) -> impl Future<Output = Result<(), &'static str>> + use<> {
         let (send, receive) = oneshot::channel();
-        self.wake(Wake::Activate(id, Some(send).into()));
+        self.wake(Wake::Request(id, action, Some(send).into()));
         async move {
             let runtime = zruntime::SharedRuntime::current().map_err(|_| DISCONNECTED)?;
             runtime
                 .timeout(Duration::from_secs(2), receive)
                 .await
-                .map_err(|_| "The desktop did not respond. Try switching again.")?
+                .map_err(|_| "The desktop did not confirm the request. Check the window and try again.")?
                 .map_err(|_| DISCONNECTED)?
         }
     }
@@ -87,7 +125,7 @@ type Reply = std::sync::Mutex<Option<oneshot::Sender<Result<(), &'static str>>>>
 
 enum Wake {
     Stop,
-    Activate(u64, Reply),
+    Request(u64, Action, Reply),
     Sent(u64, Reply),
 }
 
@@ -103,6 +141,12 @@ struct Toplevel {
     visible: Option<Entry>,
 }
 
+struct Pending {
+    id: u64,
+    action: Action,
+    reply: oneshot::Sender<Result<(), &'static str>>,
+}
+
 #[derive(Default)]
 struct Catalog {
     manager: Option<(u32, Manager)>,
@@ -110,6 +154,7 @@ struct Catalog {
     windows: BTreeMap<u64, Toplevel>,
     handles: std::collections::HashMap<ObjectId, u64>,
     next_id: u64,
+    pending: Option<Pending>,
     changed: bool,
     stopping: bool,
     finished: bool,
@@ -170,13 +215,19 @@ impl Catalog {
         }
     }
 
-    fn request(&self, id: u64) -> Result<(), &'static str> {
+    fn request(&self, id: u64, action: Action) -> Result<(), &'static str> {
         if let Some(message) = self.unavailable() {
             return Err(message);
         }
         let window = self.windows.get(&id).ok_or(CLOSED)?;
-        let seat = self.seats.values().next().expect("one input seat");
-        window.window.activate(seat);
+        let window = &window.window;
+        match action {
+            Action::Switch => window.activate(self.seats.values().next().expect("one input seat")),
+            Action::Maximize(true) => window.set_maximized(),
+            Action::Maximize(false) => window.unset_maximized(),
+            Action::Minimize(true) => window.set_minimized(),
+            Action::Minimize(false) => window.unset_minimized(),
+        }
         Ok(())
     }
     fn add(&mut self, window: Window) {
@@ -220,6 +271,17 @@ impl Catalog {
         }
     }
 
+    fn confirm_change(&mut self) {
+        let Some(pending) = &self.pending else { return };
+        let result = match self.windows.get(&pending.id) {
+            Some(window) => window.visible.as_ref().filter(|entry| pending.action.reached(entry)).map(|_| Ok(())),
+            None => Some(Err(CLOSED)),
+        };
+        if let Some(result) = result {
+            let _ = self.pending.take().expect("pending action").reply.send(result);
+        }
+    }
+
     fn remove_global(&mut self, name: u32) {
         if let Some(seat) = self.seats.remove(&name) {
             if seat.version() >= 5 {
@@ -250,21 +312,26 @@ impl Catalog {
                 }
             }
         }
+        self.confirm_change();
     }
 
     fn wake(&mut self, wake: &Wake, conn: &Connection, queue: &QueueHandle<Self>) {
         match wake {
             Wake::Stop => self.stop(),
             Wake::Sent(id, send) => reply(send, self.windows.contains_key(id).then_some(()).ok_or(CLOSED)),
-            Wake::Activate(id, send) => {
+            Wake::Request(id, action, send) => {
                 let Some(send) = send.lock().ok().and_then(|mut slot| slot.take()) else { return };
                 if send.is_canceled() || self.stopping {
                     return;
                 }
-                match self.request(*id) {
-                    Ok(()) => {
+                match self.request(*id, *action) {
+                    Ok(()) if *action == Action::Switch => {
                         // This confirms receipt. The overlay must release focus before the window can receive input.
                         conn.display().sync(queue, Wake::Sent(*id, Some(send).into()));
+                    }
+                    Ok(()) => {
+                        self.pending = Some(Pending { id: *id, action: *action, reply: send });
+                        self.confirm_change();
                     }
                     Err(error) => {
                         let _ = send.send(Err(error));
@@ -282,8 +349,9 @@ impl Toplevel {
             handle::Event::AppId { app_id } => self.draft.app_id = app_id,
             handle::Event::State { state } => {
                 let (states, _) = state.as_chunks::<4>();
-                self.draft.minimized =
-                    states.iter().any(|bytes| u32::from_ne_bytes(*bytes) == handle::State::Minimized as u32);
+                let has = |state: handle::State| states.iter().any(|bytes| u32::from_ne_bytes(*bytes) == state as u32);
+                self.draft.minimized = has(handle::State::Minimized);
+                self.draft.maximized = has(handle::State::Maximized);
             }
             handle::Event::Done if self.visible.as_ref() != Some(&self.draft) => {
                 self.visible = Some(self.draft.clone());

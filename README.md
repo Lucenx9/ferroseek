@@ -33,7 +33,8 @@ and Labwc sessions. No binary release has been published yet.
 - Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
 - Save and copy multiline text from [snippets](docs/LAUNCHER.md#snippets).
 - Opt in to [clipboard history](docs/LAUNCHER.md#clipboard-history) on supported Wayland compositors.
-- Find and focus [open windows](docs/LAUNCHER.md#switch-windows) on supported Wayland compositors.
+- Find, switch, maximize and minimize [open windows](docs/LAUNCHER.md#switch-windows)
+  on supported Wayland compositors.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.

@@ -13,7 +13,7 @@ use crate::apps::App;
 use crate::icons::{Icon, Icons};
 use crate::layout::{FOOTER_HEIGHT, PAD, ROW_HEIGHT};
 use crate::model::{Command, Cursor, NUMBERED_SLOTS};
-use crate::window_switcher::{Entry, Session, Update};
+use crate::window_switcher::{Action, Entry, Session, Update};
 
 const LIST_CHROME: u32 = 172;
 pub(super) const HEIGHT: u32 = LIST_CHROME + ROW_HEIGHT as u32 * 5;
@@ -24,8 +24,9 @@ pub enum Event {
     Query(String),
     Press(u64),
     DoubleClick(u64),
-    Switch(u64),
-    Switched(Result<(), &'static str>),
+    OpenActions(u64),
+    Run(u64, Action),
+    Finished(Result<(), &'static str>),
     Back,
 }
 
@@ -54,7 +55,9 @@ pub(super) struct Panel {
     selected_closed: bool,
     press: Option<(u64, bool)>,
     session: Option<Session>,
-    switching: bool,
+    pending: Option<Action>,
+    menu: Option<usize>,
+    confirmation: Option<&'static str>,
     error: Option<&'static str>,
 }
 
@@ -69,7 +72,9 @@ impl Panel {
             selected_closed: false,
             press: None,
             session: None,
-            switching: false,
+            pending: None,
+            menu: None,
+            confirmation: None,
             error: None,
         }
     }
@@ -83,10 +88,14 @@ impl Panel {
     }
 
     fn selected(&self) -> Option<u64> {
+        self.selected_entry().map(|entry| entry.id)
+    }
+
+    fn selected_entry(&self) -> Option<&Entry> {
         if self.selected_closed {
             return None;
         }
-        self.matches.get(self.cursor.selected).map(|&index| self.windows()[index].entry.id)
+        self.matches.get(self.cursor.selected).map(|&index| &self.windows()[index].entry)
     }
 
     fn refresh_matches(&mut self, selection: Option<u64>) {
@@ -106,7 +115,7 @@ impl Panel {
         true
     }
 
-    fn receive(&mut self, update: Update, apps: &[App], icons: &mut Icons) {
+    fn receive(&mut self, update: Update, apps: &[App], icons: &mut Icons) -> Task<Event> {
         match update {
             Update::Windows(windows) => {
                 let selection = self.selected();
@@ -122,6 +131,10 @@ impl Panel {
                 self.error = Some(message);
             }
         }
+        if self.selected().is_none() && self.menu.take().is_some() {
+            return crate::input::focus(self.input());
+        }
+        Task::none()
     }
 
     fn change_query(&mut self, query: String) {
@@ -129,16 +142,21 @@ impl Panel {
         self.cursor.reset();
         self.press = None;
         self.error = None;
+        self.confirmation = None;
         self.refresh_matches(None);
     }
 
     fn press(&mut self, id: u64) {
         if self.select(id) {
             self.press = Some((id, self.press.is_some_and(|(previous, _)| previous == id)));
+            self.confirmation = None;
         }
     }
 
     fn command(&mut self, command: Command) -> Option<Event> {
+        if let Some(choice) = self.menu {
+            return self.menu_command(command, choice);
+        }
         let page = self.cursor.visible as isize;
         let delta = match command {
             Command::Up => -1,
@@ -147,11 +165,12 @@ impl Panel {
             Command::PageDown => page,
             Command::First => -(self.cursor.selected as isize),
             Command::Last => self.matches.len() as isize,
-            Command::Activate => return self.selected().map(Event::Switch),
+            Command::Activate => return self.selected().map(|id| Event::Run(id, Action::Switch)),
+            Command::OpenActions | Command::ToggleActions => return self.selected().map(Event::OpenActions),
             Command::ActivateVisible(slot) => {
                 if self.cursor.select_visible(slot, self.matches.len()) {
                     self.selected_closed = false;
-                    return self.selected().map(Event::Switch);
+                    return self.selected().map(|id| Event::Run(id, Action::Switch));
                 }
                 return None;
             }
@@ -162,44 +181,95 @@ impl Panel {
         None
     }
 
+    fn menu_command(&mut self, command: Command, selected: usize) -> Option<Event> {
+        let choice = match command {
+            Command::Back | Command::ToggleActions => return Some(Event::Back),
+            Command::Up | Command::First | Command::PageUp => 0,
+            Command::Down | Command::Last | Command::PageDown => 1,
+            Command::Activate => return self.menu_action(selected),
+            Command::ActivateVisible(index) => return self.menu_action(index),
+            _ => return None,
+        };
+        self.menu = Some(choice);
+        None
+    }
+
+    fn menu_action(&self, index: usize) -> Option<Event> {
+        let entry = self.selected_entry()?;
+        window_actions(entry).get(index).map(|&action| Event::Run(entry.id, action))
+    }
+
     fn move_by(&mut self, delta: isize) {
         self.cursor.move_by(delta, self.matches.len());
         self.selected_closed = false;
         self.press = None;
+        self.confirmation = None;
     }
 
-    fn switch(&mut self, id: u64) -> Task<Event> {
+    fn run(&mut self, id: u64, action: Action) -> Task<Event> {
         let Some(session) = &self.session else { return Task::none() };
-        if self.selected() != Some(id) {
+        if self.selected() != Some(id) || self.menu.is_some() == (action == Action::Switch) {
             return Task::none();
         }
-        self.switching = true;
+        self.pending = Some(action);
         self.error = None;
-        Task::perform(session.activate(id), Event::Switched)
+        self.confirmation = None;
+        Task::perform(session.perform(id, action), Event::Finished)
     }
 
     fn event(&mut self, event: Event) -> Task<Event> {
         match event {
-            Event::Switched(Err(error)) => {
-                self.switching = false;
-                self.error = Some(error);
+            Event::Finished(result) => {
+                self.finish(result);
+                Task::none()
             }
-            _ if self.switching => {}
-            Event::Query(query) if self.session.is_some() => self.change_query(query),
-            Event::Press(id) => self.press(id),
-            Event::DoubleClick(id) if self.press.take() == Some((id, true)) => return self.switch(id),
-            Event::Switch(id) => return self.switch(id),
+            Event::Back if self.pending != Some(Action::Switch) => {
+                self.menu = None;
+                crate::input::focus(self.input())
+            }
+            _ if self.pending.is_some() => Task::none(),
+            event => self.apply_input(event),
+        }
+    }
+
+    fn apply_input(&mut self, event: Event) -> Task<Event> {
+        match event {
+            Event::OpenActions(id) if self.select(id) => {
+                self.menu = Some(0);
+                self.press = None;
+                self.confirmation = None;
+                self.error = None;
+            }
+            Event::Query(query) if self.menu.is_none() && self.session.is_some() => self.change_query(query),
+            Event::Press(id) if self.menu.is_none() => self.press(id),
+            Event::DoubleClick(id) if self.press.take() == Some((id, true)) => return self.run(id, Action::Switch),
+            Event::Run(id, action) => return self.run(id, action),
             _ => {}
         }
         Task::none()
+    }
+
+    fn finish(&mut self, result: Result<(), &'static str>) {
+        let Some(action) = self.pending.take() else { return };
+        match result {
+            Ok(()) => self.confirmation = Some(action.confirmation()),
+            Err(error) => self.error = Some(error),
+        }
     }
 
     fn notice(&self) -> String {
         if let Some(error) = self.error {
             return error.into();
         }
-        if self.switching {
-            return "Switching windows…".into();
+        if let Some(action) = self.pending {
+            return if action == Action::Switch {
+                "Switching windows…".into()
+            } else {
+                "Waiting for the desktop…".into()
+            };
+        }
+        if let Some(confirmation) = self.confirmation {
+            return confirmation.into();
         }
         match self.windows.as_deref() {
             None => "Reading open windows…".into(),
@@ -219,56 +289,117 @@ impl Panel {
         }
     }
 
-    pub(super) fn view(&self, generation: u64) -> Element<'_, Message> {
-        let back = button(text("Back").size(12)).on_press_maybe((!self.switching).then_some(Event::Back));
-        let title = row![back.padding([6, 8]).style(status_button_style), text("Switch windows").size(20)]
+    pub(super) fn view(&self, generation: u64, action_key: String) -> Element<'_, Message> {
+        let back =
+            button(text("Back").size(12)).on_press_maybe((self.pending != Some(Action::Switch)).then_some(Event::Back));
+        let heading = if self.menu.is_some() { "Window actions" } else { "Switch windows" };
+        let title = row![back.padding([6, 8]).style(status_button_style), text(heading).size(20)]
             .align_y(iced::Center)
             .spacing(12);
-        let filter = text_input("Search by window title or app…", &self.query)
-            .id(self.input())
-            .on_input_maybe(self.session.as_ref().filter(|_| !self.switching).map(|_| Event::Query))
-            .padding([6, 8])
-            .style(field_style);
+        let (field, items) = match self.menu {
+            Some(choice) => (self.target_label(), self.action_list(choice)),
+            None => (self.filter(), self.list()),
+        };
         let body = column![
             page_header(title).height(56),
             divider(),
-            container(filter).padding([4, 8]),
-            self.list(),
+            container(field).padding([4, 8]),
+            items,
             divider(),
-            self.footer(),
+            self.footer(action_key),
         ];
         let view = container(body).padding(PAD).width(Length::Fill).height(Length::Fill).style(surface_style);
         crate::shortcuts::capture_numbered(Element::from(view).map(move |event| Message::Windows { generation, event }))
     }
 
-    fn list(&self) -> Element<'_, Event> {
+    fn filter(&self) -> Element<'_, Event> {
+        text_input("Search by window title or app…", &self.query)
+            .id(self.input())
+            .on_input_maybe(self.session.as_ref().filter(|_| self.pending.is_none()).map(|_| Event::Query))
+            .padding([6, 8])
+            .style(field_style)
+            .into()
+    }
+
+    fn target_label(&self) -> Element<'_, Event> {
+        let title = self.selected_entry().map_or("", window_title);
+        container(row_label(title, 15, palette::TEXT)).padding([6, 10]).into()
+    }
+
+    fn notice_label(&self) -> Element<'_, Event> {
         let role = if self.error.is_some() { palette::ERROR } else { palette::DIM };
-        let notice =
-            text(self.notice()).size(12).style(move |theme: &Theme| text::Style { color: Some(role.resolve(theme)) });
+        container(
+            text(self.notice()).size(12).style(move |theme: &Theme| text::Style { color: Some(role.resolve(theme)) }),
+        )
+        .padding([4, 10])
+        .into()
+    }
+
+    fn list(&self) -> Element<'_, Event> {
         let list = self.cursor.window(self.matches.len()).enumerate().fold(column![], |rows, (slot, index)| {
             let entry = &self.windows()[self.matches[index]];
             let selected = !self.selected_closed && index == self.cursor.selected;
-            rows.push(entry.view(slot, selected, self.switching))
+            rows.push(entry.view(slot, selected, self.pending.is_some()))
         });
-        column![container(notice).padding([4, 10]), list].height(Length::Fill).padding([0, 4]).into()
+        column![self.notice_label(), list].height(Length::Fill).padding([0, 4]).into()
     }
 
-    fn footer(&self) -> Element<'_, Event> {
+    fn action_list(&self, choice: usize) -> Element<'_, Event> {
+        let mut rows = column![self.notice_label()].height(Length::Fill).padding([0, 4]);
+        if let Some(entry) = self.selected_entry() {
+            for (slot, action) in window_actions(entry).into_iter().enumerate() {
+                let selected = slot == choice;
+                let content = row![
+                    text(action.label()).size(15),
+                    space::horizontal(),
+                    numbered_slot::<Event>(slot, selected, self.pending.is_none()),
+                ]
+                .align_y(iced::Center)
+                .padding([0, 10]);
+                let row = button(selectable_result_row(content, selected))
+                    .on_press_maybe(self.pending.is_none().then_some(Event::Run(entry.id, action)))
+                    .padding(0)
+                    .style(|theme: &Theme, _| button::Style {
+                        text_color: palette::TEXT.resolve(theme),
+                        ..Default::default()
+                    });
+                rows = rows.push(row);
+            }
+        }
+        rows.into()
+    }
+
+    fn footer(&self, action_key: String) -> Element<'_, Event> {
         let back = button(hint("Esc", "Back"))
-            .on_press_maybe((!self.switching).then_some(Event::Back))
+            .on_press_maybe((self.pending != Some(Action::Switch)).then_some(Event::Back))
             .padding([4, 6])
             .style(status_button_style);
         let mut actions = row![back, space::horizontal()].align_y(iced::Center);
-        if let Some(id) = self.selected().filter(|_| !self.switching) {
-            actions = actions.push(
-                button(primary_hint("Enter", "Switch"))
-                    .on_press(Event::Switch(id))
-                    .padding([4, 6])
-                    .style(status_button_style),
-            );
+        if let Some(id) = self.selected().filter(|_| self.pending.is_none()) {
+            actions = actions.extend(self.footer_actions(id, action_key));
         }
         container(actions).height(FOOTER_HEIGHT).padding([0.0, PAD]).align_y(iced::Center).style(footer_style).into()
     }
+
+    fn footer_actions(&self, id: u64, action_key: String) -> Vec<Element<'_, Event>> {
+        let control =
+            |label, event| button(label).on_press_maybe(event).padding([4, 6]).style(status_button_style).into();
+        match self.menu {
+            Some(choice) => vec![control(primary_hint("Enter", "Apply"), self.menu_action(choice))],
+            None => vec![
+                control(hint(action_key, "Actions"), Some(Event::OpenActions(id))),
+                control(primary_hint("Enter", "Switch"), Some(Event::Run(id, Action::Switch))),
+            ],
+        }
+    }
+}
+
+fn window_actions(entry: &Entry) -> [Action; 2] {
+    [Action::Maximize(!entry.maximized), Action::Minimize(!entry.minimized)]
+}
+
+fn window_title(entry: &Entry) -> &str {
+    if entry.title.trim().is_empty() { "Untitled window" } else { &entry.title }
 }
 
 struct WindowRow {
@@ -285,7 +416,12 @@ impl WindowRow {
             .find(|app| app.id == entry.app_id || app.id.strip_suffix(".desktop") == Some(entry.app_id.as_str()));
         let name = known.map(|app| app.name.as_str()).unwrap_or(&entry.app_id);
         let app = if name.is_empty() { "Unknown application" } else { name };
-        let label = if entry.minimized { format!("{app} · Minimized") } else { app.into() };
+        let state = match (entry.minimized, entry.maximized) {
+            (true, _) => " · Minimized",
+            (_, true) => " · Maximized",
+            _ => "",
+        };
+        let label = format!("{app}{state}");
         let icon = icons.get(
             known.and_then(|app| app.icon.as_deref()).unwrap_or_default(),
             &["focus-windows", "application-x-executable"],
@@ -299,7 +435,7 @@ impl WindowRow {
     }
 
     fn view(&self, slot: usize, selected: bool, switching: bool) -> Element<'_, Event> {
-        let title = if self.entry.title.trim().is_empty() { "Untitled window" } else { &self.entry.title };
+        let title = window_title(&self.entry);
         let icon: Element<'_, Event> = match self.icon.clone() {
             Some(Icon::Svg(handle)) => svg(handle).width(ICON_SIZE).height(ICON_SIZE).into(),
             Some(Icon::Raster(handle)) => image(handle).width(ICON_SIZE).height(ICON_SIZE).into(),
@@ -321,6 +457,7 @@ impl WindowRow {
         mouse_area(row)
             .on_press(Event::Press(self.entry.id))
             .on_double_click(Event::DoubleClick(self.entry.id))
+            .on_right_press(Event::OpenActions(self.entry.id))
             .interaction(iced::mouse::Interaction::Pointer)
             .into()
     }
@@ -362,36 +499,40 @@ impl Launcher {
     }
 
     pub(super) fn update_windows(&mut self, message: Message) -> Task<Message> {
-        if matches!(&message, Message::Files { .. } | Message::Ui(_) | Message::InputClipboard(_)) {
-            return update_content(self, message);
-        }
         let generation = self.window_switcher.generation;
         let panel = self.window_switcher.panel.as_mut().expect("window switcher is open");
-        if matches!(message, Message::FocusLost) && !panel.switching {
+        if panel.routes_to_parent(&message) {
             return update_content(self, message);
         }
-        match panel.input_event(message, generation) {
-            Some(Event::Back) if !panel.switching => {
+        let task = match panel.input_event(message, generation) {
+            Some(Event::Back) if panel.menu.is_none() && panel.pending != Some(Action::Switch) => {
                 self.window_switcher.panel = None;
-                Task::batch([self.resize(), crate::input::focus(search_id())])
+                return Task::batch([self.resize(), crate::input::focus(search_id())]);
             }
-            Some(Event::Switched(Ok(()))) => iced::exit(),
-            Some(Event::Update(update)) => {
-                panel.receive(update, &self.apps, &mut self.icons);
-                Task::none()
-            }
-            Some(event) => panel.event(event).map(move |event| Message::Windows { generation, event }),
+            Some(Event::Finished(Ok(()))) if panel.pending == Some(Action::Switch) => return iced::exit(),
+            Some(Event::Update(update)) => panel.receive(update, &self.apps, &mut self.icons),
+            Some(event) => panel.event(event),
             None => Task::none(),
-        }
+        };
+        task.map(move |event| Message::Windows { generation, event })
     }
 }
 
 impl Panel {
+    fn routes_to_parent(&self, message: &Message) -> bool {
+        match message {
+            Message::Files { .. } | Message::Ui(_) | Message::InputClipboard(_) => true,
+            Message::FocusLost => self.pending.is_none(),
+            _ => false,
+        }
+    }
+
     fn input_event(&mut self, message: Message, generation: u64) -> Option<Event> {
         match message {
             Message::Windows { generation: current, event } if current == generation => Some(event),
-            Message::Cmd(command) if !self.switching => self.command(command),
-            Message::Wheel(delta) if !self.switching => {
+            Message::Cmd(Command::Back) if self.pending != Some(Action::Switch) => Some(Event::Back),
+            Message::Cmd(command) if self.pending.is_none() => self.command(command),
+            Message::Wheel(delta) if self.pending.is_none() && self.menu.is_none() => {
                 self.move_by(-(delta.signum() as isize));
                 None
             }
@@ -405,11 +546,11 @@ mod tests {
     use super::*;
 
     fn window(id: u64, title: &str) -> Entry {
-        Entry { id, title: title.into(), app_id: "org.example.Editor".into(), minimized: false }
+        Entry { id, title: title.into(), app_id: "org.example.Editor".into(), ..Entry::default() }
     }
 
     fn refresh(panel: &mut Panel, entries: Vec<Entry>) {
-        panel.receive(Update::Windows(entries), &[], &mut Icons::disabled());
+        let _ = panel.receive(Update::Windows(entries), &[], &mut Icons::disabled());
     }
 
     #[test]
@@ -424,7 +565,7 @@ mod tests {
         refresh(&mut panel, vec![window(3, "Notes"), window(4, "Renamed report")]);
         assert!(panel.command(Command::Activate).is_none());
         assert!(!panel.select(2));
-        assert!(matches!(panel.command(Command::ActivateVisible(1)), Some(Event::Switch(4))));
+        assert!(matches!(panel.command(Command::ActivateVisible(1)), Some(Event::Run(4, Action::Switch))));
     }
 
     #[test]
@@ -436,5 +577,18 @@ mod tests {
         panel.change_query("REPORT editor".into());
         assert_eq!(panel.matches.len(), 1);
         assert_eq!(panel.selected(), Some(1));
+    }
+
+    #[test]
+    fn window_actions_follow_confirmed_state_and_keep_selection() {
+        let mut panel = Panel::new();
+        refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
+        let _ = panel.event(Event::OpenActions(2));
+        assert!(matches!(panel.command(Command::Activate), Some(Event::Run(2, Action::Maximize(true)))));
+        refresh(&mut panel, vec![Entry { maximized: true, ..window(2, "Notes") }]);
+        assert!(matches!(panel.command(Command::Activate), Some(Event::Run(2, Action::Maximize(false)))));
+        refresh(&mut panel, vec![window(1, "Report")]);
+        assert!(panel.menu.is_none());
+        assert!(panel.command(Command::Activate).is_none());
     }
 }

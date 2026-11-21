@@ -272,9 +272,19 @@ or [wlr-data-control](https://github.com/swaywm/wlr-protocols/blob/master/unstab
 
 Search for **Switch windows** in **All** or **Commands**. Filter by window
 title or application name. Results show the application and indicate minimized
-windows. Use Up/Down or Tab to select. Press Enter, use a visible numbered
+or maximized windows. Use Up/Down or Tab to select. Press Enter, use a visible numbered
 shortcut, or double-click a row to switch to its window. Esc or **Back**
 restores the previous search.
+
+Use **Actions** (Ctrl+K by default), Shift+F10, the Menu key or right-click
+on a row to manage that window. Choose **Maximize** or **Restore size**, or
+choose **Minimize** or **Unminimize**. Use the pointer, Up/Down and Enter,
+or the numbered shortcuts. The inverse action appears after the desktop
+reports the change. Esc returns to the same window filter and selection.
+
+![Window actions after the selected window was maximized](assets/launcher-window-actions.png)
+
+Captured at 1× in isolated Labwc with tiny-skia and a synthetic window.
 
 The list updates while the command is open. If the selected window closes or
 stops matching after a title change, choose another window. FerroSeek keeps
@@ -282,7 +292,7 @@ window titles in memory while the command is open.
 
 Switching requires a Wayland session with a single input seat and
 [wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml).
-The compositor handles focus and can decline the request. Virtual Labwc 0.7.1
+The compositor manages focus and window state and may decline a request. Virtual Labwc 0.7.1
 was tested at 1× using tiny-skia and synthetic application windows. The command
 reports unavailability on the virtual Plasma 5.27 setup.
 

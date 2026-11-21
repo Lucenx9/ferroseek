@@ -90,6 +90,8 @@ impl Launcher {
             Some(Shortcut::SearchFolders)
         } else if self.appearance.is_some() {
             Some(Shortcut::Appearance)
+        } else if self.window_switcher.panel.is_some() {
+            Some(Shortcut::Actions)
         } else {
             None
         };
@@ -99,10 +101,7 @@ impl Launcher {
     }
 
     fn overrides_launcher_shortcuts(&self) -> bool {
-        self.application_picker.is_some()
-            || self.window_switcher.panel.is_some()
-            || self.global_shortcuts.panel.is_some()
-            || self.saved_editor_open()
+        self.application_picker.is_some() || self.global_shortcuts.panel.is_some() || self.saved_editor_open()
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
@@ -118,7 +117,8 @@ impl Launcher {
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {
         if let Some(panel) = &self.window_switcher.panel {
-            return Some(panel.view(self.window_switcher.generation));
+            let key = self.shortcuts.bindings.get(Shortcut::Actions).to_string();
+            return Some(panel.view(self.window_switcher.generation, key));
         }
         if let Some(panel) = &self.clipboard_history.panel {
             return Some(self.clipboard_view(panel));
