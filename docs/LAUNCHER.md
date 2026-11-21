@@ -996,7 +996,10 @@ invocation. Esc closes the form and returns to the selected command.
 
 The command view shows the outcome and the first 64 KiB of combined standard
 output and standard error as plain text. After the process exits, choose
-**Copy output** or press Enter. Esc returns to the captured search. During
+**Copy output** or press Enter. Choose **Run again** or press Ctrl+R to run the
+command again. Confirmation and argument fields apply as on the first run.
+Fields start empty. Esc from this form returns to the previous output.
+Esc from the output returns to the captured search. During
 execution, Esc or **Cancel** stops the process group and returns to search.
 The launcher stops a command that is still running 30 seconds after it starts.
 Changes the command already made remain in effect.
@@ -1038,7 +1041,8 @@ and fixed arguments.
 The running view identifies the current step. A failed command or a timeout
 stops the workflow and identifies the step that stopped it. The timeout is
 30 seconds per step and the first 64 KiB of output are shared across the
-workflow. Esc cancels the current process group and returns to search.
+workflow. **Run again** opens confirmation for the whole workflow, starting
+at the first step. Esc cancels the running process group and returns to search.
 
 Update workflow steps before renaming or deleting a command used by a workflow.
 

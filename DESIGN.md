@@ -235,6 +235,8 @@ Local command results use Run as their primary action. When confirmation is
 configured, show the executable and arguments and keep Back available. Show
 progress and cancellation during execution, then the outcome and readable,
 copyable text output. Back restores the captured query and selection.
+Offer Run again from the outcome. Keep the prior report available while the
+user reviews the next run, and ask for fresh values for its named arguments.
 Use labeled fields for registration and editing. Confirm discard and deletion
 explicitly. Save returns to Commands with the entry selected.
 When a command asks for values, focus the first field and keep the first

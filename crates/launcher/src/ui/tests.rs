@@ -970,6 +970,58 @@ fn leaving_local_command_confirmation_restores_the_selected_result() {
 }
 
 #[test]
+fn repeating_a_local_command_keeps_the_report_until_a_new_run() {
+    use scripts::Event;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Launch check'\nexecutable = '/bin/true'\nparameters = ['Project name']\n",
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&dir.path().join("config.toml"));
+    let _ = update(&mut state, Message::Query("launch check".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let generation = state.scripts.generation;
+    let send = |state: &mut Launcher, generation, event| update(state, Message::Script { generation, event });
+    let _ = send(&mut state, generation, Event::Input(0, "first value".into()));
+    let _ = send(&mut state, generation, Event::Run);
+    let _ = send(
+        &mut state,
+        generation,
+        Event::Finished(crate::script_commands::Report {
+            completion: Err("Synthetic failure".into()),
+            failed_step: None,
+            output: "fixture output".into(),
+            truncated: false,
+        }),
+    );
+
+    let size = iced::Size::new(288.0, 275.0);
+    let labels = rendered_labels(view_content(&state), size);
+    for name in ["Back", "Run again", "Copy output"] {
+        let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
+        assert!(bounds.x + bounds.width <= size.width - PAD, "{name} is clipped: {bounds:?}");
+    }
+
+    let _ = update(&mut state, Message::RefreshSearchStatus);
+    let retry = state.scripts.generation;
+    assert_ne!(retry, generation);
+    let _ = send(&mut state, generation, Event::Input(0, "stale input".into()));
+    let _ = send(&mut state, retry, Event::Run);
+    let labels = rendered_labels(view_content(&state), size);
+    assert!(labels.text.iter().any(|(value, _)| value == "Enter a value."));
+
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    let labels = rendered_labels(view_content(&state), size);
+    assert!(labels.text.iter().any(|(value, _)| value == "fixture output"));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.scripts.panel.is_none());
+    assert_eq!(state.query, "launch check");
+}
+
+#[test]
 fn saved_favorites_share_the_home_order_with_commands() {
     let mut s = search_state();
     s.saved.links.push(

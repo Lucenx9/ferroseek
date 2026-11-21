@@ -81,6 +81,7 @@ impl State {
 pub enum Event {
     Back,
     Run,
+    RunAgain,
     Copy,
     StepStarted(usize),
     Finished(Report),
@@ -89,9 +90,9 @@ pub enum Event {
 }
 
 enum Stage {
-    Confirm(Prompt),
+    Confirm { prompt: Prompt, previous: Option<Arc<Report>> },
     Running { _job: Job, step: usize },
-    Finished(Report),
+    Finished(Arc<Report>),
 }
 
 pub(super) struct Panel {
@@ -107,7 +108,7 @@ impl Panel {
         let prompt = Prompt::new(plan.parameters.len());
         Self {
             plan: Arc::new(plan),
-            stage: Stage::Confirm(prompt),
+            stage: Stage::Confirm { prompt, previous: None },
             scroll: Id::unique(),
             viewport: Id::unique(),
             copied: false,
@@ -116,14 +117,14 @@ impl Panel {
 
     pub(super) fn prompt(&self) -> Option<&Prompt> {
         match &self.stage {
-            Stage::Confirm(prompt) => Some(prompt),
+            Stage::Confirm { prompt, .. } => Some(prompt),
             _ => None,
         }
     }
 
     fn primary(&self) -> Option<(&'static str, &'static str, Event)> {
         match &self.stage {
-            Stage::Confirm(_) => Some(("Ctrl+Enter", "Run", Event::Run)),
+            Stage::Confirm { .. } => Some(("Ctrl+Enter", "Run", Event::Run)),
             Stage::Finished(report) if !report.output.is_empty() => {
                 let label = if self.copied { "Copied output" } else { "Copy output" };
                 Some(("Enter", label, Event::Copy))
@@ -143,16 +144,9 @@ impl Panel {
         .height(56);
         let scroll = container(scrollable(self.body(generation)).id(self.scroll.clone()).height(Length::Fill))
             .id(self.viewport.clone());
-        let back = if matches!(self.stage, Stage::Running { .. }) { "Cancel" } else { "Back" };
-        let event = |event| Message::Script { generation, event };
-        let mut actions = row![footer_button(hint("Esc", back), event(Event::Back)), space::horizontal()]
-            .align_y(iced::Center)
-            .spacing(6);
-        if let Some((key, label, action)) = self.primary() {
-            actions = actions.push(footer_button(primary_hint(key, label), event(action)));
-        }
-        let footer =
-            container(actions).height(FOOTER_HEIGHT).padding([0.0, PAD]).align_y(iced::Center).style(footer_style);
+        let controls =
+            iced::widget::responsive(move |size| self.controls(generation, size.width < 360.0)).height(FOOTER_HEIGHT);
+        let footer = container(controls).height(FOOTER_HEIGHT).padding([0.0, PAD]).style(footer_style);
         container(column![header, divider(), scroll, divider(), footer])
             .padding(PAD)
             .width(Length::Fill)
@@ -161,9 +155,27 @@ impl Panel {
             .into()
     }
 
+    fn controls(&self, generation: u64, compact: bool) -> Element<'static, Message> {
+        let crowded = compact && matches!(&self.stage, Stage::Finished(report) if !report.output.is_empty());
+        let control = |label: &'static str, full, event| {
+            let content = if crowded { text(label).size(12).into() } else { full };
+            footer_button(content, Message::Script { generation, event })
+        };
+        let back = if matches!(self.stage, Stage::Running { .. }) { "Cancel" } else { "Back" };
+        let mut actions =
+            row![control(back, hint("Esc", back), Event::Back), space::horizontal()].align_y(iced::Center).spacing(4);
+        if matches!(self.stage, Stage::Finished(_)) {
+            actions = actions.push(control("Run again", hint("Ctrl+R", "Run again"), Event::RunAgain));
+        }
+        if let Some((key, label, action)) = self.primary() {
+            actions = actions.push(control(label, primary_hint(key, label), action));
+        }
+        container(actions).center_y(Length::Fill).into()
+    }
+
     fn body(&self, generation: u64) -> Element<'_, Message> {
         let body = match &self.stage {
-            Stage::Confirm(prompt) => self.confirmation(prompt, generation),
+            Stage::Confirm { prompt, .. } => self.confirmation(prompt, generation),
             Stage::Running { step, .. } => self.running(*step),
             Stage::Finished(report) => report_body(report),
         };
@@ -212,11 +224,31 @@ impl Panel {
             let _ = tx.unbounded_send(index);
         });
         self.stage = Stage::Running { _job: job, step: 0 };
+        self.copied = false;
         crate::timing::event("script_started");
         Task::batch([
+            self.scroll_start(),
             Task::run(rx, move |index| Message::Script { generation, event: Event::StepStarted(index) }),
             Task::perform(work, move |result| Message::Script { generation, event: Event::Finished(result) }),
         ])
+    }
+
+    fn scroll_start(&self) -> Task<Message> {
+        operation::snap_to(self.scroll.clone(), RelativeOffset::START)
+    }
+
+    fn needs_review(&self) -> bool {
+        self.plan.confirm || !self.plan.parameters.is_empty()
+    }
+
+    fn restore_report(&mut self) -> bool {
+        if let Stage::Confirm { previous, .. } = &mut self.stage
+            && let Some(report) = previous.take()
+        {
+            self.stage = Stage::Finished(report);
+            return true;
+        }
+        false
     }
 
     fn command(&self, command: Command, generation: u64) -> Task<Message> {
@@ -316,12 +348,35 @@ impl Launcher {
     }
 
     fn open_plan(&mut self, plan: Plan) -> Task<Message> {
-        let manual = plan.confirm || !plan.parameters.is_empty();
+        let panel = Panel::new(plan);
+        let initial = if panel.needs_review() { Event::Focus(0) } else { Event::Run };
         self.panel = None;
         self.scripts.generation += 1;
-        self.scripts.panel = Some(Panel::new(plan));
-        let action = if manual { self.script_event(Event::Focus(0)) } else { self.script_event(Event::Run) };
+        self.scripts.panel = Some(panel);
+        let action = self.script_event(initial);
         Task::batch([self.resize(), action])
+    }
+
+    fn script_back(&mut self) -> Task<Message> {
+        let panel = self.scripts.panel.as_mut().expect("active script view");
+        if panel.restore_report() {
+            return panel.scroll_start();
+        }
+        self.scripts.panel = None;
+        self.return_to_parent()
+    }
+
+    fn repeat_script(&mut self, report: Arc<Report>) -> Task<Message> {
+        let panel = self.scripts.panel.as_mut().expect("active script view");
+        // Progress or input events already queued for the preceding run can still arrive.
+        self.scripts.generation += 1;
+        if !panel.needs_review() {
+            return panel.start(Vec::new(), self.scripts.generation);
+        }
+        let mut prompt = Prompt::new(panel.plan.parameters.len());
+        let focus = prompt.focus(0, &panel.scroll, &panel.viewport);
+        panel.stage = Stage::Confirm { prompt, previous: Some(report) };
+        panel.scroll_start().chain(focus)
     }
 
     pub(super) fn update_scripts(&mut self, message: Message) -> Task<Message> {
@@ -333,6 +388,7 @@ impl Launcher {
         }
         match message {
             Message::Script { generation, event } if generation == self.scripts.generation => self.script_event(event),
+            Message::RefreshSearchStatus => self.script_event(Event::RunAgain),
             Message::Cmd(Command::Back) => self.script_event(Event::Back),
             Message::Cmd(command) => self.scripts.panel.as_ref().unwrap().command(command, self.scripts.generation),
             Message::Ui(UiEvent::Toggle) => {
@@ -348,16 +404,17 @@ impl Launcher {
         let panel = self.scripts.panel.as_mut().expect("active script view");
         let generation = self.scripts.generation;
         match (event, &mut panel.stage) {
-            (Event::Back, _) => {
-                self.scripts.panel = None;
-                self.return_to_parent()
+            (Event::Back, _) => self.script_back(),
+            (Event::RunAgain, Stage::Finished(report)) => {
+                let report = Arc::clone(report);
+                self.repeat_script(report)
             }
-            (Event::Input(index, value), Stage::Confirm(prompt)) => {
+            (Event::Input(index, value), Stage::Confirm { prompt, .. }) => {
                 prompt.change(index, value);
                 Task::none()
             }
-            (Event::Focus(index), Stage::Confirm(prompt)) => prompt.focus(index, &panel.scroll, &panel.viewport),
-            (Event::Run, Stage::Confirm(prompt)) => {
+            (Event::Focus(index), Stage::Confirm { prompt, .. }) => prompt.focus(index, &panel.scroll, &panel.viewport),
+            (Event::Run, Stage::Confirm { prompt, .. }) => {
                 let inputs = match prompt.take_arguments() {
                     Ok(inputs) => inputs,
                     Err(index) => return prompt.focus(index, &panel.scroll, &panel.viewport),
@@ -369,7 +426,7 @@ impl Launcher {
                 Task::none()
             }
             (Event::Finished(result), Stage::Running { .. }) => {
-                panel.stage = Stage::Finished(result);
+                panel.stage = Stage::Finished(Arc::new(result));
                 crate::timing::event("script_finished");
                 Task::none()
             }
