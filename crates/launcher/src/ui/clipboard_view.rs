@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Search and manage saved clipboard text.
 
-use std::sync::Arc;
-use std::time::Duration;
-
 use iced::futures::{StreamExt, stream};
 use iced::widget::operation::{self, AbsoluteOffset, RelativeOffset};
 use iced::widget::{Id, button, column, container, mouse_area, responsive, row, scrollable, space, text, text_input};
@@ -13,13 +10,11 @@ use super::{
     Launcher, Message, divider, field_style, footer_style, hint, keycap, label_for_width, page_header, palette,
     primary_hint, status_button_style, surface_style, tab_style, update_content,
 };
-use crate::clipboard_history::publish::{self, Lease};
+use crate::clipboard_history::publish;
 use crate::clipboard_history::{Edit, Entry, Mode, Profile, Recorder, Snapshot};
 use crate::layout::{FOOTER_HEIGHT, PAD, ROW_HEIGHT};
 use crate::model::{Command, Cursor, NUMBERED_SLOTS};
-use crate::window_switcher::PasteTarget;
 use crate::{folders, timing, usage};
-use iced_layershell::reexport::KeyboardInteractivity;
 
 const HEIGHT: u32 = 536;
 const EMPTY_HEIGHT: u32 = 292;
@@ -53,10 +48,8 @@ pub enum Event {
     PinnedOnly,
     Refresh,
     Copy(u64),
-    Copied(Result<Arc<Lease>, String>),
+    Copied(Option<String>),
     Paste(u64),
-    PasteTimeout(u64),
-    Pasted(Result<(), &'static str>),
     Back,
 }
 
@@ -64,20 +57,18 @@ pub(super) struct State {
     private: bool,
     generation: u64,
     pub(super) panel: Option<Panel>,
-    paste_target: Option<PasteTarget>,
 }
 
 impl State {
-    pub(super) fn new(private: bool, paste_target: Option<PasteTarget>) -> Self {
-        Self { private, generation: 0, panel: None, paste_target }
+    pub(super) fn new(private: bool) -> Self {
+        Self { private, generation: 0, panel: None }
     }
 }
 
 #[derive(Debug)]
 enum Pending {
     Edit,
-    Copy { paste: bool },
-    Release { attempt: u64, lease: Arc<Lease> },
+    Copy,
     Paste,
 }
 
@@ -96,7 +87,6 @@ pub(super) struct Panel {
     preview: Option<u64>,
     feed: Option<iced::task::Handle>,
     pending: Option<Pending>,
-    paste_attempt: u64,
     confirm: bool,
     error: Option<String>,
     note: &'static str,
@@ -119,7 +109,6 @@ impl Panel {
             preview: None,
             feed: None,
             pending: None,
-            paste_attempt: 0,
             confirm: false,
             error: None,
             note: "",
@@ -159,6 +148,16 @@ impl Panel {
 
     fn copy_target(&self) -> Option<&Entry> {
         if self.preview.is_some() { self.viewed() } else { self.selected() }
+    }
+
+    fn copy_text(&self, id: u64) -> Option<String> {
+        self.copy_target().filter(|entry| entry.id == id && self.can_act()).map(|entry| entry.text.clone())
+    }
+
+    pub(super) fn paste_feedback(&mut self, error: Option<&str>) {
+        self.pending = error.is_none().then_some(Pending::Paste);
+        self.error = error.map(str::to_owned);
+        self.note = "";
     }
 
     fn filter(&mut self, selected: Option<u64>) {
@@ -530,8 +529,8 @@ impl Panel {
         if let Some(operation) = &self.pending {
             let message = match operation {
                 Pending::Edit => "Saving clipboard history…",
-                Pending::Copy { .. } => "Copying text…",
-                Pending::Release { .. } | Pending::Paste => "Returning to the original window…",
+                Pending::Copy => "Copying text…",
+                Pending::Paste => "Pasting text…",
             };
             return (message, palette::DIM);
         }
@@ -693,16 +692,12 @@ impl Launcher {
     }
 
     pub(super) fn clipboard_view<'a>(&self, panel: &'a Panel) -> Element<'a, Message> {
-        panel.view(
-            self.clipboard_history.generation,
-            self.window_width,
-            self.clipboard_history.paste_target.as_ref().map(PasteTarget::label),
-        )
+        panel.view(self.clipboard_history.generation, self.window_width, self.paste.label())
     }
 
     pub(super) fn resize_clipboard(&mut self, height: u32) {
         if let Some(panel) = &mut self.clipboard_history.panel {
-            let bar = if self.clipboard_history.paste_target.is_some() { PASTE_BAR_HEIGHT } else { 0 };
+            let bar = if self.paste.label().is_some() { PASTE_BAR_HEIGHT } else { 0 };
             panel.update_rows(height.saturating_sub(bar));
         }
     }
@@ -710,8 +705,8 @@ impl Launcher {
     pub(super) fn update_clipboard_history(&mut self, message: Message) -> Task<Message> {
         let generation = self.clipboard_history.generation;
         let panel = self.clipboard_history.panel.as_mut().expect("clipboard panel is open");
-        if matches!(&message, Message::FocusLost) {
-            return self.clipboard_focus_lost();
+        if matches!((&message, &panel.pending), (Message::FocusLost, Some(Pending::Copy))) {
+            return Task::none();
         }
         if matches!(&message, Message::Files { .. } | Message::Ui(_) | Message::FocusLost | Message::InputClipboard(_))
         {
@@ -731,11 +726,12 @@ impl Launcher {
             Event::Edited(result) => self.clipboard_loaded(result, true),
             Event::Copied(result) => self.history_copy_finished(result),
             Event::Copy(id) | Event::DoubleClick(id) => {
-                self.copy_history_entry(id, matches!(event, Event::DoubleClick(_)), false)
+                self.copy_history_entry(id, matches!(event, Event::DoubleClick(_)))
             }
-            Event::Paste(id) => self.copy_history_entry(id, false, true),
-            Event::PasteTimeout(attempt) => self.paste_focus_timeout(attempt),
-            Event::Pasted(result) => self.paste_finished(result),
+            Event::Paste(id) => {
+                let text = panel.copy_text(id);
+                text.map_or_else(Task::none, |text| self.paste_text(text, super::paste::Origin::History))
+            }
             Event::Preview(id) if panel.can_act() => panel.begin_preview(id),
             Event::ScrollPreview(command) => panel.scroll_preview(command),
             Event::Back => self.back_from_clipboard(),
@@ -754,110 +750,31 @@ impl Launcher {
         if height == panel.height() { focus } else { Task::batch([focus, self.resize()]) }
     }
 
-    fn copy_history_entry(&mut self, id: u64, double_click: bool, paste: bool) -> Task<Message> {
+    fn copy_history_entry(&mut self, id: u64, double_click: bool) -> Task<Message> {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
         if double_click && !panel.double_clicked(id) {
             return Task::none();
         }
-        if paste && self.clipboard_history.paste_target.is_none() {
-            return Task::none();
-        }
-        if !panel.can_act() {
-            return Task::none();
-        }
-        let Some(text) = panel.copy_target().filter(|entry| entry.id == id).map(|entry| entry.text.clone()) else {
-            return Task::none();
-        };
-        panel.pending = Some(Pending::Copy { paste });
+        let Some(text) = panel.copy_text(id) else { return Task::none() };
+        panel.pending = Some(Pending::Copy);
         panel.error = None;
         panel.note = "Copying text…";
         let generation = self.clipboard_history.generation;
-        let handoff = zruntime::unblock(move || publish::handoff(&text).map(Arc::new).map_err(|_| text));
+        let handoff = zruntime::unblock(move || publish::handoff(&text).err().map(|_| text));
         Task::perform(handoff, move |result| Message::Clipboard { generation, event: Event::Copied(result) })
     }
 
-    fn history_copy_finished(&mut self, result: Result<Arc<Lease>, String>) -> Task<Message> {
-        let panel = self.clipboard_history.panel.as_mut().unwrap();
-        let paste = matches!(panel.pending.take(), Some(Pending::Copy { paste: true }));
-        panel.note = "Copied text";
-        let focus = panel.focus().map_or_else(Task::none, crate::input::focus);
-        match result {
-            Err(text) => {
-                if paste {
-                    panel.error = Some("Copied text. Keep FerroSeek open and paste manually.".into());
-                }
-                Task::batch([self.write_clipboard(text), focus])
-            }
-            Ok(lease) => {
-                timing::event("clipboard_handoff_ready");
-                self.clipboard_owner = false;
-                if paste { self.release_for_paste(lease) } else { focus }
-            }
-        }
-    }
-
-    fn release_for_paste(&mut self, lease: Arc<Lease>) -> Task<Message> {
-        let panel = self.clipboard_history.panel.as_mut().unwrap();
-        panel.paste_attempt += 1;
-        let attempt = panel.paste_attempt;
-        panel.pending = Some(Pending::Release { attempt, lease });
-        let generation = self.clipboard_history.generation;
-        Task::batch([
-            Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None)),
-            Task::perform(
-                async {
-                    if let Ok(runtime) = zruntime::SharedRuntime::current() {
-                        runtime.sleep(Duration::from_millis(750)).await;
-                    }
-                },
-                move |()| Message::Clipboard { generation, event: Event::PasteTimeout(attempt) },
-            ),
-        ])
-    }
-
-    fn clipboard_focus_lost(&mut self) -> Task<Message> {
-        let panel = self.clipboard_history.panel.as_mut().unwrap();
-        match &panel.pending {
-            Some(Pending::Release { lease, .. }) => {
-                let lease = Arc::clone(lease);
-                self.send_paste(lease)
-            }
-            Some(Pending::Copy { .. } | Pending::Paste) => Task::none(),
-            _ => update_content(self, Message::FocusLost),
-        }
-    }
-
-    fn send_paste(&mut self, lease: Arc<Lease>) -> Task<Message> {
-        let Some(target) = &self.clipboard_history.paste_target else {
-            return self.paste_finished(Err("The original window is unavailable. Paste the copied text manually."));
-        };
-        self.clipboard_history.panel.as_mut().unwrap().pending = Some(Pending::Paste);
-        let generation = self.clipboard_history.generation;
-        Task::perform(target.send(lease), move |result| Message::Clipboard { generation, event: Event::Pasted(result) })
-    }
-
-    fn paste_focus_timeout(&mut self, attempt: u64) -> Task<Message> {
-        let panel = self.clipboard_history.panel.as_ref().unwrap();
-        if matches!(panel.pending, Some(Pending::Release { attempt: current, .. }) if current == attempt) {
-            self.paste_finished(Err("Could not confirm the focus change. Paste the copied text manually."))
-        } else {
-            Task::none()
-        }
-    }
-
-    fn paste_finished(&mut self, result: Result<(), &'static str>) -> Task<Message> {
+    fn history_copy_finished(&mut self, fallback: Option<String>) -> Task<Message> {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
         panel.pending = None;
-        match result {
-            Ok(()) => {
-                timing::event("clipboard_paste_submitted");
-                iced::exit()
-            }
-            Err(error) => {
-                timing::event("clipboard_paste_rejected");
-                panel.error = Some(error.into());
-                let focus = panel.focus().map_or_else(Task::none, crate::input::focus);
-                Task::batch([Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::Exclusive)), focus])
+        panel.note = "Copied text";
+        let focus = panel.focus().map_or_else(Task::none, crate::input::focus);
+        match fallback {
+            Some(text) => Task::batch([self.write_clipboard(text), focus]),
+            None => {
+                timing::event("clipboard_handoff_ready");
+                self.clipboard_owner = false;
+                focus
             }
         }
     }

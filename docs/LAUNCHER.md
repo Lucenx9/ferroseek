@@ -223,6 +223,11 @@ result displays the keyword and line count. Open **Actions → Edit snippet**
 to read or change the full text. To delete, press Ctrl+D in the editor and
 confirm with Ctrl+D. Escape at the confirmation keeps editing.
 
+On desktops that support [direct paste](#clipboard-history), press Alt+Enter
+with a snippet selected, or choose **Actions → Paste snippet**. The action
+lists the original window. FerroSeek checks that window before sending the
+paste shortcut. Copy remains available for manual paste.
+
 FerroSeek keeps up to 128 snippets with unique names and up to 8 KiB of text
 each. Keywords share the same namespace as saved links and aliases. Snippets
 are saved only when you explicitly save them, including in private sessions.

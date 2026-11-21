@@ -357,6 +357,7 @@ pub enum Action {
     OpenLink,
     EditLink,
     CopySnippet,
+    PasteSnippet,
     EditSnippet,
     EditAlias,
     OpenWith,
@@ -382,6 +383,7 @@ impl Action {
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
             Action::EditLink => "Edit link",
             Action::CopySnippet => "Copy snippet",
+            Action::PasteSnippet => "Paste snippet",
             Action::EditSnippet => "Edit snippet",
             Action::EditAlias => "Edit alias",
             Action::OpenWith => "Open with…",
@@ -431,6 +433,7 @@ impl Action {
             | Self::OpenLink
             | Self::EditLink
             | Self::CopySnippet
+            | Self::PasteSnippet
             | Self::ResetRanking
             | Self::Desktop(_) => &[],
         };
@@ -447,6 +450,7 @@ impl Action {
             | Action::OpenLink
             | Action::CopyResult
             | Action::CopySnippet => "Enter",
+            Action::PasteSnippet => "Alt+Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::BrowseFolder => "Alt+Right",

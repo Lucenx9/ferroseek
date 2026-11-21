@@ -3,11 +3,22 @@
 
 use iced::Task;
 
-use super::{Launcher, Message, Scope, Status};
+use super::{Action, Launcher, Message, Scope, Status, paste, saved_editor};
 use crate::links::{self, Link};
 use crate::{model, snippets};
 
 impl Launcher {
+    pub(super) fn snippet_action(&mut self, action: Action, snippet: &snippets::Snippet) -> Task<Message> {
+        match action {
+            Action::CopySnippet => self.copy(snippet.body.to_string(), "snippet"),
+            Action::PasteSnippet => self.paste_text(snippet.body.to_string(), paste::Origin::Snippet),
+            Action::EditSnippet => {
+                self.open_saved_editor(saved_editor::Kind::Snippet, Some(saved_editor::Entry::Snippet(snippet.clone())))
+            }
+            _ => Task::none(),
+        }
+    }
+
     pub(super) fn append_search_fallbacks(&mut self) {
         let (Scope::All, Status::Idle, None, []) =
             (self.scope, &self.status, &self.search_folder, self.items.as_slice())

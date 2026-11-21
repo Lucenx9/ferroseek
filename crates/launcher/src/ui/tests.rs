@@ -571,7 +571,8 @@ fn search_state() -> Launcher {
         settings: None,
         shortcuts: shortcut_settings::State::new(Default::default()),
         global_shortcuts: global_shortcut_settings::State::default(),
-        clipboard_history: clipboard_view::State::new(true, None),
+        clipboard_history: clipboard_view::State::new(true),
+        paste: paste::State::new(None),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
@@ -3888,7 +3889,7 @@ fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
         assert_eq!(panel.cursor.selected, expected);
         let target = &state.selected().unwrap().target;
         let labels = rendered_labels(
-            action_panel(panel, target),
+            action_panel(panel, target, None),
             iced::Size::new(state.window_width as f32, state.window_height as f32),
         );
         for name in ["Esc", "Close actions", "Run"] {
@@ -3918,7 +3919,7 @@ fn filtering_actions_keeps_the_field_and_return_hint_in_place() {
         let snapshot = |state: &Launcher| {
             let panel = state.panel.as_ref().unwrap();
             rendered_labels(
-                action_panel(panel, &state.selected().unwrap().target),
+                action_panel(panel, &state.selected().unwrap().target, None),
                 iced::Size::new(state.window_width as f32, state.window_height as f32),
             )
         };

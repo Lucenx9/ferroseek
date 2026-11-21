@@ -17,6 +17,7 @@ use keyboard::{Key, Modifiers};
 #[derive(Debug, Clone, Copy)]
 pub enum Routing {
     Commands(Preferences),
+    Snippet(Preferences),
     Only(Chord, Action),
     Recording,
     Clipboard,
@@ -30,7 +31,12 @@ impl Routing {
         };
         let chord = parse_press(key, *physical_key, *modifiers);
         match self {
-            Self::Commands(preferences) => preferences.action(chord.ok()?).map(command_message),
+            Self::Snippet(_) if (*modifiers, key.as_ref()) == (Modifiers::ALT, Key::Named(Named::Enter)) => {
+                Some(Message::PasteSnippet)
+            }
+            Self::Commands(preferences) | Self::Snippet(preferences) => {
+                preferences.action(chord.ok()?).map(command_message)
+            }
             Self::Only(binding, action) => (chord == Ok(binding)).then(|| command_message(action)),
             Self::Disabled => None,
             Self::Clipboard => clipboard_shortcut(key, *modifiers),

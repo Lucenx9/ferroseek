@@ -167,6 +167,8 @@ An exact alias promotes its original result with the alias visible in the
 subtitle. The editor identifies the target and preserves the search on return.
 Snippets show their keyword and line count. Copy is an explicit action.
 The text field preserves multiline editing and uses Ctrl+S for save.
+Use the same destination check and recovery for pasting snippets and history
+entries. Show the destination in the action list when pasting a snippet.
 Clipboard history has its own filter and result list. Show recording status,
 retention, copy and deletion controls in the view. Mark pinned entries in their
 rows and provide a pinned-only filter that keeps the query. Ask for confirmation

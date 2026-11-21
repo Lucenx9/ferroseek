@@ -4,6 +4,7 @@
 mod alias_editor;
 pub(crate) mod clipboard_view;
 mod global_shortcut_settings;
+mod paste;
 mod saved_editor;
 mod saved_results;
 mod settings;
@@ -206,6 +207,7 @@ pub struct Launcher {
     shortcuts: shortcut_settings::State,
     global_shortcuts: global_shortcut_settings::State,
     clipboard_history: clipboard_view::State,
+    paste: paste::State,
     window_switcher: windows::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
@@ -300,6 +302,8 @@ pub enum Message {
     ShortcutRecorded(Result<Chord, &'static str>),
     Clipboard { generation: u64, event: clipboard_view::Event },
     ClipboardShortcut(clipboard_view::Shortcut),
+    PasteSnippet,
+    Paste { attempt: u64, event: paste::Event },
     Windows { generation: u64, event: windows::Event },
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
@@ -401,7 +405,8 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         settings: None,
         shortcuts: shortcut_settings::State::new(data.config.shortcuts),
         global_shortcuts: global_shortcut_settings::State::default(),
-        clipboard_history: clipboard_view::State::new(data.private, data.paste_target),
+        clipboard_history: clipboard_view::State::new(data.private),
+        paste: paste::State::new(data.paste_target),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
@@ -743,10 +748,7 @@ impl Launcher {
             (Action::EditLink, Target::Link(link, _)) => {
                 self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
             }
-            (Action::EditSnippet, Target::Snippet(snippet)) => {
-                self.open_saved_editor(saved_editor::Kind::Snippet, Some(saved_editor::Entry::Snippet(snippet.clone())))
-            }
-            (Action::CopySnippet, Target::Snippet(snippet)) => self.copy(snippet.body.to_string(), "snippet"),
+            (_, Target::Snippet(snippet)) => self.snippet_action(action, snippet),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
@@ -850,6 +852,9 @@ impl Launcher {
         }
         if matches!(item.target, Target::App(_) | Target::Command(_)) {
             panel.actions.push(Action::EditAlias);
+        }
+        if matches!(item.target, Target::Snippet(_)) && self.paste.label().is_some() {
+            panel.actions.push(Action::PasteSnippet);
         }
         panel
     }
@@ -1297,6 +1302,9 @@ impl Launcher {
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
+    if let Some(task) = s.route_paste(&message) {
+        return task;
+    }
     let previous = s.preview_context();
     let query_boundary = matches!(&message, Message::Query(_));
     let task = match message {
@@ -2059,7 +2067,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let surface = container(body).padding(PAD).width(Length::Fill).height(Length::Fill).style(surface_style);
 
     crate::shortcuts::capture_numbered(match (&s.panel, s.selected()) {
-        (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target)].into(),
+        (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target, s.paste.label())].into(),
         _ => surface.into(),
     })
 }
@@ -2617,7 +2625,7 @@ fn action_rows(height: u32) -> usize {
         as usize
 }
 
-fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
+fn action_panel<'a>(p: &'a Panel, target: &Target, paste_label: Option<&'a str>) -> Element<'a, Message> {
     let input = text_input("Search actions…", &p.query)
         .id(actions_id())
         .on_input(Message::ActionQuery)
@@ -2639,7 +2647,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     .padding([0, 12]);
     let header = column![title, input].spacing(8);
     let actions = p.filtered_actions();
-    let list = action_list(p, target, &actions);
+    let list = action_list(p, target, &actions, paste_label);
     let mut run = row![].spacing(12).align_y(Vertical::Center);
     if actions.len() > p.cursor.visible {
         let window = p.cursor.window(actions.len());
@@ -2684,7 +2692,12 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .into()
 }
 
-fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element<'a, Message> {
+fn action_list<'a>(
+    p: &'a Panel,
+    target: &Target,
+    actions: &[Action],
+    paste_label: Option<&'a str>,
+) -> Element<'a, Message> {
     let mut list = column![].spacing(ACTION_ROW_GAP);
     if actions.is_empty() {
         list = list.push(
@@ -2704,7 +2717,7 @@ fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element
         let a = actions[i];
         let selected = i == p.cursor.selected;
         let label = widget::responsive(move |size| {
-            text(label_for_width(p.label(a), size.width, 14.0, false)).size(14).wrapping(text::Wrapping::None).into()
+            paste::action_title(p.label(a), paste_label.filter(|_| a == Action::PasteSnippet), size.width)
         })
         .height(Length::Shrink);
         let content = row![
