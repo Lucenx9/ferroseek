@@ -93,6 +93,7 @@ pub struct Boot {
     pub favorites: Favorites,
     pub destination: Destination,
     pub settings_path: std::path::PathBuf,
+    pub paste_target: Option<crate::window_switcher::PasteTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -400,7 +401,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         settings: None,
         shortcuts: shortcut_settings::State::new(data.config.shortcuts),
         global_shortcuts: global_shortcut_settings::State::default(),
-        clipboard_history: clipboard_view::State::new(data.private),
+        clipboard_history: clipboard_view::State::new(data.private, data.paste_target),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,

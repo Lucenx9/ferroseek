@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A short-lived catalog of switchable Wayland windows.
 
+mod paste;
+
+pub use paste::{Capture as PasteCapture, Target as PasteTarget};
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -23,6 +27,7 @@ pub struct Entry {
     pub app_id: String,
     pub minimized: bool,
     pub maximized: bool,
+    pub activated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,23 +80,28 @@ pub struct Session {
 
 impl Session {
     pub fn start() -> Result<(Self, mpsc::UnboundedReceiver<Update>), &'static str> {
+        let (send, receive) = mpsc::unbounded();
+        Self::connect(Observer::Windows(send)).map(|session| (session, receive))
+    }
+
+    fn connect(observer: Observer) -> Result<Self, &'static str> {
         let connection = Connection::connect_to_env().map_err(|_| DISCONNECTED)?;
         let mut events = connection.new_event_queue::<Catalog>();
         let queue = events.handle();
-        let (send, receive) = mpsc::unbounded();
         connection.display().get_registry(&queue, ());
         std::thread::Builder::new()
             .name("window-switcher".into())
             .spawn(move || {
-                let mut catalog = Catalog::default();
-                if let Err(message) = catalog.follow(&mut events, &send) {
+                let mut catalog =
+                    Catalog { observe_paste_target: matches!(observer, Observer::Paste(_)), ..Catalog::default() };
+                if let (Err(message), Observer::Windows(send)) = (catalog.follow(&mut events, &observer), &observer) {
                     let _ = send.unbounded_send(Update::Unavailable(message));
                 }
                 catalog.stop();
                 let _ = events.flush();
             })
             .map_err(|_| DISCONNECTED)?;
-        Ok((Self { connection, queue }, receive))
+        Ok(Self { connection, queue })
     }
 
     pub fn perform(&self, id: u64, action: Action) -> impl Future<Output = Result<(), &'static str>> + use<> {
@@ -127,6 +137,12 @@ enum Wake {
     Stop,
     Request(u64, Action, Reply),
     Sent(u64, Reply),
+    Paste(paste::Request, Reply),
+}
+
+enum Observer {
+    Windows(mpsc::UnboundedSender<Update>),
+    Paste(std::sync::mpsc::SyncSender<Option<Entry>>),
 }
 
 fn reply(send: &Reply, result: Result<(), &'static str>) {
@@ -155,6 +171,8 @@ struct Catalog {
     handles: std::collections::HashMap<ObjectId, u64>,
     next_id: u64,
     pending: Option<Pending>,
+    observe_paste_target: bool,
+    paste_keyboard: paste::Input,
     changed: bool,
     stopping: bool,
     finished: bool,
@@ -164,13 +182,18 @@ impl Catalog {
     fn follow(
         &mut self,
         events: &mut wayland_client::EventQueue<Self>,
-        send: &mpsc::UnboundedSender<Update>,
+        observer: &Observer,
     ) -> Result<(), &'static str> {
         // The first sync discovers globals. The second waits for each window's initial properties.
         events.roundtrip(self).and_then(|_| events.roundtrip(self)).map_err(|_| DISCONNECTED)?;
+        if let Observer::Paste(send) = observer {
+            send.send(self.paste_target()).map_err(|_| DISCONNECTED)?;
+        }
         self.changed = true;
         while !self.finished {
-            if !self.stopping {
+            if !self.stopping
+                && let Observer::Windows(send) = observer
+            {
                 self.publish(send)?;
             }
             events.blocking_dispatch(self).map_err(|_| DISCONNECTED)?;
@@ -266,6 +289,9 @@ impl Catalog {
                 self.seats.insert(name, registry.bind(name, version.min(5), queue, ()));
                 self.changed = true;
             }
+            global @ wl_registry::Event::Global { .. } if self.observe_paste_target => {
+                self.paste_keyboard.bind(registry, global, queue);
+            }
             wl_registry::Event::GlobalRemove { name } => self.remove_global(name),
             _ => {}
         }
@@ -283,6 +309,7 @@ impl Catalog {
     }
 
     fn remove_global(&mut self, name: u32) {
+        self.paste_keyboard.remove(name);
         if let Some(seat) = self.seats.remove(&name) {
             if seat.version() >= 5 {
                 seat.release();
@@ -316,27 +343,39 @@ impl Catalog {
     }
 
     fn wake(&mut self, wake: &Wake, conn: &Connection, queue: &QueueHandle<Self>) {
-        match wake {
-            Wake::Stop => self.stop(),
-            Wake::Sent(id, send) => reply(send, self.windows.contains_key(id).then_some(()).ok_or(CLOSED)),
-            Wake::Request(id, action, send) => {
-                let Some(send) = send.lock().ok().and_then(|mut slot| slot.take()) else { return };
-                if send.is_canceled() || self.stopping {
-                    return;
-                }
-                match self.request(*id, *action) {
-                    Ok(()) if *action == Action::Switch => {
-                        // This confirms receipt. The overlay must release focus before the window can receive input.
-                        conn.display().sync(queue, Wake::Sent(*id, Some(send).into()));
-                    }
-                    Ok(()) => {
-                        self.pending = Some(Pending { id: *id, action: *action, reply: send });
-                        self.confirm_change();
-                    }
-                    Err(error) => {
-                        let _ = send.send(Err(error));
-                    }
-                }
+        let next = match wake {
+            Wake::Stop => {
+                self.stop();
+                None
+            }
+            Wake::Sent(id, send) => {
+                reply(send, self.windows.contains_key(id).then_some(()).ok_or(CLOSED));
+                None
+            }
+            Wake::Paste(request, send) => self.paste_request(request, send, queue),
+            Wake::Request(id, action, send) => self.window_request(*id, *action, send),
+        };
+        if let Some(next) = next {
+            conn.display().sync(queue, next);
+        }
+    }
+
+    fn window_request(&mut self, id: u64, action: Action, send: &Reply) -> Option<Wake> {
+        let send = send.lock().ok().and_then(|mut slot| slot.take())?;
+        if send.is_canceled() || self.stopping {
+            return None;
+        }
+        match self.request(id, action) {
+            // Confirm receipt before the overlay releases focus.
+            Ok(()) if action == Action::Switch => Some(Wake::Sent(id, Some(send).into())),
+            Ok(()) => {
+                self.pending = Some(Pending { id, action, reply: send });
+                self.confirm_change();
+                None
+            }
+            Err(error) => {
+                let _ = send.send(Err(error));
+                None
             }
         }
     }
@@ -352,6 +391,7 @@ impl Toplevel {
                 let has = |state: handle::State| states.iter().any(|bytes| u32::from_ne_bytes(*bytes) == state as u32);
                 self.draft.minimized = has(handle::State::Minimized);
                 self.draft.maximized = has(handle::State::Maximized);
+                self.draft.activated = has(handle::State::Activated);
             }
             handle::Event::Done if self.visible.as_ref() != Some(&self.draft) => {
                 self.visible = Some(self.draft.clone());

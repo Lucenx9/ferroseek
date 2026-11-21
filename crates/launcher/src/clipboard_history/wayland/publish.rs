@@ -4,7 +4,7 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use wayland_client::{delegate_noop, globals::GlobalListContents};
@@ -17,7 +17,17 @@ use super::{
     wlr_manager, wlr_offer,
 };
 
-pub fn handoff(text: &str) -> io::Result<()> {
+#[derive(Debug)]
+pub struct Lease(ChildStdout);
+
+impl Lease {
+    pub fn is_current(&self) -> bool {
+        // When the compositor cancels the source, the owner exits and closes this pipe.
+        matches!(ready(self.0.as_fd(), 0), Ok(false))
+    }
+}
+
+pub fn handoff(text: &str) -> io::Result<Lease> {
     validate(text)?;
     let mut child = Command::new(std::env::current_exe()?)
         .arg("--serve-clipboard")
@@ -25,18 +35,21 @@ pub fn handoff(text: &str) -> io::Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
-    if let Err(error) = await_selection(&mut child, text.as_bytes()) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(error);
-    }
+    let lease = match await_selection(&mut child, text.as_bytes()) {
+        Ok(lease) => lease,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
     std::thread::spawn(move || {
         let _ = child.wait();
     });
-    Ok(())
+    Ok(lease)
 }
 
-fn await_selection(child: &mut Child, text: &[u8]) -> io::Result<()> {
+fn await_selection(child: &mut Child, text: &[u8]) -> io::Result<Lease> {
     let mut input = child.stdin.take().expect("piped input");
     input.write_all(text)?;
     drop(input);
@@ -49,7 +62,7 @@ fn await_selection(child: &mut Child, text: &[u8]) -> io::Result<()> {
     if marker != [1] {
         return Err(io::Error::other("Invalid clipboard handoff confirmation."));
     }
-    Ok(())
+    Ok(Lease(response))
 }
 
 pub fn serve() -> io::Result<()> {

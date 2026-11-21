@@ -46,6 +46,7 @@ fn clipboard_shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     let shortcut = match (modifiers, key.as_ref()) {
         (Modifiers::CTRL, Key::Character("g" | "G")) => Shortcut::PinnedOnly,
         (Modifiers::CTRL, Key::Character("t" | "T")) => Shortcut::Retention,
+        (Modifiers::ALT, Key::Named(Named::Enter)) => Shortcut::Paste,
         (SHIFT_CTRL, Key::Named(Named::Delete)) => Shortcut::Clear,
         (SHIFT_CTRL, Key::Character("p" | "P")) => Shortcut::Pin,
         _ => return None,

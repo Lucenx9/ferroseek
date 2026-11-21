@@ -231,8 +231,7 @@ fn repeated_menu_transitions_preserve_order_and_native_text_editing() {
 #[test]
 fn query_prefill_is_applied_before_the_first_input_event() {
     let temp = tempfile::tempdir().unwrap();
-    let config = temp.path().join("config.toml");
-    std::fs::write(&config, "roots = []\n").unwrap();
+    let config = tempfile::NamedTempFile::new_in(temp.path()).unwrap();
     let (mut s, _pending_tasks) = boot_from(
         Boot {
             config: ferroseek_config::Config::default(),
@@ -244,7 +243,8 @@ fn query_prefill_is_applied_before_the_first_input_event() {
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
             destination: Destination::Search("report".into()),
-            settings_path: config,
+            settings_path: config.path().to_path_buf(),
+            paste_target: None,
         },
         Material::default(),
         output::Observer::default(),
@@ -571,7 +571,7 @@ fn search_state() -> Launcher {
         settings: None,
         shortcuts: shortcut_settings::State::new(Default::default()),
         global_shortcuts: global_shortcut_settings::State::default(),
-        clipboard_history: clipboard_view::State::new(true),
+        clipboard_history: clipboard_view::State::new(true, None),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,

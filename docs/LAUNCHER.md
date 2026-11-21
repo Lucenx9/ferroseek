@@ -230,7 +230,7 @@ They use the owner-only `launcher-links` file beside the main configuration.
 
 ## Clipboard history
 
-![Clipboard history with a selected pin, recording controls and keyboard actions](assets/launcher-clipboard-history.png)
+![Clipboard history with a selected pin and Paste showing its destination](assets/launcher-clipboard-history.png)
 
 The history view was captured in nested Labwc and the
 [full text preview](assets/launcher-clipboard-preview.png) in virtual KWin
@@ -249,6 +249,17 @@ input seat and clipboard data control, the copied text stays available when
 you close the launcher. You can return to the previous app and press its paste
 shortcut, even with recording stopped. Otherwise keep the launcher open while
 you paste.
+
+When **Paste** shows a destination, select text and click **Paste** or press
+Alt+Enter. This also works from the text preview. FerroSeek puts the selection
+on the clipboard, releases keyboard focus and sends Ctrl+V after observing
+the original window become active. If the window cannot be confirmed, paste
+manually. Use **Copy** for apps with a different paste shortcut.
+
+Direct paste needs a single input seat and the foreign-toplevel, virtual
+keyboard and clipboard data-control protocols. The desktop must allow their
+use. The action is hidden if FerroSeek cannot identify the original window
+before opening.
 
 Use **Pin** or Ctrl+Shift+P to keep the selected entry. Pinned entries appear
 first. **Pinned** or Ctrl+G narrows the current search to pins. **Show all** or
@@ -1140,7 +1151,7 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
 | Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
-| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width, with a 320 px calculator check | Physical outputs, other keyboard layouts and multiple seats |
+| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width. Clipboard paste by keyboard, pointer and from preview into a GTK editor, including a 320 px capture and recovery when the destination closes | Physical outputs, other keyboard layouts, multiple seats and further paste targets |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)

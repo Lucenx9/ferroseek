@@ -1136,9 +1136,11 @@ dependencies = [
  "url",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-misc",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "winit-core",
+ "xkbcommon",
  "zbus",
  "zruntime",
 ]
