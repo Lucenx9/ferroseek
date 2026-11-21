@@ -139,8 +139,8 @@ Complete desktop validation before expanding the platform.
   bounded output and a cancellable command view.
 - [x] Create, edit and delete local commands in the launcher, with explicit save,
   discard, and delete confirmation.
-- [ ] Evaluate arguments supplied at run time and reusable workflows before
-  designing a general extension API.
+- [x] Prompt for named positional arguments at run time and pass them literally.
+- [ ] Evaluate reusable workflows before designing a general extension API.
 
 ## Optional AI agent integration
 

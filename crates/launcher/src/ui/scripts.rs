@@ -8,6 +8,7 @@ use iced::widget::operation::{self, AbsoluteOffset, RelativeOffset};
 use iced::widget::{Id, column, container, row, scrollable, space, text};
 use iced::{Element, Font, Length, Task, Theme};
 
+use super::script_prompt::Prompt;
 use super::{Launcher, Message, Status, divider, footer_button, footer_style, hint, label_for_width, page_header};
 use super::{palette, primary_hint, surface_style, update_content};
 use crate::backend::UiEvent;
@@ -51,10 +52,12 @@ pub enum Event {
     Run,
     Copy,
     Finished(Result<Report, String>),
+    Input(usize, String),
+    Focus(usize),
 }
 
 enum Stage {
-    Confirm,
+    Confirm(Prompt),
     Running { _job: Job },
     Finished(Result<Report, String>),
 }
@@ -63,17 +66,26 @@ pub(super) struct Panel {
     script: Arc<Script>,
     stage: Stage,
     scroll: Id,
+    viewport: Id,
     copied: bool,
 }
 
 impl Panel {
     fn new(script: Arc<Script>) -> Self {
-        Self { script, stage: Stage::Confirm, scroll: Id::unique(), copied: false }
+        let prompt = Prompt::new(script.parameters.len());
+        Self { script, stage: Stage::Confirm(prompt), scroll: Id::unique(), viewport: Id::unique(), copied: false }
+    }
+
+    pub(super) fn prompt(&self) -> Option<&Prompt> {
+        match &self.stage {
+            Stage::Confirm(prompt) => Some(prompt),
+            _ => None,
+        }
     }
 
     fn primary(&self) -> Option<(&'static str, &'static str, Event)> {
         match &self.stage {
-            Stage::Confirm => Some(("Ctrl+Enter", "Run", Event::Run)),
+            Stage::Confirm(_) => Some(("Ctrl+Enter", "Run", Event::Run)),
             Stage::Finished(Ok(report)) if !report.output.is_empty() => {
                 let label = if self.copied { "Copied output" } else { "Copy output" };
                 Some(("Enter", label, Event::Copy))
@@ -91,7 +103,8 @@ impl Panel {
             .height(Length::Shrink),
         )
         .height(56);
-        let scroll = scrollable(self.body()).id(self.scroll.clone()).height(Length::Fill);
+        let scroll = container(scrollable(self.body(generation)).id(self.scroll.clone()).height(Length::Fill))
+            .id(self.viewport.clone());
         let back = if matches!(self.stage, Stage::Running { .. }) { "Cancel" } else { "Back" };
         let event = |event| Message::Script { generation, event };
         let mut actions = row![footer_button(hint("Esc", back), event(Event::Back)), space::horizontal()]
@@ -110,18 +123,24 @@ impl Panel {
             .into()
     }
 
-    fn body(&self) -> Element<'_, Message> {
+    fn body(&self, generation: u64) -> Element<'_, Message> {
         let body = match &self.stage {
-            Stage::Confirm => {
-                let executable = self.script.executable.display();
-                let args = self.script.args.iter().map(|arg| format!("{arg:?}")).collect::<Vec<_>>().join(" ");
-                column![text("Run this command?").size(15), output_text(format!("{executable}\n{args}"))]
-            }
+            Stage::Confirm(prompt) => self.confirmation(prompt, generation),
             Stage::Running { .. } => column![text("Running…").size(15)],
             Stage::Finished(Err(error)) => column![error_text(error)],
             Stage::Finished(Ok(report)) => report_body(report),
         };
         body.spacing(8).padding(16).into()
+    }
+
+    fn confirmation<'a>(&'a self, prompt: &'a Prompt, generation: u64) -> iced::widget::Column<'a, Message> {
+        let mut body = column![];
+        if self.script.confirm {
+            let executable = self.script.executable.display();
+            let args = self.script.args.iter().map(|arg| format!("{arg:?}")).collect::<Vec<_>>().join(" ");
+            body = body.push(text("Run this command?").size(15)).push(output_text(format!("{executable}\n{args}")));
+        }
+        body.push(prompt.view(&self.script.parameters, generation))
     }
 
     fn command(&self, command: Command, generation: u64) -> Task<Message> {
@@ -183,12 +202,12 @@ impl Launcher {
     }
 
     fn open_script(&mut self, script: Arc<Script>) -> Task<Message> {
-        let confirm = script.confirm;
+        let manual = script.confirm || !script.parameters.is_empty();
         self.panel = None;
         self.scripts.generation += 1;
         self.scripts.panel = Some(Panel::new(script));
-        let run = if confirm { Task::none() } else { self.script_event(Event::Run) };
-        Task::batch([self.resize(), run])
+        let action = if manual { self.script_event(Event::Focus(0)) } else { self.script_event(Event::Run) };
+        Task::batch([self.resize(), action])
     }
 
     pub(super) fn update_scripts(&mut self, message: Message) -> Task<Message> {
@@ -203,7 +222,7 @@ impl Launcher {
                 self.scripts.panel = None;
                 update_content(self, message)
             }
-            Message::Files { .. } => update_content(self, message),
+            Message::Files { .. } | Message::InputClipboard(_) => update_content(self, message),
             _ => Task::none(),
         }
     }
@@ -211,13 +230,22 @@ impl Launcher {
     fn script_event(&mut self, event: Event) -> Task<Message> {
         let panel = self.scripts.panel.as_mut().expect("active script view");
         let generation = self.scripts.generation;
-        match (event, &panel.stage) {
+        match (event, &mut panel.stage) {
             (Event::Back, _) => {
                 self.scripts.panel = None;
                 self.return_to_parent()
             }
-            (Event::Run, Stage::Confirm) => {
-                let (job, work) = Job::start(panel.script.clone());
+            (Event::Input(index, value), Stage::Confirm(prompt)) => {
+                prompt.change(index, value);
+                Task::none()
+            }
+            (Event::Focus(index), Stage::Confirm(prompt)) => prompt.focus(index, &panel.scroll, &panel.viewport),
+            (Event::Run, Stage::Confirm(prompt)) => {
+                let inputs = match prompt.take_arguments() {
+                    Ok(inputs) => inputs,
+                    Err(index) => return prompt.focus(index, &panel.scroll, &panel.viewport),
+                };
+                let (job, work) = Job::start(panel.script.clone(), inputs);
                 panel.stage = Stage::Running { _job: job };
                 crate::timing::event("script_started");
                 Task::perform(work, move |result| Message::Script { generation, event: Event::Finished(result) })

@@ -948,8 +948,10 @@ neither indexed nor persisted by this feature.
 ## Local commands
 
 Search for **Create local command** to register an executable. Enter a title and
-absolute executable path. Add a description and a quoted argument list if
-needed, for example `["--summary", "Project name"]`. Tab moves between fields.
+absolute executable path. Add a description and a list of fixed arguments if
+needed, for example `["--summary"]`. In **Ask for values at run time**, enter up
+to three quoted field names, such as `["Project name", "Branch"]`. Tab moves
+between fields.
 **Confirmation on** asks before running. Click it or use Ctrl+Enter to change it.
 Ctrl+S or **Save** returns to Commands with the saved entry selected.
 
@@ -970,6 +972,7 @@ title = "Release check"
 description = "Print a local release summary"
 executable = "/home/you/bin/release-check"
 args = ["--summary"]
+parameters = ["Project name", "Branch"]
 confirm = true
 ```
 
@@ -979,6 +982,11 @@ The executable runs with your account's permissions. Discovery reads the
 registration file. Run starts the executable, and `confirm = true`
 adds a confirmation showing the executable and arguments. Click **Run** or
 press Ctrl+Enter to confirm.
+
+Commands with named fields always open a form. Every field requires a value.
+Click **Run** or press Ctrl+Enter to pass each value as one literal argument,
+after the fixed arguments and in the listed order. The values apply to that
+invocation. Esc closes the form and returns to the selected command.
 
 The command view shows the outcome and the first 64 KiB of combined standard
 output and standard error as plain text. After the process exits, choose

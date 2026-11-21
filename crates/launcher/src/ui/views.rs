@@ -56,6 +56,7 @@ impl Launcher {
             .and_then(super::alias_editor::Editor::focus_target)
             .or_else(|| self.saved_editor.as_ref().and_then(super::saved_editor::Editor::focus_target))
             .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_target))
+            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.focus_target())
             .or_else(|| self.folder_settings.is_some().then(folders::input_id))
             .or_else(|| self.application_picker.is_some().then(open_with::input_id))
     }
@@ -127,6 +128,7 @@ impl Launcher {
             .or_else(|| self.alias_editor.as_ref().map(super::alias_editor::Editor::context))
             .or_else(|| self.saved_editor.as_ref().map(super::saved_editor::Editor::context))
             .or_else(|| self.scripts.editor.as_ref().map(super::script_editor::Editor::context))
+            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.context())
             .or_else(|| self.appearance.as_ref().map(appearance::Panel::content_id))
     }
 
@@ -135,6 +137,7 @@ impl Launcher {
             .as_ref()
             .and_then(super::saved_editor::Editor::focus_cycle)
             .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_cycle))
+            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.focus_cycle(self.scripts.generation))
     }
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {

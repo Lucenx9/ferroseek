@@ -234,6 +234,8 @@ progress and cancellation during execution, then the outcome and readable,
 copyable text output. Back restores the captured query and selection.
 Use labeled fields for registration and editing. Confirm discard and deletion
 explicitly. Save returns to Commands with the entry selected.
+When a command asks for values, focus the first field and keep the first
+missing value in view on submit. Run applies those values to that invocation.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve

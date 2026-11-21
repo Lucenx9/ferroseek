@@ -9,6 +9,7 @@ mod paste;
 mod saved_editor;
 mod saved_results;
 mod script_editor;
+mod script_prompt;
 mod scripts;
 mod settings;
 mod shortcut_settings;

@@ -15,7 +15,7 @@ use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{ClickTracker, Command, Target};
 use crate::script_commands::{self, Catalog, Script};
 
-const FIELDS: [Field; 4] = [Field::Title, Field::Executable, Field::Description, Field::Arguments];
+const FIELDS: [Field; 5] = [Field::Title, Field::Executable, Field::Description, Field::Arguments, Field::Parameters];
 
 #[derive(Debug, Clone, Copy)]
 pub enum Field {
@@ -23,6 +23,7 @@ pub enum Field {
     Executable,
     Description,
     Arguments,
+    Parameters,
 }
 
 impl Field {
@@ -31,7 +32,8 @@ impl Field {
             Self::Title => ("Title", "Release check"),
             Self::Executable => ("Executable path", "/home/you/bin/release-check"),
             Self::Description => ("Description (optional)", "Print a local release summary"),
-            Self::Arguments => ("Arguments (optional)", "[\"--summary\", \"Project name\"]"),
+            Self::Arguments => ("Fixed arguments (optional)", "[\"--summary\"]"),
+            Self::Parameters => ("Ask for values at run time (optional)", "[\"Project name\", \"Branch\"]"),
         }
     }
 }
@@ -57,7 +59,7 @@ enum Mode {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Draft {
-    values: [String; 4],
+    values: [String; FIELDS.len()],
     confirm: bool,
 }
 
@@ -70,6 +72,7 @@ impl Draft {
                     script.executable.to_string_lossy().into_owned(),
                     script.description.clone(),
                     script_commands::format_arguments(&script.args),
+                    script_commands::format_arguments(&script.parameters),
                 ],
                 confirm: script.confirm,
             },
@@ -78,12 +81,13 @@ impl Draft {
     }
 
     fn script(&self) -> Result<Script, String> {
-        let [title, executable, description, args] = &self.values;
+        let [title, executable, description, args, parameters] = &self.values;
         let script = Script {
             title: title.trim().to_owned(),
             executable: executable.into(),
             description: description.clone(),
             args: script_commands::parse_arguments(args)?,
+            parameters: script_commands::parse_arguments(parameters)?,
             confirm: self.confirm,
         };
         script.validate()?;
@@ -99,7 +103,7 @@ pub(super) struct Editor {
     mode: Mode,
     error: Option<String>,
     focus: Field,
-    inputs: [Id; 4],
+    inputs: [Id; FIELDS.len()],
     contexts: [Id; 4],
     scroll: Id,
 }

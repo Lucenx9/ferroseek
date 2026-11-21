@@ -114,6 +114,9 @@ fn update_table(table: &mut dyn TableLike, previous: Option<&Script>, next: &Scr
     if previous.is_none_or(|old| old.args != next.args) {
         set(table, "args", argument_array(&next.args).into());
     }
+    if previous.map_or(!next.parameters.is_empty(), |old| old.parameters != next.parameters) {
+        set(table, "parameters", argument_array(&next.parameters).into());
+    }
     if previous.is_none_or(|old| old.confirm != next.confirm) {
         set(table, "confirm", next.confirm.into());
     }
@@ -194,6 +197,7 @@ mod tests {
             description: String::new(),
             executable: "/synthetic/report".into(),
             args: vec![],
+            parameters: vec!["Project".into()],
             confirm: true,
         };
         let catalog = change(&settings, None, Some(script.clone())).unwrap();

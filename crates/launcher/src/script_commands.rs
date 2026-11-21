@@ -31,6 +31,8 @@ pub struct Script {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
+    pub parameters: Vec<String>,
+    #[serde(default)]
     pub confirm: bool,
 }
 
@@ -142,8 +144,25 @@ impl Script {
         if !self.executable.is_absolute() || self.executable.file_name().is_none() {
             return Err("Use an absolute path to the executable.");
         }
-        Ok(())
+        validate_parameters(&self.parameters)
     }
+}
+
+fn validate_parameters(labels: &[String]) -> Result<(), &'static str> {
+    if labels.len() > 3 {
+        return Err("Use at most three arguments to fill in at run time.");
+    }
+    let mut unique = HashSet::new();
+    for label in labels {
+        let label = label.trim();
+        if label.is_empty() || label.chars().any(char::is_control) {
+            return Err("Use a single-line name for each argument.");
+        }
+        if !unique.insert(matcher::fold(label)) {
+            return Err("Use a different name for each argument.");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -184,6 +203,10 @@ confirm = true
         for (contents, reason) in [
             ("[[command]]\ntitle = \"Release\"\nexecutable = \"relative\"", "absolute path"),
             ("[[command]]\ntitle = \"Release\"\nexecutable = \"/file\"\ntypo = true", "unknown field"),
+            (
+                "[[command]]\ntitle = \"Release\"\nexecutable = \"/file\"\nparameters = [\"Project\", \" project \"]",
+                "different name",
+            ),
         ] {
             std::fs::write(&path, contents).unwrap();
             let catalog = Catalog::load(&settings);

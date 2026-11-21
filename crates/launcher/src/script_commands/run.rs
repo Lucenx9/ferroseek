@@ -38,11 +38,12 @@ struct Process {
 pub struct Job(Arc<Mutex<Process>>);
 
 impl Job {
-    pub fn start(script: Arc<Script>) -> (Self, impl Future<Output = Result<Report, String>>) {
+    pub fn start(script: Arc<Script>, inputs: Vec<String>) -> (Self, impl Future<Output = Result<Report, String>>) {
         let process = Arc::new(Mutex::new(Process::default()));
         let job = Self(Arc::clone(&process));
-        let work =
-            zruntime::unblock(move || run(&script, &process).map_err(|err| format!("Could not run command. {err}")));
+        let work = zruntime::unblock(move || {
+            run(&script, &inputs, &process).map_err(|err| format!("Could not run command. {err}"))
+        });
         (job, work)
     }
 
@@ -86,13 +87,14 @@ impl Process {
     }
 }
 
-fn spawn(script: &Script, process: &Mutex<Process>) -> io::Result<UnixStream> {
+fn spawn(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Result<UnixStream> {
     let (output, writer) = UnixStream::pair()?;
     output.set_read_timeout(Some(TICK))?;
     let stderr = writer.try_clone()?;
     let mut command = Command::new(&script.executable);
     command
         .args(&script.args)
+        .args(inputs)
         .current_dir(script.executable.parent().expect("validated absolute executable path"))
         .process_group(0)
         .stdin(Stdio::null())
@@ -106,8 +108,8 @@ fn spawn(script: &Script, process: &Mutex<Process>) -> io::Result<UnixStream> {
     Ok(output)
 }
 
-fn run(script: &Script, process: &Mutex<Process>) -> io::Result<Report> {
-    let output = spawn(script, process)?;
+fn run(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Result<Report> {
+    let output = spawn(script, inputs, process)?;
     let report = collect(output, process, Instant::now() + TIMEOUT);
     let child = {
         let mut state = process.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -206,15 +208,16 @@ mod tests {
             description: String::new(),
             executable: PathBuf::from("/bin/sh"),
             args: ["-c", source, "fixture"].into_iter().chain(args.iter().copied()).map(str::to_string).collect(),
+            parameters: vec![],
             confirm: false,
         }
     }
 
     #[test]
     fn captures_literal_arguments_and_stderr_even_on_failure() {
-        let script = shell("printf '%s\\n' \"$1\"; printf 'fixture error\\n' >&2; exit 7", &["a path $HOME ; *.txt"]);
-        let report = run(&script, &Mutex::new(Process::default())).unwrap();
-        assert_eq!(report.output, "a path $HOME ; *.txt\nfixture error\n");
+        let script = shell("printf '%s\\n' \"$1\" \"$2\"; printf 'fixture error\\n' >&2; exit 7", &["--fixed"]);
+        let report = run(&script, &["a path $HOME ; *.txt".into()], &Mutex::new(Process::default())).unwrap();
+        assert_eq!(report.output, "--fixed\na path $HOME ; *.txt\nfixture error\n");
         assert!(matches!(report.completion, Completion::Exited(status) if status.code() == Some(7)));
     }
 
@@ -222,7 +225,7 @@ mod tests {
     fn keeps_a_bounded_output_prefix_while_draining_the_child() {
         let chunk = "x".repeat(4096);
         let script = shell("n=0; while [ \"$n\" -lt 32 ]; do printf '%s' \"$1\"; n=$((n+1)); done", &[&chunk]);
-        let report = run(&script, &Mutex::new(Process::default())).unwrap();
+        let report = run(&script, &[], &Mutex::new(Process::default())).unwrap();
         assert_eq!((report.output.len(), report.truncated), (MAX_OUTPUT, true));
         assert!(matches!(report.completion, Completion::Exited(status) if status.success()));
     }
@@ -232,7 +235,7 @@ mod tests {
         let script = shell("exec sleep 60", &[]);
         for cancel in [false, true] {
             let job = Job(Arc::new(Mutex::new(Process::default())));
-            let output = spawn(&script, &job.0).unwrap();
+            let output = spawn(&script, &[], &job.0).unwrap();
             if cancel {
                 job.cancel();
             }
