@@ -739,6 +739,43 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
 }
 
 #[test]
+fn saved_search_fallback_waits_for_current_empty_results() {
+    use crate::links;
+
+    let mut s = search_state();
+    let link = links::Link::new(links::LinkFields {
+        name: "Guide",
+        address: "https://example.net/?q={query}",
+        keyword: "guide",
+    })
+    .unwrap()
+    .with_fallback(true)
+    .unwrap();
+    s.saved.links.push(link.clone());
+    let _ = update(&mut s, Message::Query("first unmatched".into()));
+    let old = s.generation;
+    let query = "caffè &key=1";
+    let _ = update(&mut s, Message::Query(query.into()));
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation: old, result: Ok(Some(vec![])) });
+    assert!(s.items.is_empty(), "an earlier empty reply must not expose a fallback");
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![])) });
+    let item = s.selected().unwrap();
+    assert_eq!((item.title.as_str(), item.subtitle.as_str()), ("Search with Guide", "example.net"));
+    assert_eq!(item.target, Target::Link(link, query.into()));
+    let target = item.target.clone();
+    let _ = update(&mut s, Message::Query("next unmatched".into()));
+    let _ = update(&mut s, Message::Selected(target.clone()));
+    let _ = update(&mut s, Message::Clicked(target));
+    assert!(s.opening.is_none());
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert!(s.items.iter().all(|item| item.section != model::Section::Fallback));
+    let _ = update(&mut s, Message::Files { generation, result: Err("disconnected".into()) });
+    assert!(s.items.is_empty(), "an unavailable search is distinct from no matches");
+}
+
+#[test]
 fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
     let mut s = search_state();
     let _ = update(&mut s, Message::Query("report".into()));

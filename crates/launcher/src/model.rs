@@ -117,6 +117,7 @@ pub enum Section {
     Applications,
     Files,
     Commands,
+    Fallback,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,6 +325,17 @@ pub fn link_item(link: &links::Link, terms: &str) -> Item {
         icon: if link.is_indexed() { "folder" } else { "internet-web-browser" }.into(),
         tag: "Link",
     }
+}
+
+pub fn fallback_item(link: &links::Link, terms: &str) -> Option<Item> {
+    let host = link.fallback_host(terms)?;
+    Some(Item {
+        section: Section::Fallback,
+        title: format!("Search with {}", link.name),
+        subtitle: host.to_owned(),
+        tag: "Web search",
+        ..link_item(link, terms)
+    })
 }
 
 pub fn snippet_item(snippet: &Snippet) -> Item {

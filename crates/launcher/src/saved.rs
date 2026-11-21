@@ -290,6 +290,12 @@ fn read_line(store: &mut Store, line: &str) -> io::Result<()> {
             let link = Link::new(LinkFields { name, address, keyword }).map_err(io::Error::other)?;
             store.apply_named(None, Some(link))
         }
+        (Some("fallback"), Some(name), Some(address), Some(keyword)) => {
+            let link = Link::new(LinkFields { name, address, keyword })
+                .and_then(|link| link.with_fallback(true))
+                .map_err(io::Error::other)?;
+            store.apply_named(None, Some(link))
+        }
         (Some("alias"), Some(kind), Some(id), Some(word)) => {
             let target = AliasTarget::parse(kind, id)?;
             let alias = Alias::new(target.clone(), word).map_err(io::Error::other)?;
@@ -312,7 +318,8 @@ fn write(path: &Path, store: &Store) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| io::Error::other("Saved entries need a parent folder."))?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     for link in &store.links {
-        writeln!(tmp, "{}\t{}\t{}", link.name, link.address, link.keyword)?;
+        let prefix = if link.uses_fallback() { "fallback\t" } else { "" };
+        writeln!(tmp, "{prefix}{}\t{}\t{}", link.name, link.address, link.keyword)?;
     }
     for alias in &store.aliases {
         writeln!(tmp, "alias\t{}\t{}\t{}", alias.target.tag(), alias.target.id(), alias.word)?;
@@ -333,6 +340,24 @@ fn write(path: &Path, store: &Store) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_fallback_setting_round_trips_with_legacy_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-links");
+        std::fs::write(&path, "Manual\thttps://example.net/guide\tguide\n").unwrap();
+        let legacy = Store::load(&path).links.remove(0);
+        assert!(!legacy.uses_fallback());
+        assert!(legacy.with_fallback(true).is_err());
+        let link =
+            Link::new(LinkFields { name: "Docs", address: "https://example.net/find?q={query}", keyword: "docs" })
+                .unwrap();
+        let enabled = link.clone().with_fallback(true).unwrap();
+        change_link(&path, None, Some(enabled.clone())).unwrap();
+        assert_eq!(Store::load(&path).links.get(1), Some(&enabled));
+        change_link(&path, Some(&enabled), Some(link.clone())).unwrap();
+        assert_eq!(Store::load(&path).links.get(1), Some(&link));
+    }
 
     #[test]
     fn edits_merge_existing_links_and_aliases_and_refuse_stale_replacements() {

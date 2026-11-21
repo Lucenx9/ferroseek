@@ -160,6 +160,9 @@ arithmetic keeps its numeric value at full precision.
 Saved links show their destination host or path and optional keyword. Their
 editor uses labeled fields, native focus, and explicit confirmation for
 discard and delete. After Save, Commands selects the saved link.
+Saved web searches can opt in to appearing in All after a completed
+search with no local matches. Show the provider name and destination
+host. Use the captured query only when the user opens the action.
 An exact alias promotes its original result with the alias visible in the
 subtitle. The editor identifies the target and preserves the search on return.
 Snippets show their keyword and line count. Copy is an explicit action.

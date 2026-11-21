@@ -7,7 +7,7 @@ use crate::matcher;
 
 const MAX_ADDRESS: usize = 2048;
 const MAX_TERMS: usize = 2048;
-const QUERY: &str = "{query}";
+pub(crate) const QUERY: &str = "{query}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
@@ -15,6 +15,7 @@ pub struct Link {
     pub address: String,
     pub keyword: String,
     validated: Destination,
+    fallback: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +47,28 @@ impl Link {
             return Err("Enter a name.".into());
         }
         let validated = Destination::parse(address, !keyword.is_empty())?;
-        Ok(Self { name: name.into(), address: address.into(), keyword, validated })
+        Ok(Self { name: name.into(), address: address.into(), keyword, validated, fallback: false })
+    }
+
+    pub fn with_fallback(mut self, enabled: bool) -> Result<Self, String> {
+        if enabled && !matches!(self.validated, Destination::Template { .. }) {
+            return Err(
+                "A fallback needs a web search URL with {query}. Turn off the fallback to save this link.".into()
+            );
+        }
+        self.fallback = enabled;
+        Ok(self)
+    }
+
+    pub fn uses_fallback(&self) -> bool {
+        self.fallback
+    }
+
+    pub fn fallback_host(&self, terms: &str) -> Option<&str> {
+        match &self.validated {
+            Destination::Template { host } if self.fallback && (1..=MAX_TERMS).contains(&terms.len()) => Some(host),
+            _ => None,
+        }
     }
 
     pub fn is_indexed(&self) -> bool {

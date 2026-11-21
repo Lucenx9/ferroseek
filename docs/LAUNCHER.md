@@ -140,9 +140,9 @@ Physical key assignment through the portal remains to be verified.
 
 ## Saved links
 
-![Editing a saved web search and its keyword](assets/launcher-edit-link.png)
+![Creating a saved web search with fallback enabled](assets/launcher-edit-link.png)
 
-Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+Captured at 1× in isolated Labwc with tiny-skia.
 
 Search for **Create link** in **All** or **Commands**. Give the link a name
 and enter an HTTPS or HTTP address, an absolute indexed path, or a path starting
@@ -159,6 +159,16 @@ one `{query}` in a query parameter value. Selecting a web search with empty
 terms fills its keyword so you can type the terms. The launcher sends the
 destination to the desktop only when you explicitly open it.
 
+In a web search editor, click **Fallback off** or press Ctrl+Enter to enable
+the fallback, then save. When a search in **All** completes with no local
+results, enabled links appear as **Search with …** and show their destination
+host. Enter or double-click sends the current query as the search terms.
+To remove the suggestion, open **Edit link**, turn the fallback off and save.
+
+![A saved web search offered after a completed local search](assets/launcher-search-fallback.png)
+
+Captured at 1× in isolated Labwc with a synthetic query and destination.
+
 Saved links appear alongside built-in commands. Use **Actions → Edit link**
 to change one. In the editor, **Delete** or Ctrl+D opens a confirmation.
 Confirm with Ctrl+D or the **Delete** button. Escape keeps the saved link.
@@ -169,6 +179,8 @@ The launcher stores the explicitly saved links beside its main configuration
 as `launcher-links` with owner-only permissions. Private mode can use and edit
 these links, and opening a link adds no launch history. The launcher keeps up
 to 128 links, with unique names and keywords.
+Before downgrading to a version without search fallbacks, turn them off and save
+each affected link so the older launcher can read the saved entries file.
 
 ## Aliases
 
@@ -551,7 +563,8 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
 - **Empty query:** the most often opened applications and files that still
   exist, followed by available applications to fill the suggestions. Removed
   items do not use up a suggestion slot.
-- **No matches:** the query remains visible with a suggestion to refine it;
+- **No matches:** the query remains visible. **All** offers any enabled
+  [saved web searches](#saved-links) once the local search has finished.
   Esc clears the search.
 
 Applications start without a shell, from the parsed `Exec` argument vector,

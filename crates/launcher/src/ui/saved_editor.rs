@@ -11,7 +11,7 @@ use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::links::{self, Link, LinkFields};
 use crate::model::{ClickTracker, Command, Target};
 use crate::snippets::{Fields as SnippetFields, MAX_BODY_BYTES, Snippet};
-use crate::{folders, saved, snippets, timing};
+use crate::{folders, saved, timing};
 
 const SNIPPET_HEIGHT: u32 = 440;
 const FIELDS: [Field; 3] = [Field::Name, Field::Value, Field::Keyword];
@@ -126,6 +126,7 @@ impl Value {
 #[derive(Debug, Clone)]
 pub enum Event {
     Input(Field, String),
+    ToggleFallback,
     Text(text_editor::Action),
     Focus(Field),
     Back,
@@ -149,6 +150,7 @@ pub(super) struct Editor {
     name: String,
     value: Value,
     keyword: String,
+    fallback: bool,
     focus: Field,
     mode: Mode,
     error: Option<String>,
@@ -163,6 +165,7 @@ impl Editor {
         let (name, value, keyword) = original.as_ref().map(Entry::fields).unwrap_or_default();
         let name = name.to_owned();
         let keyword = keyword.to_owned();
+        let fallback = original.as_ref().and_then(Entry::link).is_some_and(Link::uses_fallback);
         let value = match kind {
             Kind::Link => Value::Address(value.into()),
             Kind::Snippet => Value::Text(text_editor::Content::with_text(value)),
@@ -173,6 +176,7 @@ impl Editor {
             name,
             value,
             keyword,
+            fallback,
             focus: Field::Name,
             mode: Mode::Editing,
             error,
@@ -206,6 +210,7 @@ impl Editor {
     fn dirty(&self) -> bool {
         let original = self.original.as_ref().map(Entry::fields).unwrap_or_default();
         original != (self.name.as_str(), self.value.text().as_ref(), self.keyword.as_str())
+            || self.fallback != self.original.as_ref().and_then(Entry::link).is_some_and(Link::uses_fallback)
     }
 
     fn event(&mut self, event: Event) -> Effect {
@@ -223,6 +228,11 @@ impl Editor {
 
     fn edit(&mut self, event: Event) -> Effect {
         match event {
+            Event::ToggleFallback if self.show_fallback_control() => {
+                self.fallback = !self.fallback;
+                self.error = None;
+                Effect::Focus(self.focus)
+            }
             Event::Input(field, value) => {
                 match (field, &mut self.value) {
                     (Field::Name, _) => self.name = value,
@@ -288,9 +298,9 @@ impl Editor {
 
     pub(super) fn draft(&self) -> Result<Entry, String> {
         match &self.value {
-            Value::Address(address) => {
-                Link::new(LinkFields { name: &self.name, address, keyword: &self.keyword }).map(Entry::Link)
-            }
+            Value::Address(address) => Link::new(LinkFields { name: &self.name, address, keyword: &self.keyword })
+                .and_then(|link| link.with_fallback(self.fallback))
+                .map(Entry::Link),
             Value::Text(content) => {
                 Snippet::new(SnippetFields { name: &self.name, keyword: &self.keyword, body: &content.text() })
                     .map(Entry::Snippet)
@@ -306,6 +316,7 @@ impl Editor {
 
     fn field<'a>(&'a self, field: Field, value: &'a str) -> Element<'a, Event> {
         let (title, placeholder) = field.labels(self.kind);
+        let title = if field == Field::Keyword && self.show_fallback_control() { "Keyword" } else { title };
         let mut input = text_input(placeholder, value).id(self.input_id(field)).padding([7, 8]).style(field_style);
         if self.mode == Mode::Editing {
             input = input.on_input(move |value| Event::Input(field, value));
@@ -374,22 +385,39 @@ impl Editor {
             .into()
     }
 
+    fn show_fallback_control(&self) -> bool {
+        match &self.value {
+            Value::Address(address) => self.fallback || address.contains(links::QUERY),
+            Value::Text(_) => false,
+        }
+    }
+
+    fn link_help(&self) -> Element<'_, Event> {
+        let fallback = self.show_fallback_control();
+        let help = if fallback {
+            "Offer this search when All has no local results."
+        } else {
+            "For a web search, give it a keyword and use ?q={query} in the URL."
+        };
+        let caption = text(help)
+            .size(12)
+            .style(|theme: &iced::Theme| text::Style { color: Some(super::palette::DIM.resolve(theme)) });
+        if !fallback {
+            return caption.into();
+        }
+        let label = if self.fallback { "Fallback on" } else { "Fallback off" };
+        let toggle = button(hint("Ctrl+Enter", label))
+            .on_press_maybe((self.mode == Mode::Editing).then_some(Event::ToggleFallback))
+            .padding([4, 6])
+            .style(status_button_style);
+        column![caption, toggle].spacing(6).into()
+    }
+
     fn view(&self) -> Element<'_, Event> {
         let title = self.kind.title(self.original.is_some());
-        let form = column![
-            self.field(Field::Name, &self.name),
-            self.value_field(),
-            self.field(Field::Keyword, &self.keyword),
-        ];
-        let form = if self.kind == Kind::Link {
-            form.push(
-                text("For a web search, give it a keyword and use ?q={query} in the URL.")
-                    .size(12)
-                    .style(|theme: &iced::Theme| text::Style { color: Some(super::palette::DIM.resolve(theme)) }),
-            )
-        } else {
-            form
-        };
+        let form =
+            column![self.field(Field::Name, &self.name), self.value_field(), self.field(Field::Keyword, &self.keyword)];
+        let form = if self.kind == Kind::Link { form.push(self.link_help()) } else { form };
         let form = form.spacing(12).padding([8, 16]);
         let body = scrollable(form).id(self.scroll_id()).height(Length::Fill);
         let notice = container(self.notice()).padding([4, 16]);
@@ -459,6 +487,7 @@ impl Launcher {
         let event = match message {
             Message::SavedEditor { generation: current, event } if current == generation => event,
             Message::Cmd(Command::Back) => Event::Back,
+            Message::Cmd(Command::Secondary) => Event::ToggleFallback,
             Message::Cmd(Command::Activate) if self.saved_editor.as_ref().unwrap().kind == Kind::Link => Event::Save,
             Message::FolderShortcut(folders::Shortcut::Save) => Event::Save,
             Message::FolderShortcut(folders::Shortcut::Remove) => {
@@ -546,70 +575,5 @@ impl Launcher {
         }
         self.status = Status::Notice(format!("{} saved", kind.noun()));
         changed
-    }
-}
-
-impl Launcher {
-    pub(super) fn merge_saved_entries(&mut self) {
-        if self.search_folder.is_some() || crate::calc::is_explicit(&self.query) {
-            return;
-        }
-        let all = match self.scope {
-            Scope::All => true,
-            Scope::Commands => false,
-            _ => return,
-        };
-        let links = links::matching(&self.saved.links, &self.query, all)
-            .into_iter()
-            .map(|(link, terms, score)| (crate::model::link_item(link, terms), score));
-        let snippets = snippets::matching(&self.saved.snippets, &self.query, all)
-            .into_iter()
-            .map(|(snippet, score)| (crate::model::snippet_item(snippet), score));
-        let mut matches: Vec<_> = links.chain(snippets).collect();
-        matches.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-        let index = if self.query.trim().is_empty() { self.items.len() } else { 0 };
-        self.items.splice(index..index, matches.into_iter().map(|(item, _)| item));
-    }
-
-    pub(super) fn open_saved_link(&mut self, link: &Link, terms: &str) -> Task<Message> {
-        if self.opening.is_some() {
-            return Task::none();
-        }
-        match link.open(terms) {
-            Ok(links::Open::Prompt(query)) => self.resume_query(query),
-            Ok(request) => self.submit_link(link, request),
-            Err(error) => {
-                self.status = Status::Error(error);
-                self.resize()
-            }
-        }
-    }
-
-    fn submit_link(&mut self, link: &Link, request: links::Open) -> Task<Message> {
-        use super::RunError;
-
-        if self.unconfirmed_open {
-            self.status = Status::Error(super::UNCONFIRMED_OPEN.into());
-            return self.resize();
-        }
-        let backend = self.backend.clone();
-        let activation = self.activation.clone();
-        self.opening = Some((link.name.clone(), String::new()));
-        self.status = Status::Notice("Opening link…".into());
-        let open = async move {
-            match request {
-                links::Open::Indexed(uri) => backend.run(uri, "").await,
-                links::Open::Web(uri) => {
-                    let token = activation.token(String::new()).await;
-                    zruntime::unblock(move || crate::launch::open_web(&uri, token.as_deref()))
-                        .await
-                        .map_err(|error| RunError::Failed(error.to_string()))
-                }
-                links::Open::Prompt(_) => unreachable!("prompts are handled before dispatch"),
-            }
-        };
-        let (task, handle) = Task::perform(open, Message::LinkOpened).abortable();
-        self.launch_task = Some(handle.abort_on_drop());
-        Task::batch([task, self.resize()])
     }
 }

@@ -5,6 +5,7 @@ mod alias_editor;
 pub(crate) mod clipboard_view;
 mod global_shortcut_settings;
 mod saved_editor;
+mod saved_results;
 mod settings;
 mod shortcut_settings;
 mod views;
@@ -639,6 +640,7 @@ impl Launcher {
         };
         self.merge_saved_entries();
         self.merge_alias();
+        self.append_search_fallbacks();
         self.sync_result_icons();
         let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
         match kept {
@@ -2398,7 +2400,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         }));
     }
     let show_tag = !s.scope.implies_result_type(&item.target) && !s.preview_visible();
-    if show_tag && item.section != model::Section::Calculator {
+    if show_tag && !matches!(item.section, model::Section::Calculator | model::Section::Fallback) {
         content =
             content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::DIM.resolve(theme)),
@@ -2454,16 +2456,20 @@ fn search_status_text(s: &Launcher) -> (String, palette::Role) {
             palette::DIM,
         ),
         Status::Idle if calculating => ("Calculator".into(), palette::DIM),
-        Status::Idle => (
-            match (s.items.len(), query.is_empty(), s.scope) {
-                (0, false, _) => "No results".into(),
-                (0, true, _) => "FerroSeek".into(),
-                (_, true, Scope::All | Scope::Applications | Scope::Files) => "Suggestions".into(),
-                (1, _, _) => "1 result".into(),
-                (n, _, _) => format!("{n} results"),
-            },
-            palette::DIM,
-        ),
+        Status::Idle => (result_count_text(s), palette::DIM),
+    }
+}
+
+fn result_count_text(s: &Launcher) -> String {
+    if s.items.first().is_some_and(|item| item.section == model::Section::Fallback) {
+        return "No local results".into();
+    }
+    match (s.items.len(), s.query.trim().is_empty(), s.scope) {
+        (0, false, _) => "No results".into(),
+        (0, true, _) => "FerroSeek".into(),
+        (_, true, Scope::All | Scope::Applications | Scope::Files) => "Suggestions".into(),
+        (1, _, _) => "1 result".into(),
+        (n, _, _) => format!("{n} results"),
     }
 }
 
