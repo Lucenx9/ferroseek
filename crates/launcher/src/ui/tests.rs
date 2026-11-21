@@ -826,6 +826,60 @@ fn successful_local_runs_join_suggestions_without_storing_runtime_values() {
 }
 
 #[test]
+fn local_command_favorites_follow_the_pinned_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    let manifest = dir.path().join("launcher-scripts.toml");
+    let favorites = dir.path().join("launcher-favorites");
+    let source = r#"
+[[command]]
+title = "Launch check"
+executable = "/bin/true"
+args = ["old"]
+
+[[workflow]]
+title = "Daily review"
+steps = ["Launch check", "Launch check"]
+"#;
+    std::fs::write(&manifest, source).unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&settings);
+    state.favorites = crate::favorites::Favorites::load(Some(favorites.clone()));
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+
+    for title in ["Launch check", "Daily review"] {
+        let _ = update(&mut state, Message::Query(title.into()));
+        assert_eq!(state.selected().unwrap().title, title);
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("pin".into()));
+        assert_eq!(state.panel.as_ref().unwrap().filtered_actions(), [Action::AddFavorite]);
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.is_favorite(&state.selected().unwrap().target));
+    }
+
+    state.favorites = crate::favorites::Favorites::load(Some(favorites.clone()));
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!((&state.items[0].title[..], &state.items[1].title[..]), ("Launch check", "Daily review"));
+    let _ = command(&mut state, Command::Down);
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("move favorite up".into()));
+    let _ = command(&mut state, Command::Activate);
+    assert_eq!(state.items[0].title, "Daily review");
+    let captured = state.selected().unwrap().target.clone();
+    assert_eq!(captured, state.items[0].target);
+
+    std::fs::write(&manifest, source.replace("\"old\"", "\"changed\"")).unwrap();
+    state.scripts = scripts::State::load(&settings);
+    let _ = update(&mut state, Message::Query("Daily review".into()));
+    assert!(!state.is_favorite(&state.selected().unwrap().target));
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("pin".into()));
+    let persisted = std::fs::read_to_string(&favorites).unwrap();
+    let _ = update(&mut state, Message::PanelClicked { target: captured, action: Action::AddFavorite });
+    assert_eq!(std::fs::read_to_string(favorites).unwrap(), persisted);
+}
+
+#[test]
 fn command_shortcut_action_keeps_the_target_and_returns_to_search() {
     use crate::commands::Builtin;
 

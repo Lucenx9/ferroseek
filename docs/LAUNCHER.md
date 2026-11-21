@@ -1049,7 +1049,8 @@ Update workflow steps before renaming or deleting a command used by a workflow.
 ## Favorites
 
 Use **Add to favorites** or **Remove from favorites** in the action panel for
-an app, file, command, saved link or snippet (search for `pin` or `unpin`).
+an app, file, built-in command, local command, workflow, saved link or snippet.
+Search the action list for `pin` or `unpin`.
 A star marks favorite rows. With an empty query, **All** shows favorites before recent items
 in saved order. **Move favorite up** and **Move favorite down** swap the selected
 favorite with the previous or next favorite shown in that scope. The moved
@@ -1058,9 +1059,13 @@ favorite stays selected. Open Actions again and use the opposite move to undo.
 their own type. **Commands** lists favorite commands, links and snippets first,
 then recently used commands and the rest of the catalog. Renaming a
 link or snippet keeps its favorite.
-After deleting a saved item, a new entry with the same name has its own identity.
+A link or snippet recreated after deletion has its own identity.
 Unavailable favorites use no suggestion slots. Favorites do not change the
 ranking of a typed query.
+
+For local commands and workflows, a favorite matches the runnable definition
+you pinned, including the configured arguments and workflow steps. Use
+**Add to favorites** again after changing that definition.
 
 Favorites are stored separately in
 `$XDG_STATE_HOME/ferroseek/launcher-favorites`, with owner-only permissions and

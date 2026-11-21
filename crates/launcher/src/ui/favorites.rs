@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Favorites actions in the search results and command catalog.
 
-use std::io;
+use std::{borrow::Cow, io};
 
 use iced::Task;
 
 use super::{Action, Launcher, Message, Status, Target, actions_id, search_id};
+use crate::favorites::Kind;
 
 impl Launcher {
+    fn favorite_key<'a>(&'a self, target: &'a Target) -> Option<(Kind, Cow<'a, str>)> {
+        self.scripts
+            .history_key(target)
+            .map(|key| (Kind::Command, key.into()))
+            .or_else(|| target.favorite_key(&self.apps, &self.saved))
+    }
+
     pub(super) fn is_favorite(&self, target: &Target) -> bool {
-        target.favorite_key(&self.apps, &self.saved).is_some_and(|(kind, key)| self.favorites.contains(kind, &key))
+        self.favorite_key(target).is_some_and(|(kind, key)| self.favorites.contains(kind, &key))
     }
 
     pub(super) fn favorite_action(&mut self, target: &Target, action: Action) -> Task<Message> {
@@ -23,7 +31,8 @@ impl Launcher {
     }
 
     fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
-        let Some((kind, key)) = target.favorite_key(&self.apps, &self.saved) else { return Task::none() };
+        let Some((kind, key)) = self.favorite_key(target) else { return Task::none() };
+        let key = key.into_owned();
         let message = match (enabled, self.favorites.is_persistent()) {
             (true, true) => "Added to favorites",
             (true, false) => "Added to favorites for this session",
@@ -46,7 +55,7 @@ impl Launcher {
         let (earlier, later, message) =
             if offset < 0 { (neighbor, target, "Moved up") } else { (target, neighbor, "Moved down") };
         let Some(((first_kind, first_key), (second_kind, second_key))) =
-            earlier.favorite_key(&self.apps, &self.saved).zip(later.favorite_key(&self.apps, &self.saved))
+            self.favorite_key(earlier).zip(self.favorite_key(later))
         else {
             return Task::none();
         };

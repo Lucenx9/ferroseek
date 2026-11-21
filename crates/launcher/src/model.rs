@@ -127,6 +127,8 @@ impl Target {
     pub fn same_identity(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::File(a), Self::File(b)) => a.id == b.id && a.is_dir == b.is_dir,
+            // A workflow can resolve to new executables after its catalog is rebuilt.
+            (Self::Workflow(a), Self::Workflow(b)) => Arc::ptr_eq(a, b),
             _ => self == other,
         }
     }

@@ -161,7 +161,9 @@ among the ordered favorites in All. Preserve the ranking of typed queries.
 Opened built-in commands and successful local runs join empty-query suggestions
 after favorites. Use the built-in ID or a fingerprint of the runnable definition.
 Keep runtime arguments and output out of history.
-A renamed saved item keeps its favorite. Deleting it retires that identity.
+Renaming a saved link or snippet keeps its favorite. Deleting it retires that
+identity. A local command or workflow favorite identifies its runnable definition.
+When that definition changes, the user can pin the new one explicitly.
 In an empty search, offer actions to move a shown favorite up or down among
 the shown favorites in its scope. Keep it selected after moving it.
 The active search filter uses an accent underline and primary text. On narrow

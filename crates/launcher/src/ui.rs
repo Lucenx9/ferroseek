@@ -882,7 +882,8 @@ impl Launcher {
     }
 
     fn panel_for(&self, item: &Item) -> Panel {
-        let mut panel = Panel::new(item, self.is_favorite(&item.target));
+        let favorite = self.is_favorite(&item.target);
+        let mut panel = Panel::new(item, favorite);
         panel.cursor.visible = panel.visible_rows(self.window_height, self.cursor.visible);
         if let Target::App(i) = item.target
             && let Some(app) = self.apps.get(i)
@@ -899,6 +900,7 @@ impl Launcher {
         }
         if self.scripts.history_key(&item.target).is_some() {
             panel.actions.push(Action::ResetRanking);
+            panel.actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
         }
         self.add_favorite_move_actions(&item.target, &mut panel.actions);
         panel
