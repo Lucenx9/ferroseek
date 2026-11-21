@@ -16,6 +16,7 @@ mod desktop_settings;
 mod details;
 mod favorites;
 mod folders;
+mod global_shortcuts;
 mod icons;
 mod input;
 mod launch;
@@ -43,6 +44,7 @@ use commands::Builtin;
 const USAGE: &str = "\
 Usage: ferroseek-launcher [--private] [--opaque] [--query TEXT | --command ID]
        ferroseek-launcher --list-commands | --forget-history | --help | --version
+       ferroseek-launcher --global-shortcuts
 
 Opens the launcher, or closes it when it is already open. Bind the command
 to a global shortcut in the desktop settings.
@@ -50,6 +52,7 @@ to a global shortcut in the desktop settings.
   --query TEXT       start with TEXT already typed
   --command ID       open a built-in command directly
   --list-commands    print built-in command IDs and titles
+  --global-shortcuts listen for shortcuts assigned through the desktop portal
   --opaque           use a solid surface without background blur
   --private          skip launch history and pause clipboard recording
   --forget-history   delete the launch history and exit
@@ -86,17 +89,24 @@ impl Destination {
 
 fn main() -> ExitCode {
     timing::init();
-    match parse_options() {
+    let mut args = std::env::args().skip(1).peekable();
+    if args.next_if(|arg| arg == "--global-shortcuts").is_some() {
+        return if args.next().is_none() {
+            monitor_shortcuts()
+        } else {
+            usage_error("--global-shortcuts is a standalone option")
+        };
+    }
+    match parse_options(args) {
         Ok(options) => launch_ui(options),
         Err(exit) => exit,
     }
 }
 
-fn parse_options() -> Result<LaunchOptions, ExitCode> {
+fn parse_options(mut args: impl Iterator<Item = String>) -> Result<LaunchOptions, ExitCode> {
     let mut destination = None;
     let mut private = false;
     let mut opaque = false;
-    let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "-q" | "--query" | "--command" => destination = Some(parse_destination(&a, args.next(), destination)?),
@@ -107,6 +117,7 @@ fn parse_options() -> Result<LaunchOptions, ExitCode> {
                 return Err(ExitCode::SUCCESS);
             }
             "--private" => private = true,
+            "--global-shortcuts" => return Err(usage_error("--global-shortcuts is a standalone option")),
             "--watch-clipboard" => return Err(clipboard_watcher()),
             "--opaque" => opaque = true,
             "--forget-history" => {
@@ -216,6 +227,16 @@ fn clipboard_watcher() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("ferroseek-launcher: clipboard recorder stopped: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn monitor_shortcuts() -> ExitCode {
+    match global_shortcuts::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("ferroseek-launcher: {error}");
             ExitCode::from(1)
         }
     }

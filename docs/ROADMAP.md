@@ -51,11 +51,12 @@ published release or verified compatibility with every Linux desktop.
   conflict feedback, restore defaults and recovery controls.
 - [x] Direct built-in command entry points for desktop-assigned shortcuts,
   preserving the running search and protecting open edits.
-- [ ] Evaluate compositor support for setting global launch and command shortcuts
-  from the application. In virtual Plasma 5.27, the XDG GlobalShortcuts v1
-  portal created a session, listed its shortcuts and closed it. The test
-  client had no application ID. App identity, binding and activation through
-  the portal remain to be validated.
+- [x] Optional GlobalShortcuts portal listener with a managed desktop
+  identity and user service for activation while the launcher is closed.
+- [ ] Offer global shortcut setup from the launcher and validate assignment
+  on supported desktops. In virtual KWin 5.27, XDG Desktop Portal 1.22 passed
+  FerroSeek's desktop identity to KDE and forwarded an activation from a
+  simulated backend to the launcher.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon

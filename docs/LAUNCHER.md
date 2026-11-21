@@ -3,8 +3,8 @@
 FerroSeek's main user interface is a keyboard-first Linux launcher for
 applications, files, built-in commands and calculations on Wayland. It draws a layer-shell overlay, asks the running
 `ferroseekd` for file results and launches applications from their
-freedesktop desktop entries. It is a separate process: it never opens or
-writes the index and adds no background service.
+freedesktop desktop entries. The launcher is separate from the index.
+The global shortcut listener and clipboard recorder are optional.
 
 **Status:** experimental. Automated graphical checks run in nested virtual KWin
 5.27.11 on Ubuntu 24.04. Other desktop sessions remain unverified; see the
@@ -22,9 +22,9 @@ dependency of the layer-shell backend probes at build time.
 ferroseek-launcher            # opens; run it again to close it
 ```
 
-Bind the command to a key yourself, e.g. in KDE System Settings → Keyboard →
-Shortcuts → *Add New* → *Command or Script*. The launcher never registers
-global shortcuts or changes desktop settings. Running it while it is open
+Bind the command in KDE System Settings → Keyboard → Shortcuts → *Add New* →
+*Command or Script*, or use the [global shortcut listener](#desktop-portal-shortcuts).
+Running it while it is open
 without a command ID closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
@@ -37,6 +37,7 @@ closes it.
 | `--query TEXT` | start with `TEXT` already typed |
 | `--command ID` | open a built-in command directly |
 | `--list-commands` | print built-in command IDs and titles |
+| `--global-shortcuts` | listen for global shortcuts assigned through the desktop portal |
 | `--private` | skip launch history, hide clipboard history and pause clipboard recording |
 | `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
@@ -93,6 +94,32 @@ window and Back returns to the previous search. Return to search first if
 another view is open. If folder setup is required, the command opens after
 setup is applied. Add `--private` to require a private session. Close an
 existing regular window first.
+
+### Desktop portal shortcuts
+
+On a desktop that supports the XDG GlobalShortcuts portal, the optional
+listener registers **Open FerroSeek** and the built-in commands for
+assignment by the desktop. Run `ferroseek-launcher --global-shortcuts`
+in a terminal after installing the launcher. The portal handles the assignment.
+The listener stays active when the launcher closes. Ctrl+C stops the listener.
+
+To keep the listener active across graphical logins on a desktop that uses
+`graphical-session.target`, explicitly enable its installed user service.
+
+```sh
+systemctl --user enable --now app-io.github.ferroseek.Launcher.service
+```
+
+Use `systemctl --user disable --now app-io.github.ferroseek.Launcher.service`
+to stop it and remove autostart. Use the service to start the listener on
+older portals that identify apps by their systemd unit. Desktop support for
+assigning keys varies by portal backend. Desktop-configured command shortcuts
+remain available where portal assignment is unavailable.
+
+In virtual KWin 5.27, XDG Desktop Portal 1.22 passed the installed FerroSeek
+identity to the KDE backend. With a simulated backend, the same portal forwarded
+a shortcut activation and FerroSeek opened Clipboard history. Physical key
+assignment through the portal remains to be verified.
 
 ## Saved links
 

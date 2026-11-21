@@ -64,6 +64,9 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert r.returncode == 0, (r.stdout, r.stderr)
         assert (home / '.local/bin/ferroseek').exists()
         assert (home / '.local/bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
+        desktop = home / '.local/share/applications/io.github.ferroseek.Launcher.desktop'
+        shortcut_unit = home / '.config/systemd/user/app-io.github.ferroseek.Launcher.service'
+        assert desktop.exists() == shortcut_unit.exists() == (component in ['launcher', 'full'])
         assert (home / '.local/bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         if component == 'core':
             assert subprocess.run([str(script), '--launcher'], env=isolated, capture_output=True).returncode != 0
@@ -83,4 +86,5 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert r.returncode == 0, r.stderr
         assert not (home / '.local/bin/ferroseek').exists()
         assert not (home / '.local/bin/ferroseek-launcher').exists()
+        assert not desktop.exists() and not shortcut_unit.exists()
 print('PASS: four native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')
