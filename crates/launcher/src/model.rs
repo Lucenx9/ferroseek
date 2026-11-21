@@ -12,6 +12,7 @@ use iced::keyboard::{
 
 use crate::apps::App;
 use crate::backend::FileHit;
+use crate::commands::{self, Builtin};
 use crate::usage::Kind;
 use crate::{calc, matcher, uri};
 
@@ -24,17 +25,16 @@ pub enum Scope {
     All,
     Applications,
     Files,
+    Commands,
 }
 
 impl Scope {
-    pub const ALL: [Self; 3] = [Self::All, Self::Applications, Self::Files];
+    pub const ALL: [Self; 4] = [Self::All, Self::Applications, Self::Files, Self::Commands];
 
     pub fn cycle(self, forward: bool) -> Self {
-        match (self, forward) {
-            (Self::All, true) | (Self::Files, false) => Self::Applications,
-            (Self::Applications, true) | (Self::All, false) => Self::Files,
-            (Self::Files, true) | (Self::Applications, false) => Self::All,
-        }
+        let index = self as usize;
+        let step = if forward { 1 } else { Self::ALL.len() - 1 };
+        Self::ALL[(index + step) % Self::ALL.len()]
     }
 
     pub fn includes_apps(self) -> bool {
@@ -60,6 +60,7 @@ impl std::fmt::Display for Scope {
             Self::All => "All",
             Self::Applications => "Applications",
             Self::Files => "Files",
+            Self::Commands => "Commands",
         })
     }
 }
@@ -83,6 +84,7 @@ pub enum Target {
     File(FileHit),
     /// A calculator result, as displayed.
     Calc(String),
+    Command(Builtin),
 }
 
 impl Target {
@@ -101,6 +103,7 @@ pub enum Section {
     Calculator,
     Applications,
     Files,
+    Commands,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,8 +213,8 @@ fn recent_items<'a>(
         })
 }
 
-/// Favorites first, then valid history rows in scope, then available applications
-/// in catalog order. Deduplication precedes resolution and the row limit.
+/// For an empty query, list the command catalog or fill from favorites, history,
+/// and available applications. Deduplication precedes resolution and the row limit.
 pub fn home_items(
     apps: &[App],
     recent: &[(Kind, String)],
@@ -219,6 +222,9 @@ pub fn home_items(
     scope: Scope,
     limit: usize,
 ) -> Vec<Item> {
+    if scope == Scope::Commands {
+        return command_items(scope, "").take(limit).collect();
+    }
     let mut seen = HashSet::new();
     let ordered = favorites.iter().chain(recent.iter()).filter(move |(kind, key)| seen.insert((*kind, key.clone())));
     let mut seen_apps = vec![false; apps.len()];
@@ -265,10 +271,27 @@ pub fn build_items(apps: &[App], app_hits: &[(usize, u32)], files: &[FileHit]) -
     items
 }
 
+pub fn command_items(scope: Scope, query: &str) -> impl Iterator<Item = Item> {
+    let matches = match scope {
+        Scope::All => commands::matching(query, false),
+        Scope::Commands => commands::matching(query, true),
+        _ => Vec::new(),
+    };
+    matches.into_iter().map(|command| Item {
+        target: Target::Command(command),
+        section: Section::Commands,
+        title: command.title().into(),
+        subtitle: command.description().into(),
+        icon: command.icon().into(),
+        tag: "Command",
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Launch,
     Open,
+    OpenCommand,
     OpenWith,
     Details,
     Preview,
@@ -289,7 +312,7 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::Launch => "Launch",
-            Action::Open => "Open",
+            Action::Open | Action::OpenCommand => "Open",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
             Action::Preview => "Preview text",
@@ -329,7 +352,7 @@ impl Action {
             Self::UseResult => &["continue"],
             Self::AddFavorite => &["pin"],
             Self::RemoveFavorite => &["unpin"],
-            Self::Launch | Self::Open | Self::ResetRanking | Self::Desktop(_) => &[],
+            Self::Launch | Self::Open | Self::OpenCommand | Self::ResetRanking | Self::Desktop(_) => &[],
         };
         let labels: Vec<_> =
             std::iter::once((title.as_str(), 100)).chain(aliases.iter().map(|alias| (*alias, 70))).collect();
@@ -338,7 +361,7 @@ impl Action {
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            Action::Launch | Action::Open | Action::CopyResult => "Enter",
+            Action::Launch | Action::Open | Action::OpenCommand | Action::CopyResult => "Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::BrowseFolder => "Alt+Right",
@@ -364,6 +387,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         }
         Target::File(_) => vec![Action::Open, Action::Reveal, Action::CopyName, Action::ResetRanking],
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
+        Target::Command(_) => vec![Action::OpenCommand],
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
@@ -878,22 +902,27 @@ mod tests {
     fn scope_cycle_wraps_in_both_directions() {
         assert_eq!(Scope::default(), Scope::All);
         let mut scope = Scope::All;
-        for expected in [Scope::Applications, Scope::Files, Scope::All] {
+        for expected in [Scope::Applications, Scope::Files, Scope::Commands, Scope::All] {
             scope = scope.cycle(true);
             assert_eq!(scope, expected);
         }
-        for expected in [Scope::Files, Scope::Applications, Scope::All] {
+        for expected in [Scope::Commands, Scope::Files, Scope::Applications, Scope::All] {
             scope = scope.cycle(false);
             assert_eq!(scope, expected);
         }
-        assert_eq!(Scope::ALL.map(|s| s.to_string()), ["All", "Applications", "Files"]);
+        assert_eq!(Scope::ALL.map(|s| s.to_string()), ["All", "Applications", "Files", "Commands"]);
     }
 
     #[test]
     fn scope_query_policy_keeps_explicit_calculation_available_and_counts_characters() {
-        assert!(Scope::All.includes_apps() && Scope::All.includes_files());
-        assert!(Scope::Applications.includes_apps() && !Scope::Applications.includes_files());
-        assert!(!Scope::Files.includes_apps() && Scope::Files.includes_files());
+        for (scope, expected) in [
+            (Scope::All, (true, true)),
+            (Scope::Applications, (true, false)),
+            (Scope::Files, (false, true)),
+            (Scope::Commands, (false, false)),
+        ] {
+            assert_eq!((scope.includes_apps(), scope.includes_files()), expected);
+        }
         for scope in Scope::ALL {
             assert_eq!(scope.shows_calculator("2+3"), scope == Scope::All);
             for explicit in ["=", " = 42", "= 1+"] {

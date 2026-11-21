@@ -3,6 +3,7 @@
 
 use super::{Launcher, Message, SearchStatusPanel, hint, page_header, settings, status_button_style, update};
 use crate::backend::SearchStatus;
+use crate::commands::Builtin;
 use crate::model::ClickTracker;
 use crate::{appearance, details, folders, open_with, preview, timing};
 use iced::alignment::Vertical;
@@ -169,14 +170,27 @@ impl Launcher {
         Task::none()
     }
 
-    pub(super) fn show_appearance(&mut self) -> Task<Message> {
+    pub(super) fn open_builtin(&mut self, command: Builtin) -> Task<Message> {
+        if self.opening.is_some() || self.search_suspended() {
+            return Task::none();
+        }
+        match command {
+            Builtin::Settings => self.toggle_settings(),
+            Builtin::Appearance => self.show_appearance(appearance::Tab::Colors),
+            Builtin::Layout => self.show_appearance(appearance::Tab::Layout),
+            Builtin::SearchFolders => self.show_folders(false),
+            Builtin::SearchStatus => self.toggle_search_status(),
+        }
+    }
+
+    pub(super) fn show_appearance(&mut self, tab: appearance::Tab) -> Task<Message> {
         self.settings = self.settings.map(|_| settings::Entry::Appearance);
         self.panel = None;
         self.search_status = None;
         self.clicks = ClickTracker::default();
         self.appearance_generation += 1;
         let generation = self.appearance_generation;
-        let panel = appearance::Panel::new(self.settings_path.clone(), self.preferences);
+        let panel = appearance::Panel::new(self.settings_path.clone(), self.preferences, tab);
         let load = panel.load().map(move |event| Message::Appearance { generation, event });
         self.appearance = Some(panel);
         timing::event("appearance_opened");

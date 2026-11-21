@@ -9,6 +9,7 @@ use super::{
     Launcher, Message, divider, footer_style, hint, keycap, page_header, palette, search_id, status_button_style,
     surface_style, tab_style,
 };
+use crate::commands::Builtin;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{ClickTracker, Command};
 
@@ -35,9 +36,9 @@ impl Entry {
 
     fn item(self, selected: bool) -> Element<'static, Message> {
         let (name, help, shortcut) = match self {
-            Self::Appearance => ("Appearance", "Theme, colors and layout", "Ctrl+Shift+,"),
-            Self::SearchFolders => ("Search folders", "Choose locations to index", "Ctrl+,"),
-            Self::SearchStatus => ("Search status", "Check indexing progress", "Ctrl+I"),
+            Self::Appearance => (Builtin::Appearance.title(), "Theme, colors and layout", "Ctrl+Shift+,"),
+            Self::SearchFolders => (Builtin::SearchFolders.title(), Builtin::SearchFolders.description(), "Ctrl+,"),
+            Self::SearchStatus => (Builtin::SearchStatus.title(), Builtin::SearchStatus.description(), "Ctrl+I"),
         };
         button(
             row![column![text(name).size(15), dim(help)].spacing(2), space::horizontal(), keycap(shortcut, selected)]

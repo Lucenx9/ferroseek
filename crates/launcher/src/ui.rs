@@ -594,6 +594,7 @@ impl Launcher {
                 Vec::new()
             };
             if !calc::is_explicit(&self.query) {
+                items.extend(model::command_items(self.scope, &self.query));
                 let mut files = self.files.clone();
                 let now = usage::now();
                 model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
@@ -601,6 +602,18 @@ impl Launcher {
             }
             items
         };
+        self.sync_result_icons();
+        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
+        match kept {
+            Some(j) => self.cursor.select(j, self.items.len()),
+            None => {
+                self.cursor.reset();
+                self.panel = None;
+            }
+        }
+    }
+
+    fn sync_result_icons(&mut self) {
         let icons = &mut self.icons;
         self.item_icons = self
             .items
@@ -616,18 +629,11 @@ impl Launcher {
                     Target::File(ref f) if f.is_dir => &["folder"],
                     Target::File(_) => &file_fallbacks,
                     Target::Calc(_) => &["accessories-calculator", "calc"],
+                    Target::Command(_) => &["preferences-system", "applications-system"],
                 };
                 icons.get(&item.icon, fallbacks)
             })
             .collect();
-        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
-        match kept {
-            Some(j) => self.cursor.select(j, self.items.len()),
-            None => {
-                self.cursor.reset();
-                self.panel = None;
-            }
-        }
     }
 
     fn resize(&mut self) -> Task<Message> {
@@ -686,37 +692,8 @@ impl Launcher {
             return self.resize();
         }
         match (action, &item.target) {
-            (Action::Launch | Action::Desktop(_), Target::App(i)) => {
-                let app = self.apps[*i].clone();
-                let valid = match action {
-                    Action::Desktop(index) => app.action_argv(index),
-                    _ => app.argv(),
-                };
-                if let Err(error) = valid {
-                    self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
-                    return self.resize();
-                }
-                let id = app.id.clone();
-                let activation = self.activation.clone();
-                self.opening = Some((id.clone(), self.query.clone()));
-                self.status = Status::Notice("Opening application…".into());
-                let (task, handle) = Task::perform(
-                    async move {
-                        let app_id =
-                            if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
-                        let token = activation.token(app_id).await;
-                        let result = match action {
-                            Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
-                            _ => crate::launch::launch(&app, token.as_deref()),
-                        };
-                        result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
-                    },
-                    move |result| Message::ApplicationOpened { id: id.clone(), result },
-                )
-                .abortable();
-                self.launch_task = Some(handle.abort_on_drop());
-                task
-            }
+            (Action::OpenCommand, Target::Command(command)) => self.open_builtin(*command),
+            (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
             (Action::Open | Action::Reveal, Target::File(f)) => {
                 let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
                 self.opening = Some((f.id.clone(), self.query.clone()));
@@ -773,11 +750,42 @@ impl Launcher {
         }
     }
 
+    fn open_application(&mut self, index: usize, action: Action) -> Task<Message> {
+        let app = self.apps[index].clone();
+        let valid = match action {
+            Action::Desktop(index) => app.action_argv(index),
+            _ => app.argv(),
+        };
+        if let Err(error) = valid {
+            self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
+            return self.resize();
+        }
+        let id = app.id.clone();
+        let activation = self.activation.clone();
+        self.opening = Some((id.clone(), self.query.clone()));
+        self.status = Status::Notice("Opening application…".into());
+        let (task, handle) = Task::perform(
+            async move {
+                let app_id = if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
+                let token = activation.token(app_id).await;
+                let result = match action {
+                    Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
+                    _ => crate::launch::launch(&app, token.as_deref()),
+                };
+                result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
+            },
+            move |result| Message::ApplicationOpened { id: id.clone(), result },
+        )
+        .abortable();
+        self.launch_task = Some(handle.abort_on_drop());
+        task
+    }
+
     fn is_favorite(&self, target: &Target) -> bool {
         match target {
             Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
             Target::File(file) => self.favorites.contains(Kind::File, &file.id),
-            Target::Calc(_) => false,
+            Target::Calc(_) | Target::Command(_) => false,
         }
     }
 
@@ -834,7 +842,7 @@ impl Launcher {
         let (kind, key) = match target {
             Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
             Target::File(f) => (Kind::File, f.id.as_str()),
-            Target::Calc(_) => return Task::none(),
+            Target::Calc(_) | Target::Command(_) => return Task::none(),
         };
         self.panel = None;
         self.status = match self.usage.reset(kind, key) {
@@ -1314,7 +1322,7 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
                 && s.file_details.is_none()
                 && s.application_picker.is_none() =>
         {
-            s.show_appearance()
+            s.show_appearance(appearance::Tab::Colors)
         }
         Message::Ui(UiEvent::DesktopAppearance(dark)) => {
             s.system_dark = dark;
@@ -1821,6 +1829,18 @@ fn view(s: &Launcher) -> Element<'_, Message> {
     )
 }
 
+fn search_placeholder(s: &Launcher) -> &'static str {
+    if s.search_folder.is_some() {
+        return "Search this folder and subfolders…";
+    }
+    match s.scope {
+        Scope::All => "Search apps, files and commands…",
+        Scope::Applications => "Search applications…",
+        Scope::Files => "Search indexed files…",
+        Scope::Commands => "Search commands…",
+    }
+}
+
 fn view_content(s: &Launcher) -> Element<'_, Message> {
     if let Some(panel) = &s.appearance {
         let generation = s.appearance_generation;
@@ -1846,15 +1866,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     if let Some(selected) = s.settings {
         return settings::view(selected);
     }
-    let placeholder = if s.search_folder.is_some() {
-        "Search this folder and subfolders…"
-    } else {
-        match s.scope {
-            Scope::All => "Search applications and files…",
-            Scope::Applications => "Search applications…",
-            Scope::Files => "Search indexed files…",
-        }
-    };
+    let placeholder = search_placeholder(s);
     let scope_generation = s.scope_generation;
     let input = text_input(placeholder, &s.query)
         .id(search_id())
@@ -1888,7 +1900,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
                 .spacing(2),
             )
             .on_press(Message::Scope(scope))
-            .padding([3, 8])
+            .padding([3, 5])
             .style(move |theme, status| tab_style(theme, status, selected)),
         )
     });
@@ -2193,38 +2205,50 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
         .into()
 }
 
+fn empty_folder_text(status: &Status, query: &str) -> (&'static str, &'static str) {
+    match status {
+        Status::Searching if query.is_empty() => ("Loading folder…", ""),
+        Status::Searching => ("Searching…", ""),
+        Status::Error(_) => ("Folder unavailable", "Refresh to retry, or return to your previous search."),
+        _ if query.is_empty() => {
+            ("No indexed items in this folder", "Refresh, or type at least 2 characters to search subfolders.")
+        }
+        _ if query.chars().count() < MIN_FILE_QUERY => {
+            ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
+        }
+        _ => ("No matching indexed files", "Try another name or return to your previous search."),
+    }
+}
+
+fn empty_results_text(s: &Launcher) -> (&'static str, &'static str) {
+    let query = s.query.trim();
+    if s.search_folder.is_some() {
+        return empty_folder_text(&s.status, query);
+    }
+    let short = query.chars().count() < MIN_FILE_QUERY;
+    match &s.status {
+        Status::Searching => ("Searching…", ""),
+        Status::Error(_) if s.scope == Scope::Files => {
+            ("File search unavailable", "Switch to Applications to search installed apps.")
+        }
+        Status::Error(_) => {
+            ("File search unavailable", "You can still search applications and commands, or calculate a result.")
+        }
+        _ if calc::is_explicit(query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
+        _ if s.scope == Scope::Files && short => {
+            ("Search indexed files", "Type at least 2 characters to search files.")
+        }
+        _ if s.scope == Scope::Applications => ("No matching applications", "Try a different application name."),
+        _ if s.scope == Scope::Commands => ("No matching commands", "Try another command name or clear the search."),
+        _ if query.is_empty() => ("Start typing to search", "Find an application, file or command."),
+        _ if short => ("No matching applications", "Type at least 2 characters to search files."),
+        _ => ("No results", "Try a shorter name or a different keyword."),
+    }
+}
+
 fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
-        let (msg, help) = match &s.status {
-            Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => ("Loading folder…", ""),
-            Status::Searching => ("Searching…", ""),
-            Status::Error(_) if s.search_folder.is_some() => {
-                ("Folder unavailable", "Refresh to retry, or return to your previous search.")
-            }
-            _ if s.search_folder.is_some() && s.query.trim().is_empty() => {
-                ("No indexed items in this folder", "Refresh, or type at least 2 characters to search subfolders.")
-            }
-            _ if s.search_folder.is_some() && s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
-            }
-            _ if s.search_folder.is_some() => {
-                ("No matching indexed files", "Try another name or return to your previous search.")
-            }
-            Status::Error(_) if s.scope == Scope::Files => {
-                ("File search unavailable", "Switch to Applications to search installed apps.")
-            }
-            Status::Error(_) => ("File search unavailable", "You can still search applications or calculate a result."),
-            _ if calc::is_explicit(&s.query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
-            _ if s.scope == Scope::Files && s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("Search indexed files", "Type at least 2 characters to search files.")
-            }
-            _ if s.scope == Scope::Applications => ("No matching applications", "Try a different application name."),
-            _ if s.query.trim().is_empty() => ("Start typing to search", "Find an application, a file, or try 2 + 3."),
-            _ if s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("No matching applications", "Type at least 2 characters to search files.")
-            }
-            _ => ("No results", "Try a shorter name or a different keyword."),
-        };
+        let (msg, help) = empty_results_text(s);
         let mut empty = column![
             text(msg).size(18),
             text(help).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
@@ -2305,7 +2329,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    if !s.preview_visible() {
+    if s.scope != Scope::Commands && !s.preview_visible() {
         content =
             content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::DIM.resolve(theme)),
@@ -2338,6 +2362,37 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         .into()
 }
 
+fn search_status_text(s: &Launcher) -> (String, palette::Role) {
+    let query = s.query.trim();
+    let listing_folder = s.search_folder.is_some() && query.is_empty();
+    let calculating = s.search_folder.is_none() && calc::is_explicit(query);
+    match &s.status {
+        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
+        Status::Notice(n) => (n.clone(), palette::ACCENT),
+        Status::Searching if listing_folder => ("Loading folder…".into(), palette::DIM),
+        Status::Searching => ("Searching…".into(), palette::DIM),
+        Status::Idle if listing_folder => (
+            if s.folder_more {
+                format!("First {} indexed items · Type to search", s.items.len())
+            } else {
+                format!("{} indexed items", s.items.len())
+            },
+            palette::DIM,
+        ),
+        Status::Idle if calculating => ("Calculator".into(), palette::DIM),
+        Status::Idle => (
+            match (s.items.len(), query.is_empty(), s.scope) {
+                (0, false, _) => "No results".into(),
+                (0, true, _) => "FerroSeek".into(),
+                (_, true, Scope::All | Scope::Applications | Scope::Files) => "Suggestions".into(),
+                (1, _, _) => "1 result".into(),
+                (n, _, _) => format!("{n} results"),
+            },
+            palette::DIM,
+        ),
+    }
+}
+
 fn footer(s: &Launcher) -> Element<'_, Message> {
     if s.unconfirmed_open {
         return container(text(UNCONFIRMED_OPEN).size(12).style(move |theme: &iced::Theme| {
@@ -2350,32 +2405,7 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
         .style(footer_style)
         .into();
     }
-    let (msg, color) = match &s.status {
-        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
-        Status::Notice(n) => (n.clone(), palette::ACCENT),
-        Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
-            ("Loading folder…".into(), palette::DIM)
-        }
-        Status::Searching => ("Searching…".to_string(), palette::DIM),
-        Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
-            if s.folder_more {
-                format!("First {} indexed items · Type to search", s.items.len())
-            } else {
-                format!("{} indexed items", s.items.len())
-            },
-            palette::DIM,
-        ),
-        Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
-            ("Calculator".to_string(), palette::DIM)
-        }
-        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
-        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
-        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
-        Status::Idle => match s.items.len() {
-            1 => ("1 result".to_string(), palette::DIM),
-            n => (format!("{n} results"), palette::DIM),
-        },
-    };
+    let (msg, color) = search_status_text(s);
     let status = widget::responsive(move |size| {
         text(label_for_width(&msg, size.width, 12.0, false))
             .size(12)

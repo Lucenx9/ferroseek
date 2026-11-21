@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml)
 
-**A keyboard-first Linux launcher for applications, files and calculations.**
+**A keyboard-first Linux launcher for applications, files, built-in commands and calculations.**
 
 Type an application name, find a file in your indexed folders, or calculate a
 result. Open it with Enter. FerroSeek combines a Wayland launcher with its own
@@ -29,6 +29,7 @@ been published yet.
 - Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
+- Find built-in launcher commands in search or browse them in **Commands**.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
@@ -84,7 +85,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+I | Show file search status; Esc returns to search |
 | Ctrl+Shift+Comma | Appearance preferences |
 | Ctrl+, | Choose search folders; Ctrl+S saves and applies |
-| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications, Files and Commands |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |

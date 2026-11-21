@@ -148,8 +148,10 @@ placement; never impose a new default solely to improve a promotional capture.
 Keep the query on its own full-width row, filters and utility actions beneath,
 results in the main region, and current action hints in the footer. Show the
 result name first and useful distinguishing context second: parent path for
-files, description for applications. Avoid repeated type badges or metadata
-that does not help choose a result.
+files, description for applications and a short purpose for commands. Commands
+use the same selection and action affordances as other results. All shows
+strong command matches. Commands browses the catalog with an empty search.
+Avoid repeated type badges or metadata that does not help choose a result.
 
 Enter performs the selected result's primary action. Ctrl+K reveals its actions;
 Shift+F10, the Menu key, the footer button and context click provide the existing
@@ -206,6 +208,8 @@ Appearance previews immediately, but Save persists changes;
 Back with unsaved edits requires explicit discard, and Escape at that prompt
 keeps editing. Save failures retain the draft. Preserve the distinct save/apply
 behavior of folder settings documented in [LAUNCHER.md](docs/LAUNCHER.md).
+On narrow surfaces, the Appearance tabs and Reload remain visible. The Reload
+keycap yields space to its label.
 
 Design each affected state and its next step. The following are requirements
 for new or changed flows; example wording must match the actual condition:

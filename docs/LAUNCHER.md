@@ -1,7 +1,7 @@
 # FerroSeek launcher (`ferroseek-launcher`)
 
 FerroSeek's main user interface is a keyboard-first Linux launcher for
-applications, files and calculations on Wayland. It draws a layer-shell overlay, asks the running
+applications, files, built-in commands and calculations on Wayland. It draws a layer-shell overlay, asks the running
 `ferroseekd` for file results and launches applications from their
 freedesktop desktop entries. It is a separate process: it never opens or
 writes the index and adds no background service.
@@ -102,16 +102,16 @@ position = "upper"   # upper, centered
 
 ![Compact layout settings](assets/launcher-layout.png)
 
-[Centered layout](assets/launcher-layout-centered.png). Native Compact layout
-captures from the same isolated KWin setup: upper and centered on 1280×800,
-both at an observed 1× scale.
+The upper Compact layout was captured at 1× in isolated virtual KWin 5.27.11
+with tiny-skia. The [centered layout](assets/launcher-layout-centered.png) was
+captured at 1× on a 1280×800 virtual output in KWin 6.3.6.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview
 adds 260 logical pixels when space permits. Width is capped to the entered
-output minus 16 pixels on each side; short outputs show fewer result/action rows
-and the header uses a third row below 512 pixels. The search field has its own
-full-width row and the same focus outline as the other editable fields. Upper
+output minus 16 pixels on each side. Short outputs show fewer result and action
+rows. The search field has its own full-width row and the same focus outline
+as the other editable fields. Upper
 placement stays stable as results expand; centering follows the current surface height. **Restore default layout**
 previews Standard and Upper without changing themes or material. Save keeps the
 reset; Back and discard restore the last saved settings.
@@ -162,8 +162,8 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 | Up/Down, Tab/Shift+Tab, Ctrl+N/Ctrl+P | move the selection |
 | Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
-| Enter | launch the application, open the file, copy a calculator result |
-| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
+| Enter | launch an app, open a file or command, or copy a calculator result |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications, Files and Commands |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
@@ -179,12 +179,12 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 **Copy path** and Ctrl+Shift+C copy a lossless file URL when the selected file
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
-Choose **All**, **Applications** or **Files** below the search field to narrow
-results without rewriting the query. An accent underline marks the active filter
-alongside its background highlight. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
-cycles backward. The choice lasts for this launcher session. Applications mode
-makes no file-search requests; Files shows indexed files and recent file
-suggestions. Calculator expressions without `=` appear only in All; an explicit
+Choose **All**, **Applications**, **Files** or **Commands** below the search
+field to narrow results without rewriting the query. An accent underline marks
+the active filter alongside its background highlight. Ctrl+Tab cycles forward
+and Ctrl+Shift+Tab cycles backward. The choice lasts for this launcher session.
+Applications and Commands search locally. Files shows indexed files and recent
+file suggestions. Calculator expressions without `=` appear only in All; an explicit
 `=` query works in every mode. Switching modes closes actions and resets the
 selection; replies from earlier searches are ignored.
 
@@ -277,6 +277,18 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   command are shown; actions requiring D-Bus activation without an `Exec`
   fallback are not supported. These commands use argument vectors, the app's
   terminal preference and working directory, and the normal launch scope.
+- **Commands** open built-in launcher views. Search for **Settings**,
+  **Appearance**, **Layout**, **Search folders** or **Search status**. Strong
+  matches appear near the top in **All**. Choose **Commands** to browse the
+  complete list or match shorter and less exact queries. Enter, double-click,
+  the displayed number and the action menu all open the selected command.
+  Back returns to the same search. Applying new search folders refreshes the
+  results.
+
+  ![Built-in commands with keyboard access](assets/launcher-commands.png)
+
+  Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
 - **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
   method; opening and revealing go through its `Open` method, which only
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.
@@ -469,7 +481,7 @@ current launcher session. Late replies from previous lists or searches cannot
 replace the current context.
 
 Folder contexts contain no global suggestions, apps or calculator results.
-The All/Applications/Files filter is unavailable until returning to global search.
+The search filters become available again when you return to global search.
 Open with, File details and the opt-in preview remain available for regular files.
 Browsing does not enable preview or read file contents; an already enabled preview
 follows the selected regular file. Ctrl+I opens index status; Ctrl+comma opens

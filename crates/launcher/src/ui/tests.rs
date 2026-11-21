@@ -574,6 +574,52 @@ fn scope_changes_replace_results_and_reject_late_replies() {
 }
 
 #[test]
+fn command_action_uses_the_selected_destination_after_file_results_change() {
+    use crate::commands::Builtin;
+
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("window width".into()));
+    let generation = s.generation;
+    let target = Target::Command(Builtin::Layout);
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::ToggleActions);
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert_eq!(s.selected().unwrap().target, target);
+    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand]);
+    let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
+    assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
+    assert!(s.panel.is_none() && s.opening.is_none());
+    let appearance_generation = s.appearance_generation;
+    let event = appearance::Event::Loaded(Err("Can’t read appearance settings".into()));
+    let _ = update(&mut s, Message::Appearance { generation: appearance_generation, event });
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert!(s.appearance.is_none());
+    assert_eq!((s.query.as_str(), s.generation, &s.selected().unwrap().target), ("window width", generation, &target));
+}
+
+#[test]
+fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("report".into()));
+    let generation = s.generation;
+    let rendered = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, label) = rendered.text.iter().find(|(title, _)| title == "Commands").unwrap();
+    for message in pointer_messages(
+        &s,
+        iced::Point::new(label.center_x(), label.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    ) {
+        let _ = update(&mut s, message);
+    }
+    assert_eq!((s.scope, &s.status), (Scope::Commands, &Status::Idle));
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert!(s.items.is_empty());
+    let _ = command(&mut s, Command::Back);
+    assert!(s.query.is_empty() && s.items.len() == 5);
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
+}
+
+#[test]
 fn explicit_calculator_overrides_scope_but_implicit_calculations_obey_it() {
     let mut s = search_state();
     for scope in Scope::ALL {
@@ -3204,10 +3250,13 @@ fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
         let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
         let input = labels.inputs[0];
         assert_eq!(input.width, width as f32 - 32.0);
-        for name in ["All", "Applications", "Files", "Settings"] {
+        for name in ["All", "Applications", "Files", "Commands", "Settings"] {
             let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(bounds.y >= input.y + input.height, "{name} overlaps the query at {width}px");
-            assert!(bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD, "{name}: {bounds:?}");
+            assert!(
+                bounds.width >= 12.0 && bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD,
+                "{width}px {name}: {bounds:?}"
+            );
             assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT);
         }
     }
@@ -3462,7 +3511,8 @@ fn secondary_pages_share_title_and_return_action_alignment() {
     let file = file_hits().remove(0);
     let status = SearchStatusPanel::Loading;
     let folders = folders::Panel::new("/synthetic/config.toml".into(), false);
-    let appearance = appearance::Panel::new("/synthetic/config.toml".into(), Preferences::default());
+    let appearance =
+        appearance::Panel::new("/synthetic/config.toml".into(), Preferences::default(), appearance::Tab::Colors);
     let details = details::Panel::new(file.clone());
     let chooser = open_with::Panel::new(file);
     for (title, page) in [

@@ -10,6 +10,7 @@ mod appearance;
 mod apps;
 mod backend;
 mod calc;
+mod commands;
 mod desktop_settings;
 mod details;
 mod favorites;
@@ -50,8 +51,8 @@ Favorites are stored separately beside it in launcher-favorites. Private
 sessions read and write neither file.
 
 Keys: Up/Down or Tab move, Enter opens, Ctrl+Enter shows the file in its
-folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Esc clears the
-query and then closes.";
+folder, Ctrl+K lists actions, Ctrl+Shift+C copies the path, Ctrl+Tab switches
+search scopes, and Esc clears the query and then closes.";
 
 fn main() -> ExitCode {
     timing::init();

@@ -100,9 +100,10 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 
 ## Daily commands and later extensions
 
-These are planned capabilities, not available launcher features. Complete the
-file/application workflow and desktop validation before expanding the platform.
+Complete desktop validation before expanding the platform.
 
+- [x] Search and browse built-in launcher commands, with the same navigation,
+  action menu and return flow as application and file results.
 - [ ] Add user-defined aliases, quicklinks to URLs/folders and keyword-based web
   searches, with editable targets and predictable argument handling.
 - [ ] Add searchable clipboard history and reusable text snippets as opt-in
