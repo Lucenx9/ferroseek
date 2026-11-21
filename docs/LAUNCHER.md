@@ -490,16 +490,19 @@ The panel shows up to eight actions at a time, with fewer on short outputs to
 leave room for its target, search field and return hint. The filter and return
 hint stay in place as matches change. Up/Down and the mouse wheel move
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
-the first/last action. A range indicator appears for longer menus. Numbers
+the first/last action. A range indicator appears for longer menus when there
+is room beside the footer controls. Numbers
 always refer to the currently visible actions.
 Scrolling over the action panel affects only its actions, including while a
 text preview is open. Horizontal scrolling leaves the selection unchanged.
-The target name above the filter uses primary text. Pointer hover highlights a
-command without moving the keyboard selection. The footer shows Enter to run
-the selected matching action alongside the current Escape step. With no matches,
-it suggests another action name and omits the Enter hint.
+Above the filter, the target name and its context identify the selected result.
+For a file, the second line shows its parent path. Pointer hover highlights a
+command without moving the keyboard selection. Click **Run** or press Enter
+to run the selected action. Click **Clear filter** or **Close actions** in the
+panel footer to take the current Escape step. With no matches, the panel
+suggests another action name and omits **Run**.
 
-![Searchable actions for a synthetic application](assets/launcher-actions.png)
+![Searchable actions showing the selected file's parent folder](assets/launcher-actions.png)
 
 Captured at 1× in isolated Labwc with tiny-skia.
 
@@ -513,7 +516,8 @@ applied before the first input field is built.
 This applies to input received by the launcher. Before the compositor gives it
 keyboard focus, keystrokes still belong to the previously focused application.
 
-Click a result once to select it; double-click or press Enter to open it.
+Click a result once to select it. Double-click, press Enter or click the
+selected result's primary action in the footer to run it.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**

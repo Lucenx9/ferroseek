@@ -943,6 +943,7 @@ fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {
 fn displayed_shortcuts_work_inside_the_action_panel() {
     let panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -963,6 +964,7 @@ fn displayed_shortcuts_work_inside_the_action_panel() {
     );
     let app = Panel {
         title: "Files".into(),
+        context: String::new(),
         actions: vec![Action::Launch, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -1017,6 +1019,7 @@ fn filtering_actions_keeps_the_target_and_selects_a_matching_action() {
 fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
     let mut panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -1040,6 +1043,7 @@ fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
 fn action_search_ranks_precise_matches_and_keeps_activation_consistent() {
     let mut panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -3873,10 +3877,73 @@ fn heights_fit_the_rows() {
     assert!(full_height() as f32 >= compact_height() as f32 + ROW_HEIGHT * VISIBLE_ROWS as f32);
 }
 
+fn click_footer_label(s: &Launcher, label: &str) -> Message {
+    let size = iced::Size::new(s.window_width as f32, full_height() as f32);
+    let labels = rendered_labels(view_content(s), size);
+    let (_, rect) = labels.text.iter().find(|(value, _)| value == label).unwrap();
+    let messages = pointer_messages(
+        s,
+        iced::Point::new(rect.center_x(), rect.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert_eq!(messages.len(), 1, "clicking {label} emits a single command");
+    messages.into_iter().next().unwrap()
+}
+
+#[test]
+fn result_footer_runs_only_the_target_it_showed() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Scope(Scope::Files));
+    let _ = update(&mut s, Message::Query("report".into()));
+    let generation = s.generation;
+    let files = file_hits();
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+
+    let old_open = click_footer_label(&s, "Open");
+    let _ = command(&mut s, Command::Down);
+    let _ = update(&mut s, old_open);
+    assert!(s.opening.is_none());
+
+    let open = click_footer_label(&s, "Open");
+    let _ = update(&mut s, open);
+    assert_eq!(s.opening.as_ref().unwrap().0, files[1].id);
+}
+
+#[test]
+fn action_footer_runs_the_match_and_unwinds_the_filter() {
+    let mut s = application_actions(&[]);
+    let _ = update(&mut s, Message::ActionQuery("copy name".into()));
+    let old_run = click_footer_label(&s, "Run");
+    let clear = click_footer_label(&s, "Clear filter");
+    let _ = update(&mut s, clear.clone());
+    assert!(s.panel.as_ref().unwrap().query.is_empty());
+
+    let _ = update(&mut s, clear);
+    assert!(s.panel.is_some(), "a queued Clear filter must not close the menu");
+    let _ = update(&mut s, Message::ActionQuery("reset ranking".into()));
+    let status = s.status.clone();
+    let _ = update(&mut s, old_run);
+    assert_eq!(s.status, status, "a filtered-out Run button must not dispatch another action");
+
+    let _ = update(&mut s, Message::ActionQuery("copy name".into()));
+    let run = click_footer_label(&s, "Run");
+    let _ = update(&mut s, run);
+    assert_eq!(s.status, Status::Notice("Copied name".into()));
+    assert!(s.panel.is_none());
+    assert_eq!(s.query, "report");
+
+    let _ = command(&mut s, Command::OpenActions);
+    let back = click_footer_label(&s, "Esc");
+    let _ = update(&mut s, back);
+    assert!(s.panel.is_none());
+    assert_eq!(s.query, "report");
+}
+
 #[test]
 fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
     let mut state = application_actions(&["New window", "Other window"]);
     state.panel = None;
+    state.items[0].subtitle = "Synthetic workspace editor".into();
     state.output_bounds = Some((640, 332));
     let _ = state.resize();
     let _ = command(&mut state, Command::OpenActions);
@@ -3892,9 +3959,12 @@ fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
             action_panel(panel, target, None),
             iced::Size::new(state.window_width as f32, state.window_height as f32),
         );
-        for name in ["Esc", "Close actions", "Run"] {
+        for name in ["Synthetic workspace editor", "Esc", "Close actions", "Run"] {
             let (_, rect) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(rect.height >= 14.0, "{name} is clipped on {bounds:?}: {rect:?}");
+            if name == "Run" {
+                assert!(rect.width >= 20.0, "Run is clipped on {bounds:?}: {rect:?}");
+            }
             assert!(rect.x >= 0.0 && rect.x + rect.width <= state.window_width as f32, "{name}: {rect:?}");
         }
         let actions = panel.filtered_actions();

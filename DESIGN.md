@@ -208,11 +208,15 @@ and return hint remain visible. Keep primary commands easy to find, and explain 
 unavailable operation rather than leaving a plausible-looking dead control.
 Keep the filter and return hint in place as matches change. Hide result
 shortcuts without changing their label widths while the panel owns the keyboard.
-The target title uses primary text above the action filter. Command hover uses
-the same neutral fill as result hover and preserves keyboard selection. The
-panel footer shows Enter to run a matching action and the current Escape step.
-An empty filter result offers a next step and omits the run hint. The launcher
-footer offers Close actions while the panel is open.
+Show the target name and its distinguishing context above the action filter.
+Use primary text for the name and secondary text for the file's parent path or
+the result's description. Preserve the final path component when space is tight.
+Command hover uses the same neutral fill as result hover and preserves keyboard
+selection. The panel footer offers a clickable Run control with its Enter hint
+and a clickable control for the current Escape step. An empty filter result
+offers a next step and omits Run. The launcher footer offers a clickable primary
+action for the selected result and Close actions while the panel is open.
+Footer clicks operate on the target and action shown when clicked.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve
