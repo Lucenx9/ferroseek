@@ -5,14 +5,15 @@ mod edit;
 mod run;
 mod workflow;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{self, Read};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::matcher;
 
@@ -42,7 +43,23 @@ pub struct Script {
 pub struct Catalog {
     commands: Vec<Arc<Script>>,
     workflows: Vec<Arc<Workflow>>,
+    history: HashMap<String, HistoryEntry>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum HistoryEntry {
+    Script(Arc<Script>),
+    Workflow(Arc<Workflow>),
+}
+
+impl HistoryEntry {
+    fn title(&self) -> &str {
+        match self {
+            Self::Script(script) => &script.title,
+            Self::Workflow(workflow) => &workflow.title,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -63,11 +80,10 @@ impl Catalog {
     }
 
     fn from_manifest(manifest: Manifest) -> Self {
-        Self {
-            commands: manifest.command.into_iter().map(Arc::new).collect(),
-            workflows: manifest.workflow.into_iter().map(Arc::new).collect(),
-            error: None,
-        }
+        let commands: Vec<_> = manifest.command.into_iter().map(Arc::new).collect();
+        let workflows: Vec<_> = manifest.workflow.into_iter().map(Arc::new).collect();
+        let history = history_entries(&commands, &workflows);
+        Self { commands, workflows, history, error: None }
     }
 
     pub fn matching(&self, query: &str, all: bool) -> Vec<(&Arc<Script>, u32)> {
@@ -85,6 +101,36 @@ impl Catalog {
     pub fn commands(&self) -> &[Arc<Script>] {
         &self.commands
     }
+
+    pub(crate) fn history_entry(&self, key: &str) -> Option<&HistoryEntry> {
+        self.history.get(key)
+    }
+
+    pub(crate) fn history_key(&self, title: &str) -> Option<&str> {
+        self.history.iter().find(|(_, entry)| entry.title() == title).map(|(key, _)| key.as_str())
+    }
+}
+
+fn history_entries(commands: &[Arc<Script>], workflows: &[Arc<Workflow>]) -> HashMap<String, HistoryEntry> {
+    let scripts: HashMap<_, _> = commands
+        .iter()
+        .filter_map(|script| Some((matcher::fold(&script.title), (script.history_key()?, script))))
+        .collect();
+    let workflow_entries = workflows.iter().filter_map(|workflow| {
+        let ordered = workflow.resolve_steps(|title| scripts.get(title).map(|(key, _)| key.as_str())).ok()?;
+        let key = history_key("workflow-v1", (&workflow.title, ordered))?;
+        Some((key, HistoryEntry::Workflow(Arc::clone(workflow))))
+    });
+    scripts
+        .values()
+        .map(|(key, script)| (key.clone(), HistoryEntry::Script(Arc::clone(script))))
+        .chain(workflow_entries)
+        .collect()
+}
+
+fn history_key(prefix: &str, definition: impl Serialize) -> Option<String> {
+    let definition = serde_json::to_vec(&definition).ok()?;
+    Some(format!("{prefix}:{:x}", Sha256::digest(definition)))
 }
 
 fn matching<'a, T>(
@@ -174,6 +220,10 @@ fn validate(command: &Script, titles: &mut HashSet<String>) -> Result<(), &'stat
 }
 
 impl Script {
+    fn history_key(&self) -> Option<String> {
+        history_key("script-v1", (&self.title, &self.executable, &self.args, &self.parameters, self.confirm))
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.title.is_empty() || self.title.chars().any(char::is_control) {
             return Err("Enter a single-line title.");
@@ -205,6 +255,36 @@ fn validate_parameters(labels: &[String]) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changing_a_step_retires_its_history_and_the_dependent_workflow() {
+        let source = r#"
+[[command]]
+title = "Build"
+executable = "/synthetic/build"
+args = ["--old"]
+
+[[command]]
+title = "Check"
+executable = "/synthetic/check"
+
+[[workflow]]
+title = "Prepare"
+steps = [" build ", "CHECK"]
+
+[[workflow]]
+title = "Unavailable"
+steps = ["Build", "Missing"]
+"#;
+        let before = Catalog::from_manifest(parse_manifest(source).unwrap());
+        let after = Catalog::from_manifest(parse_manifest(&source.replace("--old", "--new")).unwrap());
+        for title in ["Build", "Prepare"] {
+            assert!(after.history_key(title).is_some(), "{title} still has an executable definition");
+            assert!(after.history_entry(before.history_key(title).unwrap()).is_none(), "{title} must start fresh");
+        }
+        assert_eq!(before.history_key("Check"), after.history_key("Check"));
+        assert!(after.history_key("Unavailable").is_none());
+    }
 
     #[test]
     fn registration_loads_metadata_without_running_programs() {

@@ -19,6 +19,17 @@ pub struct Workflow {
 }
 
 impl Workflow {
+    pub(super) fn resolve_steps<T>(&self, mut find: impl FnMut(&str) -> Option<T>) -> Result<Vec<T>, String> {
+        self.steps
+            .iter()
+            .enumerate()
+            .map(|(index, title)| {
+                find(&matcher::fold(title.trim()))
+                    .ok_or_else(|| format!("Step {} needs the registered command “{}”.", index + 1, title.trim()))
+            })
+            .collect()
+    }
+
     pub(super) fn validate(&self, titles: &mut HashSet<String>) -> Result<(), &'static str> {
         if self.title.is_empty() || self.title.chars().any(char::is_control) {
             return Err("Enter a single-line title.");
@@ -66,10 +77,7 @@ impl Plan {
         let mut positions = HashMap::new();
         let mut parameters = Vec::new();
         let mut steps = Vec::with_capacity(workflow.steps.len());
-        for (index, title) in workflow.steps.iter().enumerate() {
-            let script = commands
-                .get(&matcher::fold(title.trim()))
-                .ok_or_else(|| format!("Step {} needs the registered command “{}”.", index + 1, title.trim()))?;
+        for script in workflow.resolve_steps(|title| commands.get(title).copied())? {
             let arguments = script
                 .parameters
                 .iter()

@@ -634,7 +634,7 @@ impl Launcher {
     }
 
     fn home_results(&self) -> Vec<Item> {
-        let catalog = model::Catalog { apps: &self.apps, saved: &self.saved };
+        let catalog = model::Catalog { apps: &self.apps, saved: &self.saved, scripts: &self.scripts.catalog };
         let limit = if self.scope == Scope::Commands { usize::MAX } else { VISIBLE_ROWS };
         model::home_items(
             catalog,
@@ -897,17 +897,21 @@ impl Launcher {
             // Keep Paste immediately after the two original snippet actions.
             panel.actions.insert(panel.actions.len() - 1, Action::PasteSnippet);
         }
+        if self.scripts.history_key(&item.target).is_some() {
+            panel.actions.push(Action::ResetRanking);
+        }
         self.add_favorite_move_actions(&item.target, &mut panel.actions);
         panel
     }
 
     fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
-        let (kind, key) = match target {
-            Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
-            Target::File(f) => (Kind::File, f.id.as_str()),
-            Target::Command(command) => (Kind::Command, command.id()),
-            _ => return Task::none(),
+        let history = match target {
+            Target::App(i) => Some((Kind::App, self.apps[*i].id.as_str())),
+            Target::File(f) => Some((Kind::File, f.id.as_str())),
+            Target::Command(command) => Some((Kind::Command, command.id())),
+            _ => self.scripts.history_key(target).map(|key| (Kind::Command, key)),
         };
+        let Some((kind, key)) = history else { return Task::none() };
         self.panel = None;
         self.status = match self.usage.reset(kind, key) {
             Ok(()) => {

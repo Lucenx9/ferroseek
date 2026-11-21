@@ -17,6 +17,7 @@ use crate::backend::UiEvent;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{Action, Command, Scope, Target};
 use crate::script_commands::{Catalog, Completion, Job, Plan, Report, Script, Workflow};
+use crate::usage;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -28,6 +29,15 @@ pub(super) struct State {
 }
 
 impl State {
+    pub(super) fn history_key(&self, target: &Target) -> Option<&str> {
+        let title = match target {
+            Target::Script(script) => &script.title,
+            Target::Workflow(workflow) => &workflow.title,
+            _ => return None,
+        };
+        self.catalog.history_key(title)
+    }
+
     pub fn is_open(&self) -> bool {
         self.panel.is_some() || self.editor.is_some() || self.workflow_editor.is_some()
     }
@@ -97,6 +107,7 @@ enum Stage {
 
 pub(super) struct Panel {
     plan: Arc<Plan>,
+    history_key: Option<String>,
     stage: Stage,
     scroll: Id,
     viewport: Id,
@@ -104,10 +115,11 @@ pub(super) struct Panel {
 }
 
 impl Panel {
-    fn new(plan: Plan) -> Self {
+    fn new(plan: Plan, history_key: Option<String>) -> Self {
         let prompt = Prompt::new(plan.parameters.len());
         Self {
             plan: Arc::new(plan),
+            history_key,
             stage: Stage::Confirm { prompt, previous: None },
             scroll: Id::unique(),
             viewport: Id::unique(),
@@ -348,7 +360,8 @@ impl Launcher {
     }
 
     fn open_plan(&mut self, plan: Plan) -> Task<Message> {
-        let panel = Panel::new(plan);
+        let history_key = self.scripts.catalog.history_key(&plan.title).map(str::to_owned);
+        let panel = Panel::new(plan, history_key);
         let initial = if panel.needs_review() { Event::Focus(0) } else { Event::Run };
         self.panel = None;
         self.scripts.generation += 1;
@@ -425,11 +438,7 @@ impl Launcher {
                 *step = index;
                 Task::none()
             }
-            (Event::Finished(result), Stage::Running { .. }) => {
-                panel.stage = Stage::Finished(Arc::new(result));
-                crate::timing::event("script_finished");
-                Task::none()
-            }
+            (Event::Finished(result), Stage::Running { .. }) => self.finish_script(result),
             (Event::Copy, Stage::Finished(report)) if !report.output.is_empty() => {
                 let output = report.output.clone();
                 panel.copied = true;
@@ -437,5 +446,19 @@ impl Launcher {
             }
             _ => Task::none(),
         }
+    }
+
+    fn finish_script(&mut self, result: Report) -> Task<Message> {
+        let panel = self.scripts.panel.as_mut().expect("active script view");
+        let succeeded = matches!(&result.completion, Ok(Completion::Exited(status)) if status.success());
+        panel.stage = Stage::Finished(Arc::new(result));
+        if let Some(key) = panel.history_key.as_deref().filter(|_| succeeded) {
+            self.usage.record(usage::Kind::Command, key, "", usage::now());
+            if self.query.trim().is_empty() {
+                self.rebuild(true);
+            }
+        }
+        crate::timing::event("script_finished");
+        Task::none()
     }
 }

@@ -60,8 +60,8 @@ impl Launcher {
             .map(|(workflow, score)| (model::workflow_item(workflow), score));
         let mut matches: Vec<_> = links.chain(snippets).chain(scripts).chain(workflows).collect();
         if self.query.trim().is_empty() {
-            // The empty catalog already includes the pinned links and snippets.
-            matches.retain(|(item, _)| !self.is_favorite(&item.target));
+            // Favorites and recent runs are already in the empty search.
+            matches.retain(|(item, _)| !self.items.iter().any(|current| current.target == item.target));
         }
         matches.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
         let index = if self.query.trim().is_empty() { self.items.len() } else { 0 };

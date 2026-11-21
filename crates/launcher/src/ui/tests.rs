@@ -787,6 +787,45 @@ fn opening_a_builtin_promotes_it_after_favorites_in_empty_searches() {
 }
 
 #[test]
+fn successful_local_runs_join_suggestions_without_storing_runtime_values() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    let history = dir.path().join("launcher-usage");
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Launch check'\nexecutable = '/bin/true'\nparameters = ['Project name']\n",
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&settings);
+    state.usage = Usage::load(Some(history.clone()));
+    let _ = update(&mut state, Message::Query("launch check".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let generation = state.scripts.generation;
+    let send = |state: &mut Launcher, event| update(state, Message::Script { generation, event });
+    let _ = send(&mut state, scripts::Event::Input(0, "fixture runtime value".into()));
+    let _ = send(&mut state, scripts::Event::Run);
+    assert!(!history.exists());
+    let _ = send(
+        &mut state,
+        scripts::Event::Finished(crate::script_commands::Report {
+            completion: Ok(crate::script_commands::Completion::Exited(std::process::ExitStatus::from_raw(0))),
+            failed_step: None,
+            output: "fixture output".into(),
+            truncated: false,
+        }),
+    );
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!(state.items[0].title, "Launch check");
+    let contents = std::fs::read_to_string(history).unwrap();
+    assert!(!contents.contains("fixture runtime value"));
+    assert!(!contents.contains("fixture output"));
+}
+
+#[test]
 fn command_shortcut_action_keeps_the_target_and_returns_to_search() {
     use crate::commands::Builtin;
 

@@ -16,7 +16,7 @@ use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
 use crate::favorites::Kind as FavoriteKind;
-use crate::script_commands::{Script, Workflow};
+use crate::script_commands::{self, HistoryEntry, Script, Workflow};
 use crate::snippets::Snippet;
 use crate::usage::Kind;
 use crate::{calc, links, matcher, saved, uri};
@@ -223,12 +223,19 @@ fn stored_item(catalog: Catalog<'_>, (kind, key): (FavoriteKind, &str), scope: S
         }
         FavoriteKind::File if scope.includes_files() => stored_file(key),
         FavoriteKind::Command if matches!(scope, Scope::All | Scope::Commands) => {
-            Builtin::from_id(key).map(command_item)
+            Builtin::from_id(key).map(command_item).or_else(|| catalog.scripts.history_entry(key).map(history_item))
         }
         FavoriteKind::Link | FavoriteKind::Snippet if matches!(scope, Scope::All | Scope::Commands) => {
             stored_named_item(catalog.saved, kind, key)
         }
         _ => None,
+    }
+}
+
+fn history_item(entry: &HistoryEntry) -> Item {
+    match entry {
+        HistoryEntry::Script(script) => script_item(script),
+        HistoryEntry::Workflow(workflow) => workflow_item(workflow),
     }
 }
 
@@ -261,6 +268,7 @@ fn stored_file(key: &str) -> Option<Item> {
 pub(crate) struct Catalog<'a> {
     pub apps: &'a [App],
     pub saved: &'a saved::Store,
+    pub scripts: &'a script_commands::Catalog,
 }
 
 /// Show pinned rows, recent items, then the catalog for the current scope.
@@ -824,7 +832,9 @@ mod tests {
 
     fn catalog(apps: &[App]) -> Catalog<'_> {
         static EMPTY: std::sync::LazyLock<saved::Store> = std::sync::LazyLock::new(saved::Store::default);
-        Catalog { apps, saved: &EMPTY }
+        static SCRIPTS: std::sync::LazyLock<script_commands::Catalog> =
+            std::sync::LazyLock::new(script_commands::Catalog::default);
+        Catalog { apps, saved: &EMPTY, scripts: &SCRIPTS }
     }
     use std::path::{Path, PathBuf};
 
@@ -978,7 +988,7 @@ mod tests {
         ];
         let keys = recent.iter().map(|(kind, key)| (FavoriteKind::from(*kind), key.as_str()));
         let saved = saved::Store::default();
-        let catalog = Catalog { apps: &a, saved: &saved };
+        let catalog = Catalog { saved: &saved, ..catalog(&a) };
         let items: Vec<_> = keys.filter_map(|key| stored_item(catalog, key, Scope::All)).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);

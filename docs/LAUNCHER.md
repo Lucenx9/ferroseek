@@ -1056,7 +1056,7 @@ favorite with the previous or next favorite shown in that scope. The moved
 favorite stays selected. Open Actions again and use the opposite move to undo.
 **Applications** and **Files** show favorites of
 their own type. **Commands** lists favorite commands, links and snippets first,
-then recently used built-in commands and the rest of the catalog. Renaming a
+then recently used commands and the rest of the catalog. Renaming a
 link or snippet keeps its favorite.
 After deleting a saved item, a new entry with the same name has its own identity.
 Unavailable favorites use no suggestion slots. Favorites do not change the
@@ -1091,8 +1091,13 @@ the suggestions in an empty **All** or **Commands** search. This history stores
 the command ID, a usage weight and the time of last use. Typed search uses
 the usual match order.
 
-Use **Reset ranking** in an application, file or built-in command's action panel
-to remove its history. The launcher updates results immediately and keeps the
+Successful local commands and workflows also appear in those suggestions.
+History keeps a usage weight, the time of last use and a fingerprint of the
+configured executable, arguments and workflow steps. A suggestion remains
+eligible while its runnable definition matches the recorded fingerprint.
+
+Use **Reset ranking** in an application, file or command's action panel to
+remove its history. The launcher updates results immediately and keeps the
 item searchable. Opening it again starts a new history. In a `--private`
 session, reset changes only the session's in-memory history. If another
 instance is updating history, retry after it finishes.
