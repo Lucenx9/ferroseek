@@ -1879,7 +1879,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
             )
             .on_press(Message::Scope(scope))
             .padding([3, 8])
-            .style(move |theme, status| tab_style(theme, status, selected)),
+            .style(move |theme, status| tab_style(theme, status, selected, None)),
         )
     });
     let index_status = button(text("Search status").size(12))
@@ -2073,15 +2073,17 @@ pub(crate) fn status_button_style(theme: &Theme, status: button::Status) -> butt
     }
 }
 
-pub(crate) fn tab_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
+pub(crate) fn tab_style(
+    theme: &Theme,
+    status: button::Status,
+    selected: bool,
+    selection_fill: Option<palette::Role>,
+) -> button::Style {
     button::Style {
-        background: if selected {
-            Some(Background::Color(palette::SELECTED.resolve(theme)))
-        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            Some(Background::Color(palette::FAINT.resolve(theme)))
-        } else {
-            None
-        },
+        background: selection_fill
+            .filter(|_| selected)
+            .or_else(|| matches!(status, button::Status::Hovered | button::Status::Pressed).then_some(palette::FAINT))
+            .map(|role| Background::Color(role.resolve(theme))),
         text_color: if selected { palette::TEXT.resolve(theme) } else { palette::DIM.resolve(theme) },
         border: Border { radius: 5.0.into(), ..Default::default() },
         ..Default::default()
@@ -2318,7 +2320,7 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    if !s.preview_visible() {
+    if !s.preview_visible() && !s.scope.implies_result_type(&item.target) {
         content =
             content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
                 color: Some(palette::DIM.resolve(theme)),

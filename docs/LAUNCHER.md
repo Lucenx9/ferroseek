@@ -165,10 +165,10 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
 Choose **All**, **Applications** or **Files** below the search field to narrow
-results without rewriting the query. An accent underline marks the active filter
-alongside its background highlight. Ctrl+Tab cycles forward; Ctrl+Shift+Tab
-cycles backward. The choice lasts for this launcher session. Applications mode
-makes no file-search requests; Files shows indexed files and recent file
+results without rewriting the query. An accent underline marks the active filter.
+Use Ctrl+Tab to cycle forward and Ctrl+Shift+Tab to cycle backward. The choice
+lasts for this launcher session. Applications mode makes no file-search
+requests. Files shows indexed files and recent file
 suggestions. Calculator expressions without `=` appear only in All; an explicit
 `=` query works in every mode. Switching modes closes actions and resets the
 selection; replies from earlier searches are ignored.
@@ -231,9 +231,11 @@ Numbered shortcuts stay visible on every result and application choice. The
 selected row keeps its keycap; other rows use quieter text with the same spacing.
 The action panel uses the same numbering treatment and an accent bar for its
 highlighted command. Footer shortcuts keep their keycaps. The Enter action uses
-stronger text in the result and application-chooser footers. Result types appear
-as plain secondary labels, except beside the preview, where names and paths use
-that space. Paths and numbered shortcuts remain visible in both layouts.
+stronger text in the result and application-chooser footers. All shows result
+types as secondary labels. Applications and Files omit the redundant Application
+and File labels. Folder and Calculator remain visible where applicable. Beside
+the preview, names and paths use the space reserved for type labels. Paths and
+numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
 preview. Action labels and target titles also shorten to keep shortcuts visible.
 File names keep both ends so their extension remains visible; application

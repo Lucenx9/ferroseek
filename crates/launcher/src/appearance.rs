@@ -293,6 +293,7 @@ impl Panel {
         )
     }
     pub fn view(&self, system: Option<bool>, opaque: bool, glass: bool) -> Element<'_, Event> {
+        let tab_fill = Some(palette::SELECTED);
         let enabled = !self.busy && self.document.is_some() && !self.confirm;
         let choice = |index, label: &'static str, selected| {
             let focused = self.cursor.selected == index;
@@ -455,11 +456,11 @@ impl Panel {
                     button(text("Colors").size(12))
                         .on_press(Event::Tab(Tab::Colors))
                         .padding([6, 8])
-                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors)),
+                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors, tab_fill)),
                     button(text("Layout").size(12))
                         .on_press(Event::Tab(Tab::Layout))
                         .padding([6, 8])
-                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout)),
+                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout, tab_fill)),
                     space::horizontal(),
                     button(ui::hint("Ctrl+R", "Reload"))
                         .padding([6, 8])
