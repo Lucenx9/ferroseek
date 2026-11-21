@@ -8,9 +8,9 @@ use iced::{Element, Length, Task};
 use super::{Launcher, Message, Scope, Status, divider, field_style, footer_style, hint, page_header, primary_hint};
 use super::{search_id, status_button_style, surface_style, update, update_content};
 use crate::layout::{FOOTER_HEIGHT, PAD};
-use crate::links::{self, Link};
+use crate::links::{self, Link, LinkFields};
 use crate::model::{ClickTracker, Command, Target};
-use crate::{folders, timing};
+use crate::{folders, saved, timing};
 
 const FIELDS: [Field; 3] = [Field::Name, Field::Address, Field::Keyword];
 
@@ -39,7 +39,7 @@ pub enum Event {
     Save,
     Remove,
     Confirm,
-    Written { link: Option<Link>, result: Result<Vec<Link>, String> },
+    Written { name: Option<String>, result: Result<saved::Store, String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +169,7 @@ impl Editor {
     }
 
     pub(super) fn draft(&self) -> Result<Link, String> {
-        Link::new(&self.name, &self.address, &self.keyword)
+        Link::new(LinkFields { name: &self.name, address: &self.address, keyword: &self.keyword })
     }
 
     fn focus(&self, field: Field) -> Task<Message> {
@@ -266,8 +266,8 @@ impl Launcher {
         }
         self.panel = None;
         self.clicks = ClickTracker::default();
-        self.link_generation += 1;
-        self.link_editor = Some(Editor::new(original, self.link_generation, self.links.error.clone()));
+        self.edit_generation += 1;
+        self.link_editor = Some(Editor::new(original, self.edit_generation, self.saved.error.clone()));
         timing::event("link_editor_opened");
         self.resize()
     }
@@ -278,7 +278,7 @@ impl Launcher {
     }
 
     pub(super) fn update_link_editor(&mut self, message: Message) -> Task<Message> {
-        let generation = self.link_generation;
+        let generation = self.edit_generation;
         let event = match message {
             Message::LinkEditor { generation: current, event } if current == generation => event,
             Message::Cmd(Command::Back) => Event::Back,
@@ -297,8 +297,8 @@ impl Launcher {
 
     fn link_event(&mut self, event: Event) -> Task<Message> {
         let editor = self.link_editor.as_mut().unwrap();
-        if let Event::Written { link, result } = event {
-            return self.link_written(link, result);
+        if let Event::Written { name, result } = event {
+            return self.link_written(name, result);
         }
         match editor.event(event) {
             Effect::None => Task::none(),
@@ -308,12 +308,13 @@ impl Launcher {
                 editor.mode = Mode::Writing;
                 editor.error = None;
                 let old = editor.original.clone();
-                let path = links::Store::path(&self.settings_path);
+                let path = saved::Store::path(&self.settings_path);
                 let generation = editor.generation;
                 let write = async move {
                     zruntime::unblock(move || {
-                        let result = links::change(&path, old.as_ref(), link.clone());
-                        Event::Written { link, result }
+                        let name = link.as_ref().map(|link| link.name.clone());
+                        let result = saved::change_link(&path, old.as_ref(), link);
+                        Event::Written { name, result }
                     })
                     .await
                 };
@@ -328,25 +329,26 @@ impl Launcher {
         self.return_to_parent()
     }
 
-    fn link_written(&mut self, link: Option<Link>, result: Result<Vec<Link>, String>) -> Task<Message> {
+    fn link_written(&mut self, name: Option<String>, result: Result<saved::Store, String>) -> Task<Message> {
         let editor = self.link_editor.as_mut().unwrap();
         if editor.mode != Mode::Writing {
             return Task::none();
         }
-        let items = match result {
-            Ok(items) => items,
+        self.saved = match result {
+            Ok(saved) => saved,
             Err(error) => {
                 editor.mode = Mode::Editing;
                 editor.error = Some(error);
                 return editor.focus(editor.focus);
             }
         };
-        self.links = links::Store { items, error: None };
         let close = self.close_link_editor();
-        let changed = if let Some(link) = link {
+        let changed = if let Some(name) = name {
             self.scope = Scope::Commands;
             let changed = update(self, Message::Query(String::new()));
-            self.cursor.select_target(&Target::Link(link, String::new()), &self.items);
+            if let Some(link) = self.saved.links.iter().find(|link| link.name == name) {
+                self.cursor.select_target(&Target::Link(link.clone(), String::new()), &self.items);
+            }
             self.status = Status::Notice("Link saved".into());
             changed
         } else {
@@ -369,7 +371,7 @@ impl Launcher {
             Scope::Commands => false,
             _ => return,
         };
-        let matches = links::matching(&self.links.items, &self.query, all)
+        let matches = links::matching(&self.saved.links, &self.query, all)
             .into_iter()
             .map(|(link, terms)| crate::model::link_item(link, terms));
         let index = if self.query.trim().is_empty() { self.items.len() } else { 0 };

@@ -89,6 +89,29 @@ as `launcher-links` with owner-only permissions. Private mode can use and edit
 these links, and opening a link adds no launch history. The launcher keeps up
 to 128 links, with unique names and keywords.
 
+## Aliases
+
+Select an application or built-in command and choose **Edit alias** from
+**Actions**. Enter a word using a–z, digits, hyphens, or underscores and press
+Enter or Ctrl+S. Type the exact alias, in either case, to bring its original
+result to the top of the search. An application alias works in **All** and
+**Applications**. A command alias works in **All** and **Commands**.
+
+![The rpt alias selects Project Reports in search](assets/launcher-alias-search.png)
+
+Captured in isolated virtual KWin 5.27 at 1× with the tiny-skia renderer and
+synthetic application entries.
+
+An alias belongs to one target and uses the same keyword namespace as saved
+links. The editor keeps your draft when a word is already assigned. Use
+**Remove** or Ctrl+D to open the removal confirmation, then press Ctrl+D
+to confirm. Escape keeps editing at the confirmation. If an application is
+unavailable, searching for its alias still lets you edit or remove it.
+
+Aliases are stored beside the main configuration in the owner-only
+`launcher-links` file. They remain available in private sessions and are
+independent of launch history. The launcher supports up to 128 aliases.
+
 ## Appearance
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)

@@ -14,7 +14,7 @@ use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
 use crate::usage::Kind;
-use crate::{calc, links, matcher, uri};
+use crate::{calc, links, matcher, saved, uri};
 
 /// Visible rows addressable by Ctrl+1 through Ctrl+8.
 pub const NUMBERED_SLOTS: usize = 8;
@@ -86,6 +86,7 @@ pub enum Target {
     Calc(String),
     Command(Builtin),
     Link(links::Link, String),
+    UnavailableAlias(saved::Alias),
 }
 
 impl Target {
@@ -140,7 +141,7 @@ pub fn match_apps(apps: &[App], query: &str, boost: impl Fn(&App) -> u32) -> Vec
     scored.into_iter().map(|(i, base, _)| (i, base)).collect()
 }
 
-fn app_item(apps: &[App], i: usize) -> Item {
+pub(crate) fn app_item(apps: &[App], i: usize) -> Item {
     let a = &apps[i];
     Item {
         target: Target::App(i),
@@ -278,14 +279,29 @@ pub fn command_items(scope: Scope, query: &str) -> impl Iterator<Item = Item> {
         Scope::Commands => commands::matching(query, true),
         _ => Vec::new(),
     };
-    matches.into_iter().map(|command| Item {
+    matches.into_iter().map(command_item)
+}
+
+pub(crate) fn command_item(command: Builtin) -> Item {
+    Item {
         target: Target::Command(command),
         section: Section::Commands,
         title: command.title().into(),
         subtitle: command.description().into(),
         icon: command.icon().into(),
         tag: "Command",
-    })
+    }
+}
+
+pub(crate) fn unavailable_alias(alias: &saved::Alias) -> Item {
+    Item {
+        target: Target::UnavailableAlias(alias.clone()),
+        section: Section::Commands,
+        title: alias.word.clone(),
+        subtitle: format!("Target unavailable · {}", alias.target.id()),
+        icon: "dialog-warning".into(),
+        tag: "Alias",
+    }
 }
 
 pub fn link_item(link: &links::Link, terms: &str) -> Item {
@@ -306,6 +322,7 @@ pub enum Action {
     OpenCommand,
     OpenLink,
     EditLink,
+    EditAlias,
     OpenWith,
     Details,
     Preview,
@@ -328,6 +345,7 @@ impl Action {
             Action::Launch => "Launch",
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
             Action::EditLink => "Edit link",
+            Action::EditAlias => "Edit alias",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
             Action::Preview => "Preview text",
@@ -365,6 +383,7 @@ impl Action {
             Self::CopyPath => &["location"],
             Self::CopyResult => &["answer"],
             Self::UseResult => &["continue"],
+            Self::EditAlias => &["set alias", "remove alias", "shortcut"],
             Self::AddFavorite => &["pin"],
             Self::RemoveFavorite => &["unpin"],
             Self::Launch
@@ -388,6 +407,7 @@ impl Action {
             Action::BrowseFolder => "Alt+Right",
             Action::CopyName
             | Action::EditLink
+            | Action::EditAlias
             | Action::OpenWith
             | Action::Details
             | Action::Preview
@@ -411,6 +431,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
+        Target::UnavailableAlias(_) => vec![Action::EditAlias],
     };
     if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. })) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });

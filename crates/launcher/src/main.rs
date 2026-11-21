@@ -26,6 +26,7 @@ mod model;
 mod open_with;
 mod output;
 mod preview;
+mod saved;
 mod shortcuts;
 mod timing;
 mod ui;

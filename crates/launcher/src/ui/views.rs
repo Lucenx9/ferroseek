@@ -34,7 +34,9 @@ impl Launcher {
     }
 
     fn secondary_focus(&self) -> Option<iced::widget::Id> {
-        if let Some(editor) = &self.link_editor {
+        if let Some(editor) = &self.alias_editor {
+            editor.focus_target()
+        } else if let Some(editor) = &self.link_editor {
             editor.focus_target()
         } else if self.folder_settings.is_some() {
             Some(folders::input_id())
@@ -45,7 +47,28 @@ impl Launcher {
         }
     }
 
+    pub(super) fn dialog_height(&self) -> Option<u32> {
+        if self.alias_editor.is_some() {
+            Some(super::alias_editor::HEIGHT)
+        } else {
+            self.settings_menu_open().then_some(settings::HEIGHT)
+        }
+    }
+
+    pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
+        if let Some(editor) = &self.alias_editor {
+            Some(editor.context())
+        } else if let Some(editor) = &self.link_editor {
+            Some(editor.context())
+        } else {
+            self.appearance.as_ref().map(appearance::Panel::content_id)
+        }
+    }
+
     pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(editor) = &self.alias_editor {
+            return Some(editor.view());
+        }
         if let Some(editor) = &self.link_editor {
             return Some(self.link_editor_view(editor));
         }

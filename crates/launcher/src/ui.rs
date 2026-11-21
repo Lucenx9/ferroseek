@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
+mod alias_editor;
 mod link_editor;
 mod settings;
 mod views;
@@ -31,12 +32,12 @@ use crate::favorites::Favorites;
 use crate::folders;
 use crate::icons::{Icon, Icons};
 use crate::layout::{self, FOOTER_HEIGHT, INPUT_HEIGHT, PAD, ROW_HEIGHT};
-use crate::links;
 use crate::material::Material;
 use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Target};
 use crate::open_with;
 use crate::output;
 use crate::preview;
+use crate::saved;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
@@ -203,9 +204,10 @@ pub struct Launcher {
     apps: Vec<App>,
     usage: Usage,
     favorites: Favorites,
-    links: links::Store,
+    saved: saved::Store,
+    alias_editor: Option<alias_editor::Editor>,
     link_editor: Option<link_editor::Editor>,
-    link_generation: u64,
+    edit_generation: u64,
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
@@ -262,6 +264,7 @@ pub enum Message {
     ApplicationOpened { id: String, result: Result<(), String> },
     LinkOpened(Result<(), RunError>),
     LinkEditor { generation: u64, event: link_editor::Event },
+    AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
@@ -378,7 +381,6 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         appearance: preferences,
         opaque,
     } = data;
-    let first_run = !settings_path.exists();
     let initial = layout::calculate(preferences, None, true, false);
     let mut state = Launcher {
         output,
@@ -399,9 +401,10 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         apps,
         usage,
         favorites,
-        links: links::Store::load(&links::Store::path(&settings_path)),
+        saved: saved::Store::load(&saved::Store::path(&settings_path)),
+        alias_editor: None,
         link_editor: None,
-        link_generation: 0,
+        edit_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -433,13 +436,13 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         folder_settings: None,
         folder_generation: 0,
         settings_path,
-        deferred_query: first_run.then(|| initial_query.clone()),
+        deferred_query: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
     };
-    let startup = state.start_search(initial_query, first_run);
+    let startup = state.start_search(initial_query);
     (state, startup)
 }
 
@@ -535,9 +538,10 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
-    fn start_search(&mut self, initial_query: String, first_run: bool) -> Task<Message> {
+    fn start_search(&mut self, initial_query: String) -> Task<Message> {
         self.rebuild(false);
-        let prefill = if first_run {
+        let prefill = if !self.settings_path.exists() {
+            self.deferred_query = Some(initial_query);
             self.show_folders(true)
         } else if initial_query.is_empty() {
             Task::none()
@@ -623,6 +627,7 @@ impl Launcher {
             items
         };
         self.merge_links();
+        self.merge_alias();
         self.sync_result_icons();
         let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
         match kept {
@@ -652,6 +657,7 @@ impl Launcher {
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                     Target::Command(_) => &["preferences-system", "applications-system"],
                     Target::Link(..) => &["insert-link"],
+                    Target::UnavailableAlias(_) => &["dialog-information"],
                 };
                 icons.get(&item.icon, fallbacks)
             })
@@ -667,8 +673,8 @@ impl Launcher {
             && !self.preview_enabled
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
         let mut geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
-        if self.settings_menu_open() {
-            geometry = geometry.with_content_height(settings::HEIGHT, self.output_bounds);
+        if let Some(height) = self.dialog_height() {
+            geometry = geometry.with_content_height(height, self.output_bounds);
         }
         self.cursor.visible = geometry.rows;
         self.cursor.move_by(0, self.items.len());
@@ -714,6 +720,7 @@ impl Launcher {
             return self.resize();
         }
         match (action, &item.target) {
+            (Action::EditAlias, _) => self.open_alias_editor(&item),
             (Action::OpenCommand, Target::Command(command)) => self.open_builtin(*command),
             (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
             (Action::EditLink, Target::Link(link, _)) => self.open_link_editor(Some(link.clone())),
@@ -801,7 +808,7 @@ impl Launcher {
         match target {
             Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
             Target::File(file) => self.favorites.contains(Kind::File, &file.id),
-            Target::Calc(_) | Target::Command(_) | Target::Link(..) => false,
+            _ => false,
         }
     }
 
@@ -817,6 +824,9 @@ impl Launcher {
         {
             panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
             panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
+        }
+        if matches!(item.target, Target::App(_) | Target::Command(_)) {
+            panel.actions.push(Action::EditAlias);
         }
         panel
     }
@@ -858,7 +868,7 @@ impl Launcher {
         let (kind, key) = match target {
             Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
             Target::File(f) => (Kind::File, f.id.as_str()),
-            Target::Calc(_) | Target::Command(_) | Target::Link(..) => return Task::none(),
+            _ => return Task::none(),
         };
         self.panel = None;
         self.status = match self.usage.reset(kind, key) {
@@ -1015,6 +1025,7 @@ impl Launcher {
             || self.search_status.is_some()
             || self.settings.is_some()
             || self.link_editor.is_some()
+            || self.alias_editor.is_some()
     }
 
     fn preview_visible(&self) -> bool {
@@ -1311,7 +1322,9 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
 }
 
 fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
-    if s.link_editor.is_some() {
+    if s.alias_editor.is_some() {
+        s.update_alias_editor(message)
+    } else if s.link_editor.is_some() {
         s.update_link_editor(message)
     } else if s.appearance.is_some() {
         update_appearance(s, message)
@@ -1844,10 +1857,7 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         crate::material::renderer::opaque_fallback(view_content(s), s.appearance_theme(false)),
         s.input_epoch,
         s.input_focus(),
-        s.link_editor
-            .as_ref()
-            .map(link_editor::Editor::context)
-            .or_else(|| s.appearance.as_ref().map(appearance::Panel::content_id)),
+        s.input_context(),
         s.link_editor.as_ref().and_then(link_editor::Editor::focus_cycle),
     )
 }

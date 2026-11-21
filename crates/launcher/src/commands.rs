@@ -22,49 +22,80 @@ const ALL: [Builtin; 6] = [
     Builtin::CreateLink,
 ];
 
+struct Metadata {
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+    icon: &'static str,
+    keywords: &'static str,
+}
+
 impl Builtin {
-    pub fn title(self) -> &'static str {
+    fn metadata(self) -> &'static Metadata {
         match self {
-            Self::Settings => "Settings",
-            Self::Appearance => "Appearance",
-            Self::Layout => "Layout",
-            Self::SearchFolders => "Search folders",
-            Self::SearchStatus => "Search status",
-            Self::CreateLink => "Create link",
+            Self::Settings => &Metadata {
+                id: "settings",
+                title: "Settings",
+                description: "Open launcher settings",
+                icon: "preferences-system",
+                keywords: "preferences configuration",
+            },
+            Self::Appearance => &Metadata {
+                id: "appearance",
+                title: "Appearance",
+                description: "Change the theme and surface",
+                icon: "preferences-desktop-theme",
+                keywords: "theme colors dark light glass solid",
+            },
+            Self::Layout => &Metadata {
+                id: "layout",
+                title: "Layout",
+                description: "Choose window width and position",
+                icon: "preferences-system-windows",
+                keywords: "window width position compact centered",
+            },
+            Self::SearchFolders => &Metadata {
+                id: "search-folders",
+                title: "Search folders",
+                description: "Choose locations to index",
+                icon: "folder-saved-search",
+                keywords: "directories locations roots",
+            },
+            Self::SearchStatus => &Metadata {
+                id: "search-status",
+                title: "Search status",
+                description: "Check indexing progress",
+                icon: "dialog-information",
+                keywords: "indexing diagnostics progress",
+            },
+            Self::CreateLink => &Metadata {
+                id: "create-link",
+                title: "Create link",
+                description: "Save a website, indexed path or web search",
+                icon: "insert-link",
+                keywords: "new saved shortcut quicklink bookmark",
+            },
         }
+    }
+
+    pub fn id(self) -> &'static str {
+        self.metadata().id
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        ALL.into_iter().find(|command| command.id() == id)
+    }
+
+    pub fn title(self) -> &'static str {
+        self.metadata().title
     }
 
     pub fn description(self) -> &'static str {
-        match self {
-            Self::Settings => "Open launcher settings",
-            Self::Appearance => "Change the theme and surface",
-            Self::Layout => "Choose window width and position",
-            Self::SearchFolders => "Choose locations to index",
-            Self::SearchStatus => "Check indexing progress",
-            Self::CreateLink => "Save a website, indexed path or web search",
-        }
+        self.metadata().description
     }
 
     pub fn icon(self) -> &'static str {
-        match self {
-            Self::Settings => "preferences-system",
-            Self::Appearance => "preferences-desktop-theme",
-            Self::Layout => "preferences-system-windows",
-            Self::SearchFolders => "folder-saved-search",
-            Self::SearchStatus => "dialog-information",
-            Self::CreateLink => "insert-link",
-        }
-    }
-
-    fn keywords(self) -> &'static str {
-        match self {
-            Self::Settings => "preferences configuration",
-            Self::Appearance => "theme colors dark light glass solid",
-            Self::Layout => "window width position compact centered",
-            Self::SearchFolders => "directories locations roots",
-            Self::SearchStatus => "indexing diagnostics progress",
-            Self::CreateLink => "new saved shortcut quicklink bookmark",
-        }
+        self.metadata().icon
     }
 
     fn score(self, tokens: &[String]) -> Option<u32> {
@@ -72,7 +103,7 @@ impl Builtin {
         if tokens.iter().map(String::as_str).eq(title.split_whitespace()) {
             return Some(matcher::EXACT);
         }
-        matcher::score(tokens, &[(title.as_str(), 100), (self.keywords(), 80)])
+        matcher::score(tokens, &[(title.as_str(), 100), (self.metadata().keywords, 80)])
     }
 }
 

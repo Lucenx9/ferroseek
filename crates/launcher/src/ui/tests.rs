@@ -482,15 +482,18 @@ fn material_keeps_small_text_readable_over_light_and_dark_backdrops() {
     }
 }
 
-fn search_state() -> Launcher {
-    let app = crate::apps::parse(
+fn report_app() -> App {
+    crate::apps::parse(
         "report.desktop",
         std::path::Path::new("/synthetic"),
         "[Desktop Entry]\nType=Application\nName=Report Viewer\nExec=viewer\n",
         &[],
         &[],
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn search_state() -> Launcher {
     Launcher {
         output: output::Observer::default(),
         output_bounds: None,
@@ -507,12 +510,13 @@ fn search_state() -> Launcher {
         glass: false,
         activation: Activation::default(),
         backend: Backend::disconnected(),
-        apps: vec![app],
+        apps: vec![report_app()],
         usage: Usage::disabled(),
         favorites: Favorites::disabled(),
-        links: links::Store::default(),
+        saved: saved::Store::default(),
+        alias_editor: None,
         link_editor: None,
-        link_generation: 0,
+        edit_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -611,6 +615,36 @@ fn scope_changes_replace_results_and_reject_late_replies() {
 }
 
 #[test]
+fn exact_alias_promotes_the_original_target_once_and_obeys_scope() {
+    let mut s = search_state();
+    let target = saved::AliasTarget::Application(s.apps[0].id.clone());
+    s.saved.aliases.push(saved::Alias::new(target, "report").unwrap());
+    let _ = update(&mut s, Message::Query(" REPORT ".into()));
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    let selected = s.selected().unwrap();
+    assert_eq!(selected.target, Target::App(0));
+    assert_eq!(selected.subtitle, "Alias · report");
+    assert_eq!(s.items.iter().filter(|item| item.target == Target::App(0)).count(), 1);
+    let _ = update(&mut s, Message::Scope(Scope::Files));
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::File(_))));
+}
+
+#[test]
+fn unavailable_alias_can_be_edited_without_dispatching_an_application() {
+    let mut s = search_state();
+    let alias = saved::Alias::new(saved::AliasTarget::Application("missing.desktop".into()), "missing").unwrap();
+    s.saved.aliases.push(alias.clone());
+    let _ = update(&mut s, Message::Query("missing".into()));
+    assert_eq!(s.selected().unwrap().target, Target::UnavailableAlias(alias));
+    let _ = update(&mut s, Message::Cmd(Command::Activate));
+    assert!(s.alias_editor.is_some() && s.opening.is_none());
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert!(s.alias_editor.is_none());
+    assert_eq!(s.query, "missing");
+}
+
+#[test]
 fn command_action_uses_the_selected_destination_after_file_results_change() {
     use crate::commands::Builtin;
 
@@ -622,7 +656,7 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     let _ = command(&mut s, Command::ToggleActions);
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert_eq!(s.selected().unwrap().target, target);
-    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand]);
+    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand, Action::EditAlias]);
     let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
     assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
     assert!(s.panel.is_none() && s.opening.is_none());
@@ -2922,17 +2956,18 @@ fn long_action_menus_scroll_page_and_number_the_visible_window() {
     let _ = command(&mut s, Command::PageDown);
     let panel = s.panel.as_ref().unwrap();
     assert_eq!(panel.cursor.selected, 14);
-    assert_eq!(panel.cursor.window(16), 7..15);
+    assert_eq!(panel.cursor.window(17), 7..15);
     assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(3)));
     let _ = command(&mut s, Command::Last);
     let panel = s.panel.as_ref().unwrap();
-    assert_eq!(panel.cursor.window(16), 8..16);
-    assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Desktop(11)));
-    assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(4)));
-    assert_eq!(panel.action_for_command(Command::ActivateVisible(7)), Some(Action::Desktop(11)));
+    assert_eq!(panel.cursor.window(17), 9..17);
+    assert_eq!(panel.action_for_command(Command::Activate), Some(Action::EditAlias));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(5)));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(6)), Some(Action::Desktop(11)));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(7)), Some(Action::EditAlias));
     assert_eq!(panel.action_for_command(Command::ActivateVisible(8)), None);
     let _ = update(&mut s, Message::Wheel(1.0));
-    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 14);
+    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 15);
     assert_eq!(s.cursor.selected, 0, "menu scrolling must leave the result selected");
     let _ = update(&mut s, Message::ActionQuery("Window 11".into()));
     let panel = s.panel.as_ref().unwrap();
@@ -2941,11 +2976,11 @@ fn long_action_menus_scroll_page_and_number_the_visible_window() {
     assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), None);
     let _ = command(&mut s, Command::Back);
     let panel = s.panel.as_ref().unwrap();
-    assert_eq!(panel.cursor.window(16), 0..8);
+    assert_eq!(panel.cursor.window(17), 0..8);
     assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Launch));
     let _ = command(&mut s, Command::Last);
     let _ = command(&mut s, Command::PageUp);
-    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 8);
+    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 9);
     let _ = command(&mut s, Command::First);
     assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 0);
 }

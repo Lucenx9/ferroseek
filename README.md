@@ -30,7 +30,7 @@ been published yet.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
 - Find built-in launcher commands and saved links in **Commands**.
-- Save websites and indexed paths, and run web searches by keyword.
+- Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
