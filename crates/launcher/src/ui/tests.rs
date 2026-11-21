@@ -570,6 +570,7 @@ fn search_state() -> Launcher {
         opaque: false,
         settings: None,
         shortcuts: shortcut_settings::State::new(Default::default()),
+        global_shortcuts: global_shortcut_settings::State::default(),
         clipboard_history: clipboard_view::State::new(true),
         window_switcher: windows::State::default(),
         appearance: None,
@@ -3468,6 +3469,13 @@ fn settings_navigation_keeps_search_and_ignores_stale_search_input() {
     let _ = update(&mut state, Message::Cmd(Command::Down));
     let _ = update(&mut state, Message::Cmd(Command::Down));
     let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.global_shortcuts.panel.is_some());
+    assert!(!state.settings_menu_open());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings_menu_open());
+    assert_eq!(state.settings, Some(settings::Entry::GlobalShortcuts));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
     assert!(state.folder_settings.is_some());
     assert!(!state.settings_menu_open());
     let _ = update(&mut state, Message::Cmd(Command::Back));
@@ -3508,9 +3516,11 @@ fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
         }
     };
     click(&mut state, "Settings");
-    for (label, entry) in
-        [("Appearance", settings::Entry::Appearance), ("Search status", settings::Entry::SearchStatus)]
-    {
+    for (label, entry) in [
+        ("Appearance", settings::Entry::Appearance),
+        ("Global shortcuts", settings::Entry::GlobalShortcuts),
+        ("Search status", settings::Entry::SearchStatus),
+    ] {
         click(&mut state, label);
         if entry == settings::Entry::Appearance {
             let generation = state.appearance_generation;
@@ -3521,6 +3531,8 @@ fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
                     event: appearance::Event::Loaded(Err("Cannot read settings".into())),
                 },
             );
+        } else if entry == settings::Entry::GlobalShortcuts {
+            click(&mut state, "Refresh");
         }
         assert!(!state.settings_menu_open());
         click(&mut state, "Back");

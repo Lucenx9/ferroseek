@@ -354,7 +354,7 @@ impl Panel {
         let body = container(body).padding(iced::padding::left(if filtered.is_empty() { 16 } else { 0 }));
         container(
             column![
-                ui::file_page_header("Open with…", Event::ReturnToSearch, reload),
+                ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
                 ui::divider(),
                 container(self.file_context()).width(Length::Fill).clip(true).padding([4, 16]),
                 container(input).padding([0, 16]),

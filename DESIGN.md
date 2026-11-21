@@ -216,11 +216,15 @@ Show shortcut badges when space permits. Back and the shortcuts remain available
 ### Settings and state feedback
 
 The search header has one Settings entry. Group its destinations by the user's
-decision, with a visible keyboard selection. Back from a settings page returns
+decision, with a visible keyboard selection. Show all destination labels at
+the default Settings height. Back from a settings page returns
 to its entry point, and Back from Settings preserves the search context.
 Keyboard shortcut editing identifies the action being recorded, keeps recovery
 keys available and explains binding conflicts. Show the active binding next to
 its action. Only a successful save applies the draft.
+Global shortcuts show the key labels reported by the desktop and keep Back
+available while the desktop opens its configuration. Distinguish active
+bindings from setup in progress.
 Appearance previews immediately, but Save persists changes;
 Back with unsaved edits requires explicit discard, and Escape at that prompt
 keeps editing. Save failures retain the draft. Preserve the distinct save/apply

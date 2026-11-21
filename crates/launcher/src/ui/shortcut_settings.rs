@@ -17,7 +17,6 @@ use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{ClickTracker, Command};
 use crate::{folders, timing};
 
-pub(super) const HEIGHT: u32 = 368;
 const SCROLL: &str = "shortcut-settings-scroll";
 const RESET: usize = Action::ALL.len();
 

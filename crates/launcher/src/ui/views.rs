@@ -14,13 +14,19 @@ use iced::alignment::Vertical;
 use iced::widget::{button, container, responsive, row, space, text};
 use iced::{Element, Length, Task};
 
-pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, refresh: Option<M>) -> Element<'a, M> {
+pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
+    title: &'static str,
+    back: M,
+    refresh: Option<M>,
+) -> Element<'a, M> {
     page_header(responsive(move |size| {
+        let compact = size.width < 320.0;
         let back = button(text("Back").size(12)).on_press(back.clone()).padding([6, 8]).style(status_button_style);
-        let label = if size.width < 320.0 { text("Refresh").size(12).into() } else { hint("Ctrl+R", "Refresh") };
+        let label = if compact { text("Refresh").size(12).into() } else { hint("Ctrl+R", "Refresh") };
         let refresh = button(label).on_press_maybe(refresh.clone()).padding([6, 8]).style(status_button_style);
-        let heading =
-            row![back, text(title).size(20), space::horizontal(), refresh].spacing(12).align_y(Vertical::Center);
+        let heading = row![back, text(title).size(20), space::horizontal(), refresh]
+            .spacing(if compact { 6 } else { 12 })
+            .align_y(Vertical::Center);
         container(heading).center_y(Length::Fill).into()
     }))
     .into()
@@ -61,8 +67,8 @@ impl Launcher {
             Some(panel.height())
         } else if self.alias_editor.is_some() {
             Some(super::alias_editor::HEIGHT)
-        } else if self.shortcuts.panel.is_some() {
-            Some(super::shortcut_settings::HEIGHT)
+        } else if self.shortcuts.panel.is_some() || self.global_shortcuts.panel.is_some() {
+            Some(settings::SHORTCUTS_HEIGHT)
         } else if self.settings_menu_open() {
             Some(settings::HEIGHT)
         } else {
@@ -77,7 +83,7 @@ impl Launcher {
         if let Some(panel) = &self.shortcuts.panel {
             return if panel.recording() { Routing::Recording } else { Routing::Disabled };
         }
-        if self.secondary_filter_owns_input() || self.saved_editor_open() {
+        if self.overrides_launcher_shortcuts() {
             return Routing::Disabled;
         }
         let shortcut = if self.folder_settings.is_some() {
@@ -92,8 +98,11 @@ impl Launcher {
         })
     }
 
-    fn secondary_filter_owns_input(&self) -> bool {
-        self.application_picker.is_some() || self.window_switcher.panel.is_some()
+    fn overrides_launcher_shortcuts(&self) -> bool {
+        self.application_picker.is_some()
+            || self.window_switcher.panel.is_some()
+            || self.global_shortcuts.panel.is_some()
+            || self.saved_editor_open()
     }
 
     pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
@@ -116,6 +125,9 @@ impl Launcher {
         }
         if let Some(panel) = &self.shortcuts.panel {
             return Some(self.shortcut_settings_view(panel));
+        }
+        if let Some(panel) = &self.global_shortcuts.panel {
+            return Some(self.global_shortcut_view(panel));
         }
         if let Some(editor) = &self.alias_editor {
             return Some(editor.view());
@@ -315,6 +327,7 @@ impl Launcher {
             Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
             Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
             Builtin::Shortcuts => self.show_shortcuts(),
+            Builtin::GlobalShortcuts => self.show_global_shortcuts(),
             Builtin::ClipboardHistory => self.show_clipboard_history(),
             Builtin::SwitchWindows => self.show_windows(),
         }

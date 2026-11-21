@@ -71,7 +71,8 @@ register a global shortcut or change desktop settings.
 
 Use `ferroseek-launcher --list-commands` to find IDs for direct shortcuts such
 as `ferroseek-launcher --command clipboard-history`.
-For portal-based bindings, see [Desktop portal shortcuts](docs/LAUNCHER.md#desktop-portal-shortcuts).
+Use **Settings → Global shortcuts** to manage bindings on supported desktops.
+[Desktop portal shortcuts](docs/LAUNCHER.md#desktop-portal-shortcuts)
 
 Choose **Settings → Appearance** for System/Light/Dark mode, paired color themes and a
 saved Glass/Solid preference. Glass has a solid fallback;

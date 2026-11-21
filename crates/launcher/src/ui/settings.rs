@@ -18,19 +18,23 @@ use crate::model::{ClickTracker, Command};
 pub enum Entry {
     Appearance,
     Shortcuts,
+    GlobalShortcuts,
     SearchFolders,
     SearchStatus,
 }
 
-const ENTRIES: [Entry; 4] = [Entry::Appearance, Entry::Shortcuts, Entry::SearchFolders, Entry::SearchStatus];
+const ENTRIES: [Entry; 5] =
+    [Entry::Appearance, Entry::Shortcuts, Entry::GlobalShortcuts, Entry::SearchFolders, Entry::SearchStatus];
 const SCROLL_ID: &str = "settings-scroll";
-pub(super) const HEIGHT: u32 = 368;
+pub(super) const HEIGHT: u32 = 400;
+pub(super) const SHORTCUTS_HEIGHT: u32 = 368;
 
 impl Entry {
     fn open(self, launcher: &mut Launcher) -> Task<Message> {
         match self {
             Self::Appearance => super::update(launcher, Message::ShowAppearance),
             Self::Shortcuts => launcher.show_shortcuts(),
+            Self::GlobalShortcuts => launcher.show_global_shortcuts(),
             Self::SearchFolders => super::update(launcher, Message::ShowFolders),
             Self::SearchStatus => super::update(launcher, Message::ShowSearchStatus),
         }
@@ -40,6 +44,7 @@ impl Entry {
         let (name, help, shortcut) = match self {
             Self::Appearance => (Builtin::Appearance, "Theme, colors and layout", Some(Shortcut::Appearance)),
             Self::Shortcuts => (Builtin::Shortcuts, Builtin::Shortcuts.description(), None),
+            Self::GlobalShortcuts => (Builtin::GlobalShortcuts, Builtin::GlobalShortcuts.description(), None),
             Self::SearchFolders => {
                 (Builtin::SearchFolders, Builtin::SearchFolders.description(), Some(Shortcut::SearchFolders))
             }
@@ -80,11 +85,7 @@ impl Launcher {
     }
 
     pub(super) fn settings_menu_open(&self) -> bool {
-        self.settings.is_some()
-            && self.appearance.is_none()
-            && self.shortcuts.panel.is_none()
-            && self.folder_settings.is_none()
-            && self.search_status.is_none()
+        self.settings.is_some() && !self.settings_form_open() && self.search_status.is_none()
     }
 
     pub(super) fn return_to_parent(&mut self) -> Task<Message> {
@@ -149,7 +150,7 @@ pub(super) fn view(selected: Entry, bindings: Bindings) -> Element<'static, Mess
     // A distinct widget tree keeps this scroll position out of the child pages.
     let body = column![
         scrollable(
-            column![entries("Launcher", &ENTRIES[..2]), entries("File search", &ENTRIES[2..])].spacing(8).padding(8),
+            column![entries("Launcher", &ENTRIES[..3]), entries("File search", &ENTRIES[3..])].spacing(8).padding(8),
         )
         .id(SCROLL_ID)
         .height(Length::Fill),

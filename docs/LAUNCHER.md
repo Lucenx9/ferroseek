@@ -51,15 +51,16 @@ the engine and integrations. See [installation](INSTALLATION.md).
 
 Open **Settings** in the search header or press Ctrl+Shift+S. Use Up/Down or
 Tab/Shift+Tab to select a page and Enter to open it, or click its row. Launcher
-settings group **Appearance** and **Shortcuts**. File search groups **Search folders** and
-**Search status**. Back or Esc returns to Settings with the same page selected.
+settings group **Appearance**, **Shortcuts**, and **Global shortcuts**. File search
+groups **Search folders** and **Search status**. Back or Esc returns to Settings
+with the same page selected.
 Esc from Settings returns to the current search. Each page also has a direct
 shortcut shown next to its name when one is available.
 
 ![Settings grouped by launcher and file search](assets/launcher-settings.png)
 
-The search, Settings, and Search status screenshots show the launcher at 1× in
-isolated virtual KWin 5.27.11 with the tiny-skia renderer and synthetic data.
+Captured at 1× in isolated Labwc with the tiny-skia renderer. Search and
+Search status were captured at 1× in isolated virtual KWin 5.27.11.
 
 ## Shortcuts
 
@@ -97,11 +98,24 @@ existing regular window first.
 
 ### Desktop portal shortcuts
 
+![Desktop-assigned keys for clipboard history and opening FerroSeek](assets/launcher-global-shortcuts.png)
+
+Captured at 1× in isolated Labwc with tiny-skia and a simulated shortcut backend.
+
 On a desktop that supports the XDG GlobalShortcuts portal, the optional
 listener registers **Open FerroSeek** and the built-in commands for
-assignment by the desktop. Run `ferroseek-launcher --global-shortcuts`
-in a terminal after installing the launcher. The portal handles the assignment.
-The listener stays active when the launcher closes. Ctrl+C stops the listener.
+assignment by the desktop. Open **Settings → Global shortcuts**, or search
+for **Global shortcuts**. Choose **Start** (Enter) to run the listener for the
+current session. The desktop handles assignment. The page shows the key labels
+reported by the desktop and updates them when assignments change.
+
+Choose **Configure** (Enter) to reopen assignment on a portal that supports
+it. Older portals use the desktop's own settings. Choose **Stop** (Ctrl+Enter)
+to stop the current listener. Escape returns to the previous view and Ctrl+R
+refreshes the listener status. Closing the launcher leaves the listener active.
+
+For terminal use, run `ferroseek-launcher --global-shortcuts` after installing
+the launcher. Ctrl+C stops a listener that was started in the terminal.
 
 To keep the listener active across graphical logins on a desktop that uses
 `graphical-session.target`, explicitly enable its installed user service.
@@ -111,15 +125,17 @@ systemctl --user enable --now app-io.github.ferroseek.Launcher.service
 ```
 
 Use `systemctl --user disable --now app-io.github.ferroseek.Launcher.service`
-to stop it and remove autostart. Use the service to start the listener on
-older portals that identify apps by their systemd unit. Desktop support for
-assigning keys varies by portal backend. Desktop-configured command shortcuts
-remain available where portal assignment is unavailable.
+to stop it and remove autostart. **Start** from settings uses the installed
+service when available. Older portals that identify apps by their systemd unit
+require that service. Desktop support for assigning keys varies by portal
+backend. Desktop-configured command shortcuts remain available where portal
+assignment is unavailable.
 
 In virtual KWin 5.27, XDG Desktop Portal 1.22 passed the installed FerroSeek
-identity to the KDE backend. With a simulated backend, the same portal forwarded
-a shortcut activation and FerroSeek opened Clipboard history. Physical key
-assignment through the portal remains to be verified.
+identity to the KDE backend. With simulated backends, the same portal forwarded
+an activation to Clipboard history. In nested Labwc, it also forwarded a
+configuration request and returned updated key labels to the settings page.
+Physical key assignment through the portal remains to be verified.
 
 ## Saved links
 
@@ -483,7 +499,8 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
   **Appearance**, **Layout**, **Search folders**, **Search status**,
-  **Shortcuts**, **Create link**, **Create snippet**, **Clipboard history** or **Switch windows**. Strong
+  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**,
+  **Clipboard history**, or **Switch windows**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
   the displayed number and the action menu all open the selected command.
@@ -492,7 +509,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
 
   ![Built-in commands with keyboard access](assets/launcher-commands.png)
 
-  Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+  Captured at 1× in isolated Labwc with tiny-skia.
 
 - **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
   method; opening and revealing go through its `Open` method, which only

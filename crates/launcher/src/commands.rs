@@ -12,12 +12,13 @@ pub enum Builtin {
     SearchStatus,
     CreateLink,
     Shortcuts,
+    GlobalShortcuts,
     CreateSnippet,
     ClipboardHistory,
     SwitchWindows,
 }
 
-pub const ALL: [Builtin; 10] = [
+pub const ALL: [Builtin; 11] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
@@ -25,6 +26,7 @@ pub const ALL: [Builtin; 10] = [
     Builtin::SearchStatus,
     Builtin::CreateLink,
     Builtin::Shortcuts,
+    Builtin::GlobalShortcuts,
     Builtin::CreateSnippet,
     Builtin::ClipboardHistory,
     Builtin::SwitchWindows,
@@ -44,6 +46,14 @@ const SWITCH_WINDOWS: Metadata = Metadata {
     description: "Find and focus an open window",
     icon: "focus-windows",
     keywords: "open windows find running apps activate focus switcher",
+};
+
+const GLOBAL_SHORTCUTS: Metadata = Metadata {
+    id: "global-shortcuts",
+    title: "Global shortcuts",
+    description: "Manage keys assigned by the desktop",
+    icon: "preferences-desktop-keyboard",
+    keywords: "desktop hotkeys portal global shortcut bindings",
 };
 
 impl Builtin {
@@ -99,6 +109,7 @@ impl Builtin {
                 keywords: "copies recent clipboard history paste",
             },
             Self::SwitchWindows => &SWITCH_WINDOWS,
+            Self::GlobalShortcuts => &GLOBAL_SHORTCUTS,
             Self::CreateSnippet => &Metadata {
                 id: "create-snippet",
                 title: "Create snippet",

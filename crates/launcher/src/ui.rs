@@ -3,6 +3,7 @@
 
 mod alias_editor;
 pub(crate) mod clipboard_view;
+mod global_shortcut_settings;
 mod saved_editor;
 mod settings;
 mod shortcut_settings;
@@ -46,7 +47,7 @@ use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
 use ferroseek_config::shortcuts::{Action as Shortcut, Chord};
-pub(crate) use views::file_page_header;
+pub(crate) use views::back_refresh_header;
 
 #[cfg(test)]
 pub const WIDTH: u32 = 720;
@@ -201,6 +202,7 @@ pub struct Launcher {
     opaque: bool,
     settings: Option<settings::Entry>,
     shortcuts: shortcut_settings::State,
+    global_shortcuts: global_shortcut_settings::State,
     clipboard_history: clipboard_view::State,
     window_switcher: windows::State,
     appearance: Option<appearance::Panel>,
@@ -292,6 +294,7 @@ pub enum Message {
     ShowFolders,
     ShowAppearance,
     ShortcutSettings { generation: u64, event: shortcut_settings::Event },
+    GlobalShortcuts { generation: u64, event: global_shortcut_settings::Event },
     ShortcutRecorded(Result<Chord, &'static str>),
     Clipboard { generation: u64, event: clipboard_view::Event },
     ClipboardShortcut(clipboard_view::Shortcut),
@@ -384,32 +387,31 @@ fn boot() -> (Launcher, Task<Message>) {
 }
 
 fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot { activation, backend, apps, usage, favorites, destination, settings_path, config, opaque, private } =
-        data;
-    let initial = layout::calculate(config.appearance, None, true, false);
+    let initial = layout::calculate(data.config.appearance, None, true, false);
     Launcher {
         output,
         output_bounds: None,
         placement: None,
         window_height: initial.height,
-        preferences: config.appearance,
+        preferences: data.config.appearance,
         system_dark: None,
-        opaque,
+        opaque: data.opaque,
         settings: None,
-        shortcuts: shortcut_settings::State::new(config.shortcuts),
-        clipboard_history: clipboard_view::State::new(private),
+        shortcuts: shortcut_settings::State::new(data.config.shortcuts),
+        global_shortcuts: global_shortcut_settings::State::default(),
+        clipboard_history: clipboard_view::State::new(data.private),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
         material,
         glass: false,
-        activation,
-        backend,
-        apps,
-        usage,
-        favorites,
-        saved: saved::Store::load(&saved::Store::path(&settings_path)),
+        activation: data.activation,
+        backend: data.backend,
+        apps: data.apps,
+        usage: data.usage,
+        favorites: data.favorites,
+        saved: saved::Store::load(&saved::Store::path(&data.settings_path)),
         alias_editor: None,
         saved_editor: None,
         edit_generation: 0,
@@ -443,14 +445,14 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         preview_request: None,
         folder_settings: None,
         folder_generation: 0,
-        settings_path,
+        settings_path: data.settings_path,
         deferred_destination: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
     }
-    .start_destination(destination)
+    .start_destination(data.destination)
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -1047,7 +1049,10 @@ impl Launcher {
     }
 
     fn settings_form_open(&self) -> bool {
-        self.folder_settings.is_some() || self.appearance.is_some() || self.shortcuts.panel.is_some()
+        self.folder_settings.is_some()
+            || self.appearance.is_some()
+            || self.shortcuts.panel.is_some()
+            || self.global_shortcuts.panel.is_some()
     }
 
     fn saved_editor_open(&self) -> bool {
@@ -1357,14 +1362,24 @@ fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
         s.update_windows(message)
     } else if s.clipboard_history.panel.is_some() {
         s.update_clipboard_history(message)
-    } else if s.shortcuts.panel.is_some() {
-        s.update_shortcut_settings(message)
     } else if s.alias_editor.is_some() {
         s.update_alias_editor(message)
     } else if s.saved_editor.is_some() {
         s.update_saved_editor(message)
-    } else if s.appearance.is_some() {
+    } else if s.settings_form_open() {
+        update_settings_form(s, message)
+    } else {
+        update_content(s, message)
+    }
+}
+
+fn update_settings_form(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.appearance.is_some() {
         update_appearance(s, message)
+    } else if s.shortcuts.panel.is_some() {
+        s.update_shortcut_settings(message)
+    } else if s.global_shortcuts.panel.is_some() {
+        s.update_global_shortcuts(message)
     } else {
         update_content(s, message)
     }

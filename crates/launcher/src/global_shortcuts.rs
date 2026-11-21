@@ -4,11 +4,12 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use iced::futures::StreamExt;
 use iced::futures::future::select;
+use iced::futures::{StreamExt, channel::oneshot};
 use serde::Serialize;
 use zbus::fdo::{DBusProxy, RequestNameFlags, RequestNameReply};
 use zbus::names::{OwnedUniqueName, WellKnownName};
@@ -16,6 +17,9 @@ use zbus::zvariant::DynamicType;
 use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant};
 
 use crate::commands::{self, Builtin};
+
+mod control;
+pub(crate) use control::{Operation, Status, perform};
 
 const APP_ID: &str = "io.github.ferroseek.Launcher";
 const SERVICE: &str = "io.github.ferroseek.LauncherShortcuts";
@@ -39,8 +43,11 @@ pub fn run() -> Result<(), String> {
 }
 
 async fn run_monitor() -> Result<(), String> {
+    let (stop, stopped) = oneshot::channel();
+    let ready = control::SessionState::default();
     let conn = zbus::connection::Builder::session()
         .method_timeout(CALL_TIMEOUT)
+        .serve_at(control::PATH, control::Listener::new(ready.clone(), stop))
         .build()
         .await
         .map_err(|error| format!("Could not connect to the session bus: {error}"))?;
@@ -52,12 +59,22 @@ async fn run_monitor() -> Result<(), String> {
         return Err("A FerroSeek shortcut listener is already running.".into());
     }
 
-    let owner = portal_owner(&conn).await.map_err(|error| format!("The desktop portal is unavailable: {error}"))?;
-    register(&conn, &owner).await?;
-    let proxy = Proxy::new(&conn, owner.as_str(), ROOT, SHORTCUTS).await.map_err(|error| error.to_string())?;
-    let portal = Portal(proxy);
-    let session = portal.create_session().await?;
-    portal.listen(&session).await
+    let monitor = async {
+        let owner = portal_owner(&conn).await.map_err(|error| format!("The desktop portal is unavailable: {error}"))?;
+        register(&conn, &owner).await?;
+        let proxy = Proxy::new(&conn, owner.as_str(), ROOT, SHORTCUTS).await.map_err(|error| error.to_string())?;
+        let portal = Portal(proxy);
+        let session = portal.create_session().await?;
+        portal.listen(&session, &owner, ready).await
+    };
+    until(monitor, stopped).await
+}
+
+async fn until(work: impl Future<Output = Result<(), String>>, stop: impl Future) -> Result<(), String> {
+    match select(Box::pin(work), Box::pin(stop)).await {
+        iced::futures::future::Either::Left((result, _)) => result,
+        iced::futures::future::Either::Right(_) => Ok(()),
+    }
 }
 
 async fn portal_owner(conn: &Connection) -> zbus::fdo::Result<OwnedUniqueName> {
@@ -156,35 +173,68 @@ impl Portal<'_> {
         Ok(format!("{ROOT}/{kind}/{sender}/{}", token.0))
     }
 
-    async fn listen(&self, session: &OwnedObjectPath) -> Result<(), String> {
+    async fn listen(
+        &self,
+        session: &OwnedObjectPath,
+        portal_owner: &OwnedUniqueName,
+        state: control::SessionState,
+    ) -> Result<(), String> {
         let session_proxy = self.proxy(session.as_str(), SESSION).await.map_err(|error| error.to_string())?;
         let mut closed = session_proxy.receive_signal("Closed").await.map_err(|error| error.to_string())?;
         let mut owner = self.0.receive_owner_changed().await.map_err(|error| error.to_string())?;
         let events = self.0.receive_signal("Activated").await.map_err(|error| error.to_string())?;
+        let changes = self.0.receive_signal("ShortcutsChanged").await.map_err(|error| error.to_string())?;
         let monitor = async {
-            self.ensure_shortcuts(session).await?;
+            let version = self.0.get_property::<u32>("version").await.unwrap_or(1).max(1);
+            let shortcuts = self.ensure_shortcuts(session).await?;
+            let labels = binding_labels(shortcuts);
+            if labels.is_empty() {
+                println!("No shortcut labels were reported. Choose FerroSeek shortcuts in desktop settings.");
+            }
+            state.ready(control::Session {
+                portal: portal_owner.clone(),
+                handle: session.clone(),
+                version,
+                bindings: labels,
+            });
             println!("Listening for FerroSeek global shortcuts.");
-            forward_activations(session, events).await
+            until(forward_activations(session, events), self.watch_bindings(session, changes, state)).await
         };
-        match select(Box::pin(monitor), Box::pin(select(closed.next(), owner.next()))).await {
-            iced::futures::future::Either::Left((result, _)) => result,
-            iced::futures::future::Either::Right(_) => Ok(()),
+        until(monitor, select(closed.next(), owner.next())).await
+    }
+
+    async fn watch_bindings(
+        &self,
+        session: &OwnedObjectPath,
+        mut changes: zbus::proxy::SignalStream<'_>,
+        state: control::SessionState,
+    ) {
+        while let Some(signal) = changes.next().await {
+            let Ok((path, _)) = signal.body().deserialize::<(OwnedObjectPath, Shortcuts)>() else { continue };
+            if &path == session {
+                match self.list_shortcuts(session).await {
+                    Ok(shortcuts) => state.update_bindings(binding_labels(shortcuts)),
+                    Err(error) => eprintln!("ferroseek-launcher: could not refresh shortcut assignments: {error}"),
+                }
+            }
         }
     }
 
-    async fn ensure_shortcuts(&self, session: &OwnedObjectPath) -> Result<(), String> {
+    async fn list_shortcuts(&self, session: &OwnedObjectPath) -> Result<Shortcuts, String> {
         let list = RequestToken::new()?;
         let properties = self.request("ListShortcuts", &list, &(session, list.options())).await?;
-        if contains_known_shortcut(properties)? {
-            return Ok(());
+        decode_shortcuts(properties)
+    }
+
+    async fn ensure_shortcuts(&self, session: &OwnedObjectPath) -> Result<Shortcuts, String> {
+        let saved = self.list_shortcuts(session).await?;
+        if saved.iter().any(|(id, _)| Target::from_id(id).is_some()) {
+            return Ok(saved);
         }
         let bind = RequestToken::new()?;
         let properties =
             self.request("BindShortcuts", &bind, &(session, shortcut_definitions(), "", bind.options())).await?;
-        if !contains_known_shortcut(properties)? {
-            println!("No shortcuts have been assigned. Choose FerroSeek shortcuts in desktop settings.");
-        }
-        Ok(())
+        decode_shortcuts(properties)
     }
 }
 
@@ -226,13 +276,28 @@ fn shortcut_definitions() -> Vec<(&'static str, Options<'static>)> {
         .collect()
 }
 
-fn contains_known_shortcut(mut properties: Properties) -> Result<bool, String> {
-    let shortcuts: Shortcuts = properties
+fn decode_shortcuts(mut properties: Properties) -> Result<Shortcuts, String> {
+    properties
         .remove("shortcuts")
         .ok_or("The desktop returned no shortcut list.")?
         .try_into()
-        .map_err(|_| "The desktop returned an invalid shortcut list.")?;
-    Ok(shortcuts.iter().any(|(id, _)| Target::from_id(id).is_some()))
+        .map_err(|_| "The desktop returned an invalid shortcut list.".into())
+}
+
+fn binding_labels(shortcuts: Shortcuts) -> Vec<(String, String)> {
+    let mut labels: Vec<_> = shortcuts
+        .into_iter()
+        .filter_map(|(id, properties)| {
+            let title = match Target::from_id(&id)? {
+                Target::Open => "Open FerroSeek",
+                Target::Command(command) => command.title(),
+            };
+            let trigger = <&str>::try_from(properties.get("trigger_description")?).ok()?.trim();
+            (!trigger.is_empty()).then(|| (title.to_owned(), trigger.to_owned()))
+        })
+        .collect();
+    labels.sort_unstable();
+    labels
 }
 
 enum Target {
@@ -245,22 +310,26 @@ impl Target {
         if id == OPEN { Some(Self::Open) } else { Builtin::from_id(id).map(Self::Command) }
     }
 
-    fn launch(self, executable: &std::path::Path) -> std::io::Result<()> {
-        let mut command = Command::new(executable);
-        command
-            .process_group(0)
-            .stdin(Stdio::null())
-            .env_remove("XDG_ACTIVATION_TOKEN")
-            .env_remove("DESKTOP_STARTUP_ID");
-        if let Self::Command(command_id) = self {
-            command.args(["--command", command_id.id()]);
+    fn launch(self, executable: &Path) -> std::io::Result<()> {
+        match self {
+            Self::Open => spawn_launcher(executable, &[]),
+            Self::Command(command) => spawn_launcher(executable, &["--command", command.id()]),
         }
-        let mut child = command.spawn()?;
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        Ok(())
     }
+}
+
+fn spawn_launcher(executable: &Path, args: &[&str]) -> std::io::Result<()> {
+    let mut child = Command::new(executable)
+        .args(args)
+        .process_group(0)
+        .stdin(Stdio::null())
+        .env_remove("XDG_ACTIVATION_TOKEN")
+        .env_remove("DESKTOP_STARTUP_ID")
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 async fn forward_activations(
@@ -302,5 +371,21 @@ mod tests {
             assert!(matches!(Target::from_id(command.id()), Some(Target::Command(id)) if id == command));
         }
         assert!(Target::from_id("--private").is_none());
+    }
+
+    #[test]
+    fn status_uses_desktop_labels_only_for_known_shortcuts() {
+        let trigger = |label: &'static str| {
+            HashMap::from([("trigger_description".into(), Variant::from(label).try_into().unwrap())])
+        };
+        assert_eq!(
+            binding_labels(vec![
+                (Builtin::SwitchWindows.id().into(), trigger("")),
+                (OPEN.into(), trigger("Ctrl+Alt+Space")),
+                ("unknown".into(), trigger("Ctrl+Alt+T")),
+                (Builtin::ClipboardHistory.id().into(), Properties::new()),
+            ]),
+            [("Open FerroSeek".into(), "Ctrl+Alt+Space".into())]
+        );
     }
 }

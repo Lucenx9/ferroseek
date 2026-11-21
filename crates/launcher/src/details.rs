@@ -132,7 +132,7 @@ impl Panel {
             }
         }
         container(column![
-            ui::file_page_header("File details", Event::Back, refresh),
+            ui::back_refresh_header("File details", Event::Back, refresh),
             ui::divider(),
             scrollable(container(body).padding([12, 16])).id(scroll_id()).height(Length::Fill),
             ui::divider(),
