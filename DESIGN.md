@@ -151,8 +151,9 @@ result name first and useful distinguishing context second: parent path for
 files, description for applications and a short purpose for commands. Commands
 use the same selection and action affordances as other results. All shows
 strong command matches. Commands browses the catalog with an empty search.
-Keep favorite commands ahead of the rest of that catalog and include them
+Keep favorite commands, links and snippets ahead of the rest of that catalog and include them
 among the ordered favorites in All. Preserve the ranking of typed queries.
+A renamed saved item keeps its favorite. Deleting it retires that identity.
 The active search filter uses an accent underline and primary text. Type labels
 distinguish results in All. Dedicated scopes omit labels that repeat the scope
 and keep distinctions such as Folder. The preview layout prioritizes names and paths.

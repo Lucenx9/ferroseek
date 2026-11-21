@@ -11,6 +11,7 @@ pub(crate) const QUERY: &str = "{query}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
+    pub(crate) id: String,
     pub name: String,
     pub address: String,
     pub keyword: String,
@@ -47,7 +48,14 @@ impl Link {
             return Err("Enter a name.".into());
         }
         let validated = Destination::parse(address, !keyword.is_empty())?;
-        Ok(Self { name: name.into(), address: address.into(), keyword, validated, fallback: false })
+        Ok(Self {
+            id: format!("legacy:{name}"),
+            name: name.into(),
+            address: address.into(),
+            keyword,
+            validated,
+            fallback: false,
+        })
     }
 
     pub fn with_fallback(mut self, enabled: bool) -> Result<Self, String> {

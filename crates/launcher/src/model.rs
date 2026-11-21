@@ -2,6 +2,7 @@
 //! UI-independent launcher state: result list, selection window, actions
 //! and the keyboard map. Everything here is unit-tested without a display.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -102,11 +103,17 @@ pub enum Target {
 }
 
 impl Target {
-    pub(crate) fn favorite_key<'a>(&'a self, apps: &'a [App]) -> Option<(FavoriteKind, &'a str)> {
+    pub(crate) fn favorite_key<'a>(
+        &'a self,
+        apps: &'a [App],
+        saved: &saved::Store,
+    ) -> Option<(FavoriteKind, Cow<'a, str>)> {
         match self {
-            Self::App(index) => apps.get(*index).map(|app| (FavoriteKind::App, app.id.as_str())),
-            Self::File(file) if file.path.is_some() => Some((FavoriteKind::File, &file.id)),
-            Self::Command(command) => Some((FavoriteKind::Command, command.id())),
+            Self::App(index) => apps.get(*index).map(|app| (FavoriteKind::App, app.id.as_str().into())),
+            Self::File(file) if file.path.is_some() => Some((FavoriteKind::File, file.id.as_str().into())),
+            Self::Command(command) => Some((FavoriteKind::Command, command.id().into())),
+            Self::Link(link, _) => Some((FavoriteKind::Link, saved.favorite_key(&link.id).into())),
+            Self::Snippet(snippet) => Some((FavoriteKind::Snippet, saved.favorite_key(&snippet.id).into())),
             _ => None,
         }
     }
@@ -205,15 +212,27 @@ pub fn calc_item(query: &str) -> Option<Item> {
     })
 }
 
-fn stored_item(apps: &[App], (kind, key): (FavoriteKind, &str), scope: Scope) -> Option<Item> {
+fn stored_item(catalog: Catalog<'_>, (kind, key): (FavoriteKind, &str), scope: Scope) -> Option<Item> {
     match kind {
         FavoriteKind::App if scope.includes_apps() => {
-            apps.iter().position(|app| app.id == key).map(|i| app_item(apps, i))
+            catalog.apps.iter().position(|app| app.id == key).map(|i| app_item(catalog.apps, i))
         }
         FavoriteKind::File if scope.includes_files() => stored_file(key),
         FavoriteKind::Command if matches!(scope, Scope::All | Scope::Commands) => {
             Builtin::from_id(key).map(command_item)
         }
+        FavoriteKind::Link | FavoriteKind::Snippet if matches!(scope, Scope::All | Scope::Commands) => {
+            stored_named_item(catalog.saved, kind, key)
+        }
+        _ => None,
+    }
+}
+
+fn stored_named_item(saved: &saved::Store, kind: FavoriteKind, key: &str) -> Option<Item> {
+    let id = saved.favorite_id(key)?;
+    match kind {
+        FavoriteKind::Link => saved.links.iter().find(|link| link.id == id).map(|link| link_item(link, "")),
+        FavoriteKind::Snippet => saved.snippets.iter().find(|snippet| snippet.id == id).map(snippet_item),
         _ => None,
     }
 }
@@ -234,9 +253,15 @@ fn stored_file(key: &str) -> Option<Item> {
     }))
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Catalog<'a> {
+    pub apps: &'a [App],
+    pub saved: &'a saved::Store,
+}
+
 /// Show pinned rows, recent items, then the catalog for the current scope.
-pub fn home_items(
-    apps: &[App],
+pub(crate) fn home_items(
+    catalog: Catalog<'_>,
     recent: &[(Kind, String)],
     favorites: &[(FavoriteKind, String)],
     scope: Scope,
@@ -246,7 +271,7 @@ pub fn home_items(
     let visits = recent.iter().map(|(kind, key)| (FavoriteKind::from(*kind), key.as_str()));
     let mut seen = HashSet::new();
     let ordered = pins.chain(visits).filter(|key| seen.insert(*key));
-    let mut items: Vec<_> = ordered.filter_map(|key| stored_item(apps, key, scope)).take(limit).collect();
+    let mut items: Vec<_> = ordered.filter_map(|key| stored_item(catalog, key, scope)).take(limit).collect();
     let remaining = limit - items.len();
     if scope == Scope::Commands {
         items.extend(
@@ -258,11 +283,13 @@ pub fn home_items(
         );
     } else if scope.includes_apps() {
         items.extend(
-            apps.iter()
+            catalog
+                .apps
+                .iter()
                 .enumerate()
                 .filter(|(_, app)| !seen.contains(&(FavoriteKind::App, app.id.as_str())))
                 .take(remaining)
-                .map(|(i, _)| app_item(apps, i)),
+                .map(|(i, _)| app_item(catalog.apps, i)),
         );
     }
     items
@@ -490,7 +517,14 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],
     };
-    if matches!(t, Target::App(_) | Target::File(FileHit { path: Some(_), .. }) | Target::Command(_)) {
+    if matches!(
+        t,
+        Target::App(_)
+            | Target::File(FileHit { path: Some(_), .. })
+            | Target::Command(_)
+            | Target::Link(..)
+            | Target::Snippet(_)
+    ) {
         actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
     }
     if matches!(t, Target::File(FileHit { path: Some(_), is_dir: true, .. })) {
@@ -722,6 +756,11 @@ pub fn command_for(key: &Key, mods: Modifiers) -> Option<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn catalog(apps: &[App]) -> Catalog<'_> {
+        static EMPTY: std::sync::LazyLock<saved::Store> = std::sync::LazyLock::new(saved::Store::default);
+        Catalog { apps, saved: &EMPTY }
+    }
     use std::path::{Path, PathBuf};
 
     fn file(name: &str, dir: bool) -> FileHit {
@@ -873,7 +912,9 @@ mod tests {
             (Kind::File, "file:///nonexistent/ferroseek-test".to_string()),
         ];
         let keys = recent.iter().map(|(kind, key)| (FavoriteKind::from(*kind), key.as_str()));
-        let items: Vec<_> = keys.filter_map(|key| stored_item(&a, key, Scope::All)).collect();
+        let saved = saved::Store::default();
+        let catalog = Catalog { apps: &a, saved: &saved };
+        let items: Vec<_> = keys.filter_map(|key| stored_item(catalog, key, Scope::All)).collect();
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "x y.txt"]);
     }
@@ -890,7 +931,7 @@ mod tests {
             (Kind::App, "Kate.desktop".to_string()),
             (Kind::File, format!("file://{}", f.display())),
         ];
-        let items = home_items(&a, &recent, &[], Scope::All, 2);
+        let items = home_items(catalog(&a), &recent, &[], Scope::All, 2);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Kate", "valid.txt"]);
     }
@@ -898,21 +939,21 @@ mod tests {
     #[test]
     fn home_without_history_suggests_available_apps_in_catalog_order() {
         let a = apps();
-        let items = home_items(&a, &[], &[], Scope::All, 3);
+        let items = home_items(catalog(&a), &[], &[], Scope::All, 3);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Firefox", "Files", "Fonts"]);
-        assert_eq!(home_items(&a, &[], &[], Scope::All, usize::MAX).len(), a.len());
-        assert!(home_items(&[], &[], &[], Scope::All, 3).is_empty());
+        assert_eq!(home_items(catalog(&a), &[], &[], Scope::All, usize::MAX).len(), a.len());
+        assert!(home_items(catalog(&[]), &[], &[], Scope::All, 3).is_empty());
     }
 
     #[test]
     fn home_suggestions_do_not_duplicate_recent_apps_and_respect_zero_limit() {
         let a = apps();
         let recent = [(Kind::App, "Files.desktop".to_string()), (Kind::App, "Files.desktop".to_string())];
-        let items = home_items(&a, &recent, &[], Scope::All, 4);
+        let items = home_items(catalog(&a), &recent, &[], Scope::All, 4);
         let titles: Vec<_> = items.iter().map(|i| i.title.as_str()).collect();
         assert_eq!(titles, ["Files", "Firefox", "Fonts", "Calculator"]);
-        assert!(home_items(&a, &recent, &[], Scope::All, 0).is_empty());
+        assert!(home_items(catalog(&a), &recent, &[], Scope::All, 0).is_empty());
     }
 
     #[test]
@@ -931,18 +972,18 @@ mod tests {
             (Kind::App, "Fonts.desktop".into()),
             (Kind::File, format!("file://{}", two.display())),
         ];
-        let files = home_items(&a, &recent, &[], Scope::Files, 2);
+        let files = home_items(catalog(&a), &recent, &[], Scope::Files, 2);
         assert_eq!(files.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(), ["one.txt", "two.txt"]);
         assert!(files.iter().all(|i| i.section == Section::Files));
-        let applications = home_items(&a, &recent, &[], Scope::Applications, 4);
+        let applications = home_items(catalog(&a), &recent, &[], Scope::Applications, 4);
         assert_eq!(
             applications.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
             ["Kate", "Files", "Fonts", "Firefox"]
         );
         assert!(applications.iter().all(|i| i.section == Section::Applications));
-        assert!(home_items(&a, &[], &[], Scope::Files, 8).is_empty());
+        assert!(home_items(catalog(&a), &[], &[], Scope::Files, 8).is_empty());
         for scope in Scope::ALL {
-            assert!(home_items(&a, &recent, &[], scope, 0).is_empty());
+            assert!(home_items(catalog(&a), &recent, &[], scope, 0).is_empty());
         }
     }
 
@@ -974,7 +1015,7 @@ mod tests {
             two_key,
         ];
         let titles = |scope, limit| {
-            home_items(&a, &recent, &favorites, scope, limit).into_iter().map(|i| i.title).collect::<Vec<_>>()
+            home_items(catalog(&a), &recent, &favorites, scope, limit).into_iter().map(|i| i.title).collect::<Vec<_>>()
         };
         assert_eq!(titles(Scope::All, 5), ["one.txt", "Kate", "two.txt", "Files", "Firefox"]);
         assert_eq!(titles(Scope::Applications, 3), ["Kate", "Files", "Firefox"]);
@@ -991,7 +1032,10 @@ mod tests {
         let mut favorites = vec![(FavoriteKind::Command, "unavailable".into())];
         favorites.extend(pins.map(|command| (FavoriteKind::Command, command.id().into())));
         let home = |scope, limit| {
-            home_items(&[], &[], &favorites, scope, limit).into_iter().map(|item| item.target).collect::<Vec<_>>()
+            home_items(catalog(&[]), &[], &favorites, scope, limit)
+                .into_iter()
+                .map(|item| item.target)
+                .collect::<Vec<_>>()
         };
         let catalog = pins
             .into_iter()
@@ -1008,13 +1052,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("returning.txt");
         let favorites = [(FavoriteKind::File, format!("file://{}", path.display()))];
-        assert!(home_items(&[], &[], &favorites, Scope::Files, 8).is_empty());
+        assert!(home_items(catalog(&[]), &[], &favorites, Scope::Files, 8).is_empty());
         std::fs::write(&path, "").unwrap();
-        assert_eq!(home_items(&[], &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
+        assert_eq!(home_items(catalog(&[]), &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
         std::fs::remove_file(&path).unwrap();
-        assert!(home_items(&[], &[], &favorites, Scope::Files, 8).is_empty());
+        assert!(home_items(catalog(&[]), &[], &favorites, Scope::Files, 8).is_empty());
         std::fs::write(&path, "").unwrap();
-        assert_eq!(home_items(&[], &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
+        assert_eq!(home_items(catalog(&[]), &[], &favorites, Scope::Files, 8)[0].title, "returning.txt");
     }
 
     #[test]

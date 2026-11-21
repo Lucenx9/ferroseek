@@ -944,17 +944,23 @@ neither indexed nor persisted by this feature.
 ## Favorites
 
 Use **Add to favorites** or **Remove from favorites** in the action panel for
-an app, file or built-in command (search for `pin` or `unpin`). A star marks
-favorite rows. With an empty query, **All** shows favorites before recent items
+an app, file, command, saved link or snippet (search for `pin` or `unpin`).
+A star marks favorite rows. With an empty query, **All** shows favorites before recent items
 in the order they were added. **Applications** and **Files** show favorites of
-their own type. **Commands** puts favorite commands first, then lists the rest
-of the catalog. Unavailable favorites stay saved and use no suggestion slots.
-Favorites do not change the ranking of a typed query.
+their own type. **Commands** lists favorite commands, links and snippets before
+the rest of the catalog. Renaming a link or snippet keeps its favorite.
+After deleting a saved item, a new entry with the same name has its own identity.
+Unavailable favorites use no suggestion slots. Favorites do not change the
+ranking of a typed query.
 
 Favorites are stored separately in
 `$XDG_STATE_HOME/ferroseek/launcher-favorites`, with owner-only permissions and
-locked, atomic updates. Up to 400 favorites are retained. **Reset ranking** and `--forget-history` leave them
-intact. `--private` reads and writes neither saved history nor saved favorites;
+locked, atomic updates. Up to 400 favorites are retained. **Reset ranking**
+and `--forget-history` leave them intact. The launcher reads older saved links and
+snippets and records stable identifiers when new entries are saved or a legacy
+entry is renamed. Reading saved entries with identifiers requires a build
+that supports this format. `--private` reads and writes neither saved history
+nor saved favorites;
 any favorites added there last only until that launcher closes. File opening
 continues through the daemon, which still requires an indexed path.
 

@@ -47,6 +47,10 @@ impl Launcher {
             .into_iter()
             .map(|(snippet, score)| (model::snippet_item(snippet), score));
         let mut matches: Vec<_> = links.chain(snippets).collect();
+        if self.query.trim().is_empty() {
+            // The empty catalog already includes the pinned links and snippets.
+            matches.retain(|(item, _)| !self.is_favorite(&item.target));
+        }
         matches.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
         let index = if self.query.trim().is_empty() { self.items.len() } else { 0 };
         self.items.splice(index..index, matches.into_iter().map(|(item, _)| item));

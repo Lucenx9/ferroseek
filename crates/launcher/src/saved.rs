@@ -72,6 +72,7 @@ pub struct Store {
     pub aliases: Vec<Alias>,
     pub snippets: Vec<Snippet>,
     pub error: Option<String>,
+    pub(crate) favorite_namespace: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,8 @@ trait NamedEntry: Sized + PartialEq {
     fn entries(store: &mut Store) -> &mut Vec<Self>;
     fn owner(index: usize) -> KeywordOwner;
     fn name(&self) -> &str;
+    fn id(&self) -> &str;
+    fn set_id(&mut self, id: String);
     fn keyword(&self) -> &str;
 }
 
@@ -102,6 +105,14 @@ impl NamedEntry for Link {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn set_id(&mut self, id: String) {
+        self.id = id;
     }
 
     fn keyword(&self) -> &str {
@@ -124,6 +135,14 @@ impl NamedEntry for Snippet {
         &self.name
     }
 
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn set_id(&mut self, id: String) {
+        self.id = id;
+    }
+
     fn keyword(&self) -> &str {
         &self.keyword
     }
@@ -137,6 +156,14 @@ impl Store {
 
     pub fn load(path: &Path) -> Self {
         read(path).unwrap_or_else(|error| Self { error: Some(error.to_string()), ..Self::default() })
+    }
+
+    pub(crate) fn favorite_key(&self, id: &str) -> String {
+        format!("{}|{id}", self.favorite_namespace)
+    }
+
+    pub(crate) fn favorite_id<'a>(&self, key: &'a str) -> Option<&'a str> {
+        key.strip_prefix(&self.favorite_namespace)?.strip_prefix('|')
     }
 
     fn check_keyword(&self, word: &str, editing: Option<KeywordOwner>) -> io::Result<()> {
@@ -225,11 +252,30 @@ fn replace<T>(items: &mut Vec<T>, index: Option<usize>, next: Option<T>) -> io::
 }
 
 pub fn change_link(path: &Path, previous: Option<&Link>, next: Option<Link>) -> Result<Store, String> {
-    change(path, |store| store.apply_named(previous, next))
+    change_named(path, previous, next)
 }
 
 pub fn change_snippet(path: &Path, previous: Option<&Snippet>, next: Option<Snippet>) -> Result<Store, String> {
-    change(path, |store| store.apply_named(previous, next))
+    change_named(path, previous, next)
+}
+
+fn change_named<T: NamedEntry>(path: &Path, previous: Option<&T>, mut next: Option<T>) -> Result<Store, String> {
+    change(path, |store| {
+        if let Some(entry) = &mut next {
+            let id = match previous {
+                Some(old) => old.id().to_owned(),
+                None => new_identity()?,
+            };
+            entry.set_id(id);
+        }
+        store.apply_named(previous, next)
+    })
+}
+
+fn new_identity() -> io::Result<String> {
+    let mut bytes = [0; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(format!("id:{:032x}", u128::from_ne_bytes(bytes)))
 }
 
 pub fn change_alias(
@@ -259,13 +305,16 @@ fn change(path: &Path, edit: impl FnOnce(&mut Store) -> io::Result<()>) -> Resul
 }
 
 fn read(path: &Path) -> io::Result<Store> {
+    let absolute = std::path::absolute(path)?;
+    let namespace = url::Url::from_file_path(&absolute).map_err(|_| invalid_entry())?.as_str().replace('|', "%7C");
+    let mut store = Store { favorite_namespace: namespace, ..Store::default() };
     let file = match std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY | libc::O_NOFOLLOW)
         .open(path)
     {
         Ok(file) => file,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Store::default()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(store),
         Err(e) => return Err(io::Error::other(format!("Cannot read saved entries: {e}"))),
     };
     if !file.metadata()?.is_file() {
@@ -276,10 +325,11 @@ fn read(path: &Path) -> io::Result<Store> {
     if source.len() as u64 > MAX_BYTES {
         return Err(io::Error::other("The saved entries file is too large."));
     }
-    let mut store = Store::default();
     for line in source.lines() {
         read_line(&mut store, line)?;
     }
+    validate_identities(&store.links)?;
+    validate_identities(&store.snippets)?;
     Ok(store)
 }
 
@@ -301,6 +351,11 @@ fn read_line(store: &mut Store, line: &str) -> io::Result<()> {
             let alias = Alias::new(target.clone(), word).map_err(io::Error::other)?;
             store.apply_alias(&target, None, Some(alias))
         }
+        (Some("identity"), Some(kind), Some(name), Some(id)) => match kind {
+            "link" => read_identity(&mut store.links, name, id),
+            "snippet" => read_identity(&mut store.snippets, name, id),
+            _ => Err(invalid_entry()),
+        },
         (Some("snippet"), Some(name), Some(keyword), Some(body)) => {
             let body: String = serde_json::from_str(body).map_err(|_| invalid_entry())?;
             let snippet = Snippet::new(SnippetFields { name, keyword, body: &body }).map_err(io::Error::other)?;
@@ -308,6 +363,38 @@ fn read_line(store: &mut Store, line: &str) -> io::Result<()> {
         }
         _ => Err(invalid_entry()),
     }
+}
+
+fn read_identity<T: NamedEntry>(entries: &mut [T], name: &str, id: &str) -> io::Result<()> {
+    let entry = entries.iter_mut().find(|entry| entry.name() == name).ok_or_else(invalid_entry)?;
+    if entry.id() != format!("legacy:{name}") || !valid_identity(id) {
+        return Err(invalid_entry());
+    }
+    entry.set_id(id.into());
+    Ok(())
+}
+
+fn valid_identity(id: &str) -> bool {
+    if let Some(hex) = id.strip_prefix("id:") {
+        hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    } else {
+        id.strip_prefix("legacy:")
+            .is_some_and(|name| !name.is_empty() && name.len() <= 120 && !name.chars().any(char::is_control))
+    }
+}
+
+fn validate_identities<T: NamedEntry>(entries: &[T]) -> io::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    if entries.iter().all(|entry| seen.insert(entry.id())) { Ok(()) } else { Err(invalid_entry()) }
+}
+
+fn write_identities<T: NamedEntry>(tmp: &mut impl Write, entries: &[T]) -> io::Result<()> {
+    for entry in entries {
+        if entry.id() != format!("legacy:{}", entry.name()) {
+            writeln!(tmp, "identity\t{}\t{}\t{}", T::NAME, entry.name(), entry.id())?;
+        }
+    }
+    Ok(())
 }
 
 fn invalid_entry() -> io::Error {
@@ -328,6 +415,8 @@ fn write(path: &Path, store: &Store) -> io::Result<()> {
         let body = serde_json::to_string(&*snippet.body).map_err(io::Error::other)?;
         writeln!(tmp, "snippet\t{}\t{}\t{body}", snippet.name, snippet.keyword)?;
     }
+    write_identities(&mut tmp, &store.links)?;
+    write_identities(&mut tmp, &store.snippets)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
     std::fs::File::open(parent).and_then(|dir| dir.sync_all()).map_err(|e| {
@@ -349,12 +438,13 @@ mod tests {
         let legacy = Store::load(&path).links.remove(0);
         assert!(!legacy.uses_fallback());
         assert!(legacy.with_fallback(true).is_err());
-        let link =
+        let mut link =
             Link::new(LinkFields { name: "Docs", address: "https://example.net/find?q={query}", keyword: "docs" })
                 .unwrap();
         let enabled = link.clone().with_fallback(true).unwrap();
-        change_link(&path, None, Some(enabled.clone())).unwrap();
+        let enabled = change_link(&path, None, Some(enabled)).unwrap().links.pop().unwrap();
         assert_eq!(Store::load(&path).links.get(1), Some(&enabled));
+        link.id.clone_from(&enabled.id);
         change_link(&path, Some(&enabled), Some(link.clone())).unwrap();
         assert_eq!(Store::load(&path).links.get(1), Some(&link));
     }
@@ -369,8 +459,9 @@ mod tests {
         std::fs::write(&path, text).unwrap();
         let original =
             Link::new(LinkFields { name: "One", address: "https://example.net/one", keyword: "one" }).unwrap();
-        let edited =
+        let mut edited =
             Link::new(LinkFields { name: "Renamed", address: "https://example.net/new", keyword: "one" }).unwrap();
+        edited.id.clone_from(&original.id);
         let target = AliasTarget::Application("org.example.One.desktop".into());
         change_alias(&path, target.clone(), None, Some("rUn")).unwrap();
         change_link(&path, Some(&original), Some(edited.clone())).unwrap();
@@ -386,11 +477,34 @@ mod tests {
     }
 
     #[test]
+    fn legacy_favorite_survives_rename_and_cannot_attach_to_a_recreated_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-links");
+        std::fs::write(&path, "One\thttps://example.net/one\tone\n").unwrap();
+        let saved = Store::load(&path);
+        let original = &saved.links[0];
+        let favorite = saved.favorite_key(&original.id);
+        let other_path = dir.path().join("other-links");
+        std::fs::copy(&path, &other_path).unwrap();
+        assert!(Store::load(&other_path).favorite_id(&favorite).is_none());
+
+        let renamed = Link::new(LinkFields { name: "Renamed", address: &original.address, keyword: "new" }).unwrap();
+        change_link(&path, Some(original), Some(renamed)).unwrap();
+        let saved = Store::load(&path);
+        let renamed = &saved.links[0];
+        assert_eq!(saved.favorite_key(&renamed.id), favorite);
+        change_link(&path, Some(renamed), None).unwrap();
+
+        let replacement = change_link(&path, None, Some(original.clone())).unwrap();
+        assert_ne!(replacement.favorite_key(&replacement.links[0].id), favorite);
+    }
+
+    #[test]
     fn aliases_and_saved_link_keywords_share_one_namespace() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("launcher-links");
         let link = Link::new(LinkFields { name: "Example", address: "https://example.net/", keyword: "go" }).unwrap();
-        change_link(&path, None, Some(link.clone())).unwrap();
+        let link = change_link(&path, None, Some(link)).unwrap().links.pop().unwrap();
         let target = AliasTarget::Command("search-status".into());
         assert!(change_alias(&path, target.clone(), None, Some("GO")).is_err());
         change_link(&path, Some(&link), None).unwrap();
@@ -408,11 +522,12 @@ mod tests {
             body: "  First line\twith tabs\r\nÉquipe \"quote\" \\ literal\n\n",
         })
         .unwrap();
-        let edited =
+        let mut edited =
             Snippet::new(SnippetFields { name: &original.name, keyword: &original.keyword, body: "Edited\n" }).unwrap();
         let link = Link::new(LinkFields { name: "Example", address: "https://example.net/", keyword: "docs" }).unwrap();
-        change_link(&path, None, Some(link.clone())).unwrap();
-        change_snippet(&path, None, Some(original.clone())).unwrap();
+        let link = change_link(&path, None, Some(link)).unwrap().links.pop().unwrap();
+        let original = change_snippet(&path, None, Some(original)).unwrap().snippets.pop().unwrap();
+        edited.id.clone_from(&original.id);
         assert_eq!(Store::load(&path).snippets.as_slice(), std::slice::from_ref(&original));
         assert!(change_snippet(&path, None, Some(edited.clone())).unwrap_err().contains("name"));
         let target = AliasTarget::Command("shortcuts".into());

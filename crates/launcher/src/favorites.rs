@@ -14,6 +14,8 @@ pub enum Kind {
     App,
     File,
     Command,
+    Link,
+    Snippet,
 }
 
 impl From<usage::Kind> for Kind {
@@ -31,6 +33,8 @@ impl Kind {
             "app" => Some(Self::App),
             "file" => Some(Self::File),
             "command" => Some(Self::Command),
+            "link" => Some(Self::Link),
+            "snippet" => Some(Self::Snippet),
             _ => None,
         }
     }
@@ -40,6 +44,8 @@ impl Kind {
             Self::App => "app",
             Self::File => "file",
             Self::Command => "command",
+            Self::Link => "link",
+            Self::Snippet => "snippet",
         }
     }
 }

@@ -615,11 +615,12 @@ impl Launcher {
     }
 
     fn home_results(&self) -> Vec<Item> {
+        let catalog = model::Catalog { apps: &self.apps, saved: &self.saved };
         if self.scope == Scope::Commands {
-            return model::home_items(&self.apps, &[], self.favorites.items(), self.scope, usize::MAX);
+            return model::home_items(catalog, &[], self.favorites.items(), self.scope, usize::MAX);
         }
         model::home_items(
-            &self.apps,
+            catalog,
             &self.usage.recent(usage::now(), usize::MAX),
             self.favorites.items(),
             self.scope,
@@ -761,6 +762,9 @@ impl Launcher {
             (Action::EditLink, Target::Link(link, _)) => {
                 self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
             }
+            (Action::AddFavorite | Action::RemoveFavorite, _) => {
+                self.set_favorite(&item.target, action == Action::AddFavorite)
+            }
             (_, Target::Snippet(snippet)) => self.snippet_action(action, snippet),
             (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
             (Action::Open | Action::Reveal, Target::File(f)) => {
@@ -803,9 +807,6 @@ impl Launcher {
                 let Some(query) = calc::continuation(&self.query) else { return Task::none() };
                 self.resume_query(query)
             }
-            (Action::AddFavorite | Action::RemoveFavorite, _) => {
-                self.set_favorite(&item.target, action == Action::AddFavorite)
-            }
             (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
@@ -843,7 +844,7 @@ impl Launcher {
     }
 
     fn is_favorite(&self, target: &Target) -> bool {
-        target.favorite_key(&self.apps).is_some_and(|(kind, key)| self.favorites.contains(kind, key))
+        target.favorite_key(&self.apps, &self.saved).is_some_and(|(kind, key)| self.favorites.contains(kind, &key))
     }
 
     fn actions_for(&self, target: &Target) -> Vec<Action> {
@@ -863,14 +864,15 @@ impl Launcher {
             panel.actions.push(Action::EditAlias);
         }
         if matches!(item.target, Target::Snippet(_)) && self.paste.label().is_some() {
-            panel.actions.push(Action::PasteSnippet);
+            // Keep Paste immediately after the two original snippet actions.
+            panel.actions.insert(panel.actions.len() - 1, Action::PasteSnippet);
         }
         panel
     }
 
     fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
-        let Some((kind, key)) = target.favorite_key(&self.apps) else { return Task::none() };
-        self.status = match self.favorites.set(kind, key, enabled) {
+        let Some((kind, key)) = target.favorite_key(&self.apps, &self.saved) else { return Task::none() };
+        self.status = match self.favorites.set(kind, &key, enabled) {
             Ok(()) => {
                 self.panel = None;
                 self.rebuild(true);

@@ -887,6 +887,44 @@ fn favorite_command_is_ready_from_an_empty_query_and_can_be_unpinned() {
 }
 
 #[test]
+fn saved_favorites_share_the_home_order_with_commands() {
+    let mut s = search_state();
+    s.saved.links.push(
+        crate::links::Link::new(crate::links::LinkFields {
+            name: "Project docs",
+            address: "https://example.net/docs",
+            keyword: "docs",
+        })
+        .unwrap(),
+    );
+    s.saved.snippets.push(
+        crate::snippets::Snippet::new(crate::snippets::Fields {
+            name: "Common reply",
+            keyword: "reply",
+            body: "A synthetic reply",
+        })
+        .unwrap(),
+    );
+    for query in ["project docs", "clipboard history", "common reply"] {
+        let _ = update(&mut s, Message::Query(query.into()));
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("pin".into()));
+        let _ = command(&mut s, Command::Activate);
+    }
+    let _ = update(&mut s, Message::Query(String::new()));
+    let pins = ["Project docs", "Clipboard history", "Common reply"];
+    assert_eq!(s.items.iter().take(3).map(|item| item.title.as_str()).collect::<Vec<_>>(), pins);
+    let _ = update(&mut s, Message::Scope(Scope::Commands));
+    let displayed = s
+        .items
+        .iter()
+        .filter(|item| pins.contains(&item.title.as_str()))
+        .map(|item| item.title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(displayed, pins);
+}
+
+#[test]
 fn favorite_files_lead_home_suggestions_and_respect_scope_and_removal() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("report.txt");

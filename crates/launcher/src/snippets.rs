@@ -9,6 +9,7 @@ pub const MAX_BODY_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snippet {
+    pub(crate) id: String,
     pub name: String,
     pub keyword: String,
     pub body: Arc<str>,
@@ -38,7 +39,12 @@ impl Snippet {
         if body.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r')) {
             return Err("Remove control characters from the text.".into());
         }
-        Ok(Self { name: name.into(), keyword: normalize_keyword(keyword)?, body: body.into() })
+        Ok(Self {
+            id: format!("legacy:{name}"),
+            name: name.into(),
+            keyword: normalize_keyword(keyword)?,
+            body: body.into(),
+        })
     }
 
     pub fn subtitle(&self) -> String {

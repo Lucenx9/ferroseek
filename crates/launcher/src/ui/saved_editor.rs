@@ -555,16 +555,33 @@ impl Launcher {
             }
         };
         let kind = editor.kind;
+        let removed = name.is_none().then(|| editor.original.clone()).flatten();
         let close = self.close_saved_editor();
         let changed = if let Some(name) = name {
             self.select_saved_entry(kind, &name)
         } else {
-            self.rebuild(true);
-            self.status = Status::Notice(format!("{} deleted", kind.noun()));
-            Task::none()
+            self.saved_deleted(kind, removed)
         };
         timing::event(if kind == Kind::Link { "link_written" } else { "snippet_written" });
         Task::batch([close, changed, self.resize(), crate::input::focus(search_id())])
+    }
+
+    fn saved_deleted(&mut self, kind: Kind, removed: Option<Entry>) -> Task<Message> {
+        let target = removed.map(|entry| match entry {
+            Entry::Link(link) => Target::Link(link, String::new()),
+            Entry::Snippet(snippet) => Target::Snippet(snippet),
+        });
+        self.status = match target.as_ref().and_then(|target| self.remove_deleted_favorite(target)) {
+            Some(error) => Status::Error(format!("{} deleted. Could not update favorites: {error}", kind.noun())),
+            None => Status::Notice(format!("{} deleted", kind.noun())),
+        };
+        self.rebuild(true);
+        Task::none()
+    }
+
+    fn remove_deleted_favorite(&mut self, target: &Target) -> Option<std::io::Error> {
+        let (kind, key) = target.favorite_key(&self.apps, &self.saved)?;
+        if self.favorites.contains(kind, &key) { self.favorites.set(kind, &key, false).err() } else { None }
     }
 
     fn select_saved_entry(&mut self, kind: Kind, name: &str) -> Task<Message> {
