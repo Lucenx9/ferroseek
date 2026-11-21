@@ -430,6 +430,7 @@ pub enum Action {
     PasteSnippet,
     EditSnippet,
     EditAlias,
+    GlobalShortcut,
     OpenWith,
     Details,
     Preview,
@@ -461,6 +462,7 @@ impl Action {
             Action::PasteSnippet => "Paste snippet",
             Action::EditSnippet => "Edit snippet",
             Action::EditAlias => "Edit alias",
+            Action::GlobalShortcut => "Global shortcut",
             Action::OpenWith => "Open with…",
             Action::Details => "File details",
             Action::Preview => "Preview text",
@@ -501,6 +503,7 @@ impl Action {
             Self::CopyResult => &["answer"],
             Self::UseResult => &["continue"],
             Self::EditAlias => &["set alias", "remove alias", "shortcut"],
+            Self::GlobalShortcut => &["assign key", "desktop shortcut", "hotkey"],
             Self::EditSnippet => &["change text", "delete snippet"],
             Self::EditScript => &["edit script", "delete command"],
             Self::EditWorkflow => &["configure workflow", "delete workflow"],
@@ -542,6 +545,7 @@ impl Action {
             Action::CopyName
             | Action::EditLink
             | Action::EditAlias
+            | Action::GlobalShortcut
             | Action::EditSnippet
             | Action::EditScript
             | Action::EditWorkflow
@@ -592,6 +596,9 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         actions.push(Action::OpenWith);
         actions.push(Action::Details);
         actions.push(Action::Preview);
+    }
+    if matches!(t, Target::Command(_)) {
+        actions.push(Action::GlobalShortcut);
     }
     actions
 }

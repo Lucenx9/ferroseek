@@ -729,7 +729,10 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     let _ = command(&mut s, Command::ToggleActions);
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
     assert_eq!(s.selected().unwrap().target, target);
-    assert_eq!(s.panel.as_ref().unwrap().actions, [Action::OpenCommand, Action::EditAlias, Action::AddFavorite]);
+    assert_eq!(
+        s.panel.as_ref().unwrap().actions,
+        [Action::OpenCommand, Action::EditAlias, Action::AddFavorite, Action::GlobalShortcut]
+    );
     let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
     assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
     assert!(s.panel.is_none() && s.opening.is_none());
@@ -739,6 +742,35 @@ fn command_action_uses_the_selected_destination_after_file_results_change() {
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert!(s.appearance.is_none());
     assert_eq!((s.query.as_str(), s.generation, &s.selected().unwrap().target), ("window width", generation, &target));
+}
+
+#[test]
+fn command_shortcut_action_keeps_the_target_and_returns_to_search() {
+    use crate::commands::Builtin;
+
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Query("window width".into()));
+    let target = Target::Command(Builtin::Layout);
+    assert_eq!(state.selected().unwrap().target, target);
+    let _ = command(&mut state, Command::ToggleActions);
+    let _ = update(&mut state, Message::ActionQuery("global shortcut".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+
+    assert!(state.global_shortcuts.panel.is_some());
+    assert!(state.panel.is_none());
+    let labels = rendered_labels(view_content(&state), iced::Size::new(288.0, 275.0));
+    assert!(labels.text.iter().any(|(label, _)| label == "Layout"));
+    assert!(labels.text.iter().any(|(label, _)| label == "ferroseek-launcher --command layout"));
+    for control in ["Refresh", "Copy launch command"] {
+        let (_, bounds) = labels.text.iter().find(|(label, _)| label == control).unwrap();
+        assert!(bounds.x + bounds.width <= 288.0 - PAD, "{control} is clipped: {bounds:?}");
+    }
+    let _ = update(&mut state, Message::Cmd(Command::CopyPath));
+    assert!(state.clipboard_owner);
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+
+    assert!(state.global_shortcuts.panel.is_none());
+    assert_eq!((state.query.as_str(), &state.selected().unwrap().target), ("window width", &target));
 }
 
 #[test]

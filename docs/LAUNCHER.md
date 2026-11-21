@@ -110,6 +110,11 @@ for **Global shortcuts**. Choose **Start** (Enter) to run the listener for the
 current session. The desktop handles assignment. The page shows the key labels
 reported by the desktop and updates them when assignments change.
 
+From a built-in command result, use **Actions → Global shortcut** to see its
+binding. **Configure** opens the desktop's shortcut settings when supported.
+To assign the key manually, choose **Copy launch command** or press
+Ctrl+Shift+C. Esc returns to the command you were viewing.
+
 Choose **Configure** (Enter) to reopen assignment on a portal that supports
 it. Older portals use the desktop's own settings. Choose **Stop** (Ctrl+Enter)
 to stop the current listener. Escape returns to the previous view and Ctrl+R

@@ -272,6 +272,8 @@ its action. Only a successful save applies the draft.
 Global shortcuts show the key labels reported by the desktop and keep Back
 available while the desktop opens its configuration. Distinguish active
 bindings from setup in progress.
+From a built-in command's actions, show its desktop binding and offer its
+launch command for manual assignment. Back restores the originating search.
 Appearance previews immediately, but Save persists changes;
 Back with unsaved edits requires explicit discard, and Escape at that prompt
 keeps editing. Save failures retain the draft. Preserve the distinct save/apply

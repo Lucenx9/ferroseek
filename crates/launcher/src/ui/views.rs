@@ -11,7 +11,7 @@ use crate::model::{ClickTracker, Target};
 use crate::shortcuts::Routing;
 use crate::{appearance, details, folders, open_with, preview, timing};
 use iced::alignment::Vertical;
-use iced::widget::{button, container, responsive, row, space, text};
+use iced::widget::{button, container, responsive, row, text};
 use iced::{Element, Length, Task};
 
 pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
@@ -24,7 +24,7 @@ pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
         let back = button(text("Back").size(12)).on_press(back.clone()).padding([6, 8]).style(status_button_style);
         let label = if compact { text("Refresh").size(12).into() } else { hint("Ctrl+R", "Refresh") };
         let refresh = button(label).on_press_maybe(refresh.clone()).padding([6, 8]).style(status_button_style);
-        let heading = row![back, text(title).size(20), space::horizontal(), refresh]
+        let heading = row![back, text(title).size(20).width(Length::Fill), refresh]
             .spacing(if compact { 6 } else { 12 })
             .align_y(Vertical::Center);
         container(heading).center_y(Length::Fill).into()
@@ -354,7 +354,7 @@ impl Launcher {
             Builtin::CreateScript => self.open_script_editor(None),
             Builtin::CreateWorkflow => self.open_workflow_editor(None),
             Builtin::Shortcuts => self.show_shortcuts(),
-            Builtin::GlobalShortcuts => self.show_global_shortcuts(),
+            Builtin::GlobalShortcuts => self.show_global_shortcuts(None),
             Builtin::ClipboardHistory => self.show_clipboard_history(),
             Builtin::SwitchWindows => self.show_windows(),
         }

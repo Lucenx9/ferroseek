@@ -787,6 +787,7 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
+            (Action::GlobalShortcut, Target::Command(command)) => self.show_global_shortcuts(Some(*command)),
             (Action::OpenCommand | Action::RunScript | Action::EditScript | Action::EditWorkflow, _) => {
                 self.activate_command(&item.target, action)
             }
