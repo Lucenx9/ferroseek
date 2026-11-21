@@ -1937,7 +1937,7 @@ fn sidebar_toolbar_buttons_enter_refresh_copy_and_hide_through_real_widgets() {
     }
     assert!(!s.preview_enabled && !pending.is_active());
     let _ = s.perform(Action::Details);
-    let messages = control(&s, "Back to search");
+    let messages = control(&s, "Back");
     assert!(matches!(&messages[..], [Message::Details { event: details::Event::Back, .. }]));
     for message in messages {
         let _ = update(&mut s, message);
@@ -2175,6 +2175,31 @@ fn picker_escape_restores_search_and_ignores_closed_or_reopened_generations() {
 }
 
 #[test]
+fn picker_back_button_returns_to_the_captured_search_with_a_filter() {
+    let mut s = picker_state();
+    let target = s.selected().unwrap().target.clone();
+    let generation = s.application_generation;
+    let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(3)) });
+    let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("02".into()) });
+
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, back) = labels.text.iter().find(|(text, _)| text == "Back").expect("visible Back button");
+    let messages = pointer_messages(
+        &s,
+        iced::Point::new(back.center_x(), back.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert_eq!(messages.len(), 1);
+    for message in messages {
+        let _ = update(&mut s, message);
+    }
+    assert_eq!(
+        (s.application_picker.is_none(), s.query.as_str(), s.scope, &s.selected().unwrap().target),
+        (true, "report", Scope::Files, &target),
+    );
+}
+
+#[test]
 fn picker_reload_keeps_selection_across_read_errors() {
     for failures in [0, 1, 2] {
         let mut s = picker_state();
@@ -2247,6 +2272,8 @@ fn picker_read_errors_can_retry_but_unconfirmed_dispatch_cannot_duplicate() {
     let _ = update(&mut s, Message::Opened(Err(RunError::Unconfirmed("connection lost".into()))));
     assert!(s.unconfirmed_open);
     assert!(s.usage.recent(usage::now(), 8).is_empty());
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    assert!(!labels.text.iter().any(|(value, _)| value == "Open"), "hide Open when launch cannot be retried");
     let _ = command(&mut s, Command::Activate);
     assert!(s.opening.is_none());
     let _ = command(&mut s, Command::Back);
@@ -2266,7 +2293,19 @@ fn picker_rejected_dispatch_can_choose_another_application() {
     assert!(s.opening.is_none());
     assert_eq!(s.usage.boost(Kind::File, &file, &query, usage::now()), 0);
     let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("01".into()) });
-    let _ = command(&mut s, Command::Activate);
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, open) = labels.text.iter().find(|(text, _)| text == "Open").unwrap();
+    let messages = pointer_messages(
+        &s,
+        iced::Point::new(open.center_x(), open.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert!(
+        matches!(messages.as_slice(), [Message::OpenWith { event: open_with::Event::Open(id), .. }] if id == "editor-01.desktop")
+    );
+    for message in messages {
+        let _ = update(&mut s, message);
+    }
     assert_eq!(s.opening.as_ref(), Some(&(file.clone(), query.clone())));
     assert_eq!(s.application_picker.as_ref().unwrap().query, "01");
     let _ = update(&mut s, Message::Opened(Ok(())));
@@ -3113,13 +3152,16 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
         assert_eq!(model::home_relative(&format!("{home}x/report.md")), format!("{home}x/report.md"));
         let mut file = file_hits().remove(0);
         file.path = Some(path.clone().into());
+        file.name = "report.md".into();
+        file.subtext = "~/Corpus".into();
         let mut preview = preview::Panel::new(file.clone());
         let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
         assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus"));
         assert!(matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == path));
         let chooser = open_with::Panel::new(file.clone());
-        let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
-        assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+        let labels = rendered_labels(chooser.view(false, false), Size::new(640.0, 500.0));
+        assert!(labels.text.iter().any(|(value, _)| value == "report.md"));
+        assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus"));
         let mut state = search_state();
         state.search_folder = Some(file);
         let labels = rendered_labels(view_content(&state), Size::new(640.0, full_height() as f32));
@@ -3132,7 +3174,7 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
     let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
     assert!(labels.text.iter().any(|(value, _)| value == &file.id));
     let chooser = open_with::Panel::new(file.clone());
-    let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
+    let labels = rendered_labels(chooser.view(false, false), Size::new(640.0, 500.0));
     assert!(labels.text.iter().any(|(value, _)| value == &file.id));
     assert!(matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == file.id));
     let mut state = search_state();
@@ -3226,6 +3268,12 @@ fn open_with_labels_use_available_width_and_keep_suffixes() {
             }
         }
         assert!(labels.iter().any(|(value, _)| value == "Ctrl+1"));
+        let (_, refresh) = labels.iter().find(|(value, _)| value == "Refresh").unwrap();
+        let (_, count) = labels.iter().find(|(value, _)| value == "1 application").unwrap();
+        let (_, open) = labels.iter().find(|(value, _)| value == "Open").unwrap();
+        assert!(refresh.width >= 42.0 && refresh.x + refresh.width <= width - PAD, "{refresh:?}");
+        assert!(count.width >= 70.0 && count.x + count.width <= open.x, "{count:?}");
+        assert!(open.width >= 26.0 && open.x + open.width <= width - PAD, "{open:?}");
     }
 }
 
@@ -3294,13 +3342,34 @@ fn secondary_pages_share_title_and_return_action_alignment() {
         ("Search folders", folders.view().map(|_| ())),
         ("Appearance", appearance.view(None, true, false).map(|_| ())),
         ("File details", details.view().map(|_| ())),
-        ("Open with…", chooser.view(false).map(|_| ())),
+        ("Open with…", chooser.view(false, false).map(|_| ())),
     ] {
         let labels = rendered_labels(page, iced::Size::new(720.0, 515.0)).text;
         let (_, heading) = labels.iter().find(|(value, _)| value == title).unwrap();
         assert!((heading.center_y() - 44.0).abs() < 0.5, "{title}: {heading:?}");
         let (_, back) = labels.iter().find(|(value, _)| value == "Back to search").unwrap();
         assert!((back.center_y() - 490.0).abs() < 0.5, "{title}: {back:?}");
+    }
+}
+
+#[test]
+fn narrow_file_details_footer_keeps_copy_feedback_and_actions_visible() {
+    let mut file = file_hits().remove(0);
+    file.path = None;
+    let mut panel = details::Panel::new(file);
+    let _ = panel.event(details::Event::CopyLocation);
+    let width = 320.0;
+    let labels = rendered_labels(panel.view(), iced::Size::new(width, 515.0)).text;
+    let (_, refresh) = labels.iter().find(|(value, _)| value == "Refresh").unwrap();
+    assert!(refresh.width >= 42.0 && refresh.x + refresh.width <= width - PAD, "{refresh:?}");
+    let mut end = PAD;
+    for label in ["Copied file URL", "Copy file URL", "Preview text"] {
+        let (_, bounds) = labels.iter().find(|(value, _)| value == label).unwrap();
+        assert!(
+            bounds.width >= 65.0 && bounds.x >= end && bounds.x + bounds.width <= width - PAD,
+            "{label}: {bounds:?}"
+        );
+        end = bounds.x + bounds.width;
     }
 }
 

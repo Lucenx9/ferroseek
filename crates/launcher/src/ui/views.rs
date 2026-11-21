@@ -1,13 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Secondary-view transitions and replies; input routing stays in the parent UI.
+//! Secondary-view presentation, transitions and replies.
 
-use super::{Launcher, Message, SearchStatusPanel, search_id, update};
+use super::{Launcher, Message, SearchStatusPanel, hint, page_header, search_id, status_button_style, update};
 use crate::backend::SearchStatus;
 use crate::model::ClickTracker;
 use crate::{appearance, details, folders, open_with, preview, timing};
-use iced::Task;
+use iced::alignment::Vertical;
+use iced::widget::{button, container, responsive, row, space, text};
+use iced::{Element, Length, Task};
+
+pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, refresh: Option<M>) -> Element<'a, M> {
+    page_header(responsive(move |size| {
+        let back = button(text("Back").size(12)).on_press(back.clone()).padding([6, 8]).style(status_button_style);
+        let label = if size.width < 320.0 { text("Refresh").size(12).into() } else { hint("Ctrl+R", "Refresh") };
+        let refresh = button(label).on_press_maybe(refresh.clone()).padding([6, 8]).style(status_button_style);
+        let heading =
+            row![back, text(title).size(20), space::horizontal(), refresh].spacing(12).align_y(Vertical::Center);
+        container(heading).center_y(Length::Fill).into()
+    }))
+}
 
 impl Launcher {
+    pub(super) fn open_with_view<'a>(&self, panel: &'a open_with::Panel) -> Element<'a, Message> {
+        let generation = self.application_generation;
+        let view = panel.view(self.opening.is_some(), self.unconfirmed_open);
+        crate::shortcuts::capture_numbered(view.map(move |event| Message::OpenWith { generation, event }))
+    }
+
     pub(super) fn preview_loaded(
         &mut self,
         generation: u64,
@@ -79,7 +98,7 @@ impl Launcher {
         if generation != self.application_generation {
             return Task::none();
         }
-        if self.opening.is_some() && !matches!(event, open_with::Event::Back) {
+        if self.opening.is_some() && !matches!(event, open_with::Event::Back | open_with::Event::ReturnToSearch) {
             return Task::none();
         }
         let Some(panel) = &mut self.application_picker else { return Task::none() };

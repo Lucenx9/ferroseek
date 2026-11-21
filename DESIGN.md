@@ -190,6 +190,12 @@ Details and previews should answer a selection question. Keep the selected file
 and return context stable during loading, errors and cancellation. Retain the
 explicit opt-in and resource bounds of the text preview. Do not turn the main
 result list into a dashboard or add preview formats merely for visual richness.
+In File details and Open with, put a visible Back button beside the page title.
+Give the captured filename prominence over its location, and keep the primary
+action in the footer. Back returns to the captured search. In Open with, Esc
+clears a nonempty filter first and the footer reflects the current Esc step.
+On narrow surfaces, prioritize visible controls and status in both file views.
+Show shortcut badges when space permits. Back and the shortcuts remain available.
 
 ### Settings and state feedback
 

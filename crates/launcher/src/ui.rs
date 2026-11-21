@@ -37,6 +37,7 @@ use crate::preview;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
+pub(crate) use views::file_page_header;
 
 #[cfg(test)]
 pub const WIDTH: u32 = 720;
@@ -1824,10 +1825,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         return panel.view().map(move |event| Message::Details { generation, event });
     }
     if let Some(panel) = &s.application_picker {
-        let generation = s.application_generation;
-        return crate::shortcuts::capture_numbered(
-            panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event }),
-        );
+        return s.open_with_view(panel);
     }
     if let Some(panel) = &s.folder_settings {
         let generation = s.folder_generation;

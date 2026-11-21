@@ -50,7 +50,7 @@ the engine and integrations. See [installation](INSTALLATION.md).
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
 with the tiny-skia renderer and synthetic data. The refreshed search, folder
-browser, application chooser and text-preview images use the same setup. These captures do not extend
+browser and text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
 Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
@@ -469,12 +469,10 @@ launcher and daemon versions are required.
 
 ![Application chooser](assets/launcher-open-with.png)
 
-Native Compact capture in a private virtual KWin 6.3.6 session at 1× with
+Native Compact capture in a private virtual KWin 5.27.11 session at 1× with
 synthetic document handlers and the tiny-skia renderer. Names, desktop IDs and
 the target path shorten to their actual available width, leaving room for
-numbered shortcuts. Hover over the target path to see its absolute location.
-This presentation check does not extend the desktop
-validation matrix below.
+numbered shortcuts. Hover over the filename or parent path to see the full location.
 
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
 Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
@@ -483,11 +481,14 @@ its name helps distinguish similarly named apps. Page Up/Down, Ctrl+Home/End
 and the mouse wheel navigate longer lists.
 Use **Refresh** or Ctrl+R to rescan the available applications.
 The footer shows the application count, the visible range for longer lists, or
-the current loading/opening/error status on the left, with Enter and the contextual Esc action on the right.
+the current loading/opening/error status on the left. **Open** in the footer
+opens the file with the selected application. The captured filename appears
+above its parent path and the application filter.
 
 The chooser stays bound to the original file while results finish loading.
-Esc clears a nonempty application filter; Esc again returns to the same search
-query, scope and file selection when that file is still present. Ctrl+R reloads
+**Back** returns to the same search query, scope and file selection when that
+file is still present. Esc clears a nonempty application filter; pressing Esc
+again returns to search. Ctrl+R reloads
 the application list, retaining the selected application if it is still present,
 including after a failed read and retry. Editing or clearing the filter resets
 the selection even while a reload is pending. Loading, empty and error states
@@ -516,7 +517,8 @@ matching launcher and daemon versions for this interface.
 
 ![File details](assets/launcher-file-details.png)
 
-Rendered in a private virtual KWin session with a synthetic file.
+Native Compact capture in a private virtual KWin 5.27.11 session at 1× with a
+synthetic file and the tiny-skia renderer.
 
 For an indexed regular file, open **Actions** (Ctrl+K), search for **File details**
 or `properties`, and press Enter. The view shows the full name and location,
@@ -526,7 +528,7 @@ an exact byte count. An unknown type is shown explicitly.
 The daemon reads filesystem attributes on request, including while indexing is
 paused; it does not read file contents. Ctrl+R refreshes the details. Loading and
 errors have distinct states, and failed reads can be retried. Late replies cannot
-replace a newer view or change the captured file. Esc returns to the original
+replace a newer view or change the captured file. **Back** or Esc returns to the original
 query, scope and selected file if it remains in the results. Up/Down, Page Up/Down
 and Ctrl+Home/End scroll long details.
 
