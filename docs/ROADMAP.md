@@ -142,8 +142,9 @@ Complete desktop validation before expanding the platform.
 - [x] Prompt for named positional arguments at run time and pass them literally.
 - [x] Run named command sequences with shared inputs, step progress and
   stop-on-failure behavior.
-- [ ] Add workflow creation and editing in the launcher before designing a
-  general extension API.
+- [x] Create, edit and remove workflows in the launcher with a searchable
+  command picker and keyboard step ordering.
+- [ ] Evaluate a general extension API after desktop validation.
 
 ## Optional AI agent integration
 

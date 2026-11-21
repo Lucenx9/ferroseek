@@ -7,8 +7,8 @@ use iced::widget::operation::{self, RelativeOffset};
 use iced::widget::{Id, button, column, container, row, scrollable, space, text, text_input};
 use iced::{Element, Length, Task, Theme};
 
-use super::{Launcher, Message, Scope, Status, divider, field_style, footer_style, hint, page_header, palette};
-use super::{primary_hint, search_id, status_button_style, surface_style, update, update_content};
+use super::{Launcher, Message, Status, divider, field_style, footer_style, hint, page_header, palette};
+use super::{primary_hint, status_button_style, surface_style, update_content};
 use crate::folders::Shortcut;
 use crate::input::FocusCycle;
 use crate::layout::{FOOTER_HEIGHT, PAD};
@@ -361,15 +361,7 @@ impl Launcher {
         self.scripts.editor = None;
         crate::timing::event("script_editor_written");
         if let Some(title) = title {
-            self.scope = Scope::Commands;
-            let refresh = update(self, Message::Query(String::new()));
-            if let Some(index) =
-                self.items.iter().position(|item| matches!(item.target, Target::Script(_)) && item.title == title)
-            {
-                self.cursor.select(index, self.items.len());
-            }
-            self.status = Status::Notice("Command saved".into());
-            Task::batch([refresh, crate::input::focus(search_id())])
+            self.select_saved_local(&title, |target| matches!(target, Target::Script(_)), "Command saved")
         } else {
             self.rebuild(true);
             self.status = Status::Notice("Command deleted".into());

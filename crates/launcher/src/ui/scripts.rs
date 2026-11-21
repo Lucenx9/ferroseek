@@ -10,8 +10,9 @@ use iced::widget::{Id, column, container, row, scrollable, space, text};
 use iced::{Element, Font, Length, Task, Theme};
 
 use super::script_prompt::Prompt;
+use super::workflow_editor;
 use super::{Launcher, Message, Status, divider, footer_button, footer_style, hint, label_for_width, page_header};
-use super::{palette, primary_hint, surface_style, update_content};
+use super::{palette, primary_hint, search_id, surface_style, update, update_content};
 use crate::backend::UiEvent;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{Action, Command, Scope, Target};
@@ -22,12 +23,41 @@ pub(super) struct State {
     pub catalog: Catalog,
     pub panel: Option<Panel>,
     pub editor: Option<super::script_editor::Editor>,
+    pub workflow_editor: Option<workflow_editor::Editor>,
     pub generation: u64,
 }
 
 impl State {
     pub fn is_open(&self) -> bool {
-        self.panel.is_some() || self.editor.is_some()
+        self.panel.is_some() || self.editor.is_some() || self.workflow_editor.is_some()
+    }
+
+    pub fn focus_target(&self) -> Option<Id> {
+        self.editor
+            .as_ref()
+            .and_then(super::script_editor::Editor::focus_target)
+            .or_else(|| self.workflow_editor.as_ref().and_then(workflow_editor::Editor::focus_target))
+            .or_else(|| self.panel.as_ref()?.prompt()?.focus_target())
+    }
+
+    pub fn input_context(&self) -> Option<Id> {
+        self.editor
+            .as_ref()
+            .map(super::script_editor::Editor::context)
+            .or_else(|| self.workflow_editor.as_ref().map(workflow_editor::Editor::context))
+            .or_else(|| self.panel.as_ref()?.prompt()?.context())
+    }
+
+    pub fn focus_cycle(&self) -> Option<crate::input::FocusCycle> {
+        self.editor
+            .as_ref()
+            .and_then(super::script_editor::Editor::focus_cycle)
+            .or_else(|| self.workflow_editor.as_ref().and_then(workflow_editor::Editor::focus_cycle))
+            .or_else(|| self.panel.as_ref()?.prompt()?.focus_cycle(self.generation))
+    }
+
+    pub fn editor_view(&self) -> Option<Element<'_, Message>> {
+        self.workflow_editor.as_ref().map(workflow_editor::Editor::view)
     }
 
     pub fn load(settings: &Path) -> Self {
@@ -245,6 +275,21 @@ fn report_body(report: &Report) -> iced::widget::Column<'_, Message> {
 }
 
 impl Launcher {
+    pub(super) fn select_saved_local(
+        &mut self,
+        title: &str,
+        matches: impl Fn(&Target) -> bool,
+        notice: &str,
+    ) -> Task<Message> {
+        self.scope = Scope::Commands;
+        let refresh = update(self, Message::Query(String::new()));
+        if let Some(index) = self.items.iter().position(|item| matches(&item.target) && item.title == title) {
+            self.cursor.select(index, self.items.len());
+        }
+        self.status = Status::Notice(notice.into());
+        Task::batch([refresh, crate::input::focus(search_id())])
+    }
+
     pub(super) fn activate_command(&mut self, target: &Target, action: Action) -> Task<Message> {
         if self.opening.is_some() || self.search_suspended() {
             return Task::none();
@@ -253,6 +298,7 @@ impl Launcher {
             (Target::Command(command), Action::OpenCommand) => self.open_builtin(*command),
             (Target::Script(script), Action::RunScript) => self.open_plan(Plan::single(script.clone())),
             (Target::Workflow(workflow), Action::RunScript) => self.open_workflow(workflow),
+            (Target::Workflow(workflow), Action::EditWorkflow) => self.open_workflow_editor(Some(workflow.clone())),
             (Target::Script(script), Action::EditScript) => self.open_script_editor(Some(script.clone())),
             _ => Task::none(),
         }
@@ -279,6 +325,9 @@ impl Launcher {
     }
 
     pub(super) fn update_scripts(&mut self, message: Message) -> Task<Message> {
+        if self.scripts.workflow_editor.is_some() {
+            return self.update_workflow_editor(message);
+        }
         if self.scripts.editor.is_some() {
             return self.update_script_editor(message);
         }

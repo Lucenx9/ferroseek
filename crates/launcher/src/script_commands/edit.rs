@@ -6,7 +6,7 @@ use std::path::Path;
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
-use super::{Catalog, Script, ensure_size, manifest_path, parse_manifest, read_source};
+use super::{Catalog, Manifest, Script, Workflow, ensure_size, manifest_path, parse_manifest, read_source};
 use crate::usage;
 
 pub fn format_arguments(args: &[String]) -> String {
@@ -31,32 +31,58 @@ fn argument_array(args: &[String]) -> Array {
 }
 
 pub fn change(settings: &Path, previous: Option<&Script>, next: Option<Script>) -> Result<Catalog, String> {
+    change_manifest(settings, |manifest, document| {
+        let index = existing_index(&manifest.command, previous, "command")?;
+        check_references(&manifest.workflow, previous, next.as_ref())?;
+        let list = document.as_table_mut().entry("command").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
+        update_list(list, index, previous, next.as_ref())
+    })
+}
+
+pub fn change_workflow(
+    settings: &Path,
+    previous: Option<&Workflow>,
+    next: Option<Workflow>,
+) -> Result<Catalog, String> {
+    change_manifest(settings, |manifest, document| {
+        let index = existing_index(&manifest.workflow, previous, "workflow")?;
+        if let Some(next) = &next {
+            Catalog::from_manifest(manifest).plan(next).map_err(io::Error::other)?;
+        }
+        let list = document.as_table_mut().entry("workflow").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
+        update_list(list, index, previous, next.as_ref())
+    })
+}
+
+fn existing_index<T: PartialEq>(entries: &[T], previous: Option<&T>, name: &str) -> io::Result<Option<usize>> {
+    previous
+        .map(|old| {
+            entries
+                .iter()
+                .position(|entry| entry == old)
+                .ok_or_else(|| io::Error::other(format!("This {name} changed on disk. Reopen FerroSeek to load it.")))
+        })
+        .transpose()
+}
+
+fn change_manifest(
+    settings: &Path,
+    update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Result<()>,
+) -> Result<Catalog, String> {
     let path = manifest_path(settings);
-    usage::with_lock(&path, false, || edit(&path, previous, next)).map_err(|error| match error.kind() {
-        io::ErrorKind::WouldBlock => "Local commands are busy. Try again.".into(),
+    usage::with_lock(&path, false, || edit(&path, update)).map_err(|error| match error.kind() {
+        io::ErrorKind::WouldBlock => "The command file is busy. Try again.".into(),
         _ => error.to_string(),
     })
 }
 
-fn edit(path: &Path, previous: Option<&Script>, next: Option<Script>) -> io::Result<Catalog> {
+fn edit(path: &Path, update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Result<()>) -> io::Result<Catalog> {
     check_writable(path)?;
     let source = read_source(path)?;
     let original = source.as_deref().unwrap_or("");
     let manifest = parse_manifest(original)?;
-    let index = previous
-        .map(|old| {
-            manifest
-                .command
-                .iter()
-                .position(|entry| entry == old)
-                .ok_or_else(|| io::Error::other("This command changed on disk. Reopen FerroSeek to load it."))
-        })
-        .transpose()?;
-    check_references(&manifest.workflow, previous, next.as_ref())?;
-
     let mut document = original.parse::<DocumentMut>().map_err(|error| io::Error::other(error.message().to_owned()))?;
-    let list = document.as_table_mut().entry("command").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
-    update_list(list, index, previous, next.as_ref())?;
+    update(manifest, &mut document)?;
     let text = document.to_string();
     ensure_size(&text)?;
     let manifest = parse_manifest(&text)?;
@@ -87,26 +113,30 @@ fn list_error() -> io::Error {
     io::Error::other("The command list has an invalid entry.")
 }
 
-fn update_list(
+trait Record {
+    fn patch(&self, table: &mut dyn TableLike, previous: Option<&Self>);
+}
+
+fn update_list<T: Record>(
     list: &mut Item,
     index: Option<usize>,
-    previous: Option<&Script>,
-    next: Option<&Script>,
+    previous: Option<&T>,
+    next: Option<&T>,
 ) -> io::Result<()> {
     if let (Some(index), Some(next)) = (index, next) {
         let table = list.get_mut(index).and_then(Item::as_table_like_mut).ok_or_else(list_error)?;
-        update_table(table, previous, next);
+        next.patch(table, previous);
         return Ok(());
     }
     match (list, index, next) {
         (Item::ArrayOfTables(tables), _, Some(next)) => {
             let mut table = Table::new();
-            update_table(&mut table, None, next);
+            next.patch(&mut table, None);
             tables.push(table);
         }
         (Item::Value(Value::Array(array)), _, Some(next)) => {
             let mut table = InlineTable::new();
-            update_table(&mut table, None, next);
+            next.patch(&mut table, None);
             array.push(table);
         }
         (Item::ArrayOfTables(tables), Some(index), None) => {
@@ -120,24 +150,41 @@ fn update_list(
     Ok(())
 }
 
-fn update_table(table: &mut dyn TableLike, previous: Option<&Script>, next: &Script) {
-    if previous.is_none_or(|old| old.title != next.title) {
-        set(table, "title", next.title.as_str().into());
+impl Record for Script {
+    fn patch(&self, table: &mut dyn TableLike, previous: Option<&Self>) {
+        let next = self;
+        if previous.is_none_or(|old| old.title != next.title) {
+            set(table, "title", next.title.as_str().into());
+        }
+        if previous.is_none_or(|old| old.executable != next.executable) {
+            set(table, "executable", next.executable.to_string_lossy().into_owned().into());
+        }
+        if previous.is_none_or(|old| old.description != next.description) {
+            set(table, "description", next.description.as_str().into());
+        }
+        if previous.is_none_or(|old| old.args != next.args) {
+            set(table, "args", argument_array(&next.args).into());
+        }
+        if previous.map_or(!next.parameters.is_empty(), |old| old.parameters != next.parameters) {
+            set(table, "parameters", argument_array(&next.parameters).into());
+        }
+        if previous.is_none_or(|old| old.confirm != next.confirm) {
+            set(table, "confirm", next.confirm.into());
+        }
     }
-    if previous.is_none_or(|old| old.executable != next.executable) {
-        set(table, "executable", next.executable.to_string_lossy().into_owned().into());
-    }
-    if previous.is_none_or(|old| old.description != next.description) {
-        set(table, "description", next.description.as_str().into());
-    }
-    if previous.is_none_or(|old| old.args != next.args) {
-        set(table, "args", argument_array(&next.args).into());
-    }
-    if previous.map_or(!next.parameters.is_empty(), |old| old.parameters != next.parameters) {
-        set(table, "parameters", argument_array(&next.parameters).into());
-    }
-    if previous.is_none_or(|old| old.confirm != next.confirm) {
-        set(table, "confirm", next.confirm.into());
+}
+
+impl Record for Workflow {
+    fn patch(&self, table: &mut dyn TableLike, previous: Option<&Self>) {
+        if previous.is_none_or(|old| old.title != self.title) {
+            set(table, "title", self.title.as_str().into());
+        }
+        if previous.is_none_or(|old| old.description != self.description) {
+            set(table, "description", self.description.as_str().into());
+        }
+        if previous.is_none_or(|old| old.steps != self.steps) {
+            set(table, "steps", argument_array(&self.steps).into());
+        }
     }
 }
 
@@ -246,5 +293,38 @@ steps = ["BUILD", "Build"]
         let command = &catalog.commands[0];
         assert!(change(&settings, Some(command), None).unwrap_err().contains("Prepare"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+    }
+
+    #[test]
+    fn changes_workflow_order_atomically_and_preserves_its_comment() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = temp.path().join("config.toml");
+        let path = manifest_path(&settings);
+        let source = r#"
+[[command]]
+title = "Build"
+executable = "/synthetic/build"
+
+[[command]]
+title = "Check"
+executable = "/synthetic/check"
+
+[[workflow]]
+title = "Prepare" # Keep workflow context.
+steps = ["Build", "Check"]
+"#;
+        std::fs::write(&path, source).unwrap();
+        let catalog = Catalog::load(&settings);
+        let original = &catalog.workflows[0];
+        let invalid = Workflow { steps: vec!["Missing".into(), "Build".into()], ..(**original).clone() };
+        assert!(change_workflow(&settings, Some(original), Some(invalid)).unwrap_err().contains("Missing"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        let updated = Workflow { steps: vec!["Check".into(), "Build".into()], ..(**original).clone() };
+        let catalog = change_workflow(&settings, Some(original), Some(updated)).unwrap();
+        assert_eq!(catalog.workflows[0].steps, ["Check", "Build"]);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("# Keep workflow context."));
+        assert!(change_workflow(&settings, Some(original), None).unwrap_err().contains("changed on disk"));
+        let catalog = change_workflow(&settings, Some(&catalog.workflows[0]), None).unwrap();
+        assert!(catalog.workflows.is_empty());
     }
 }

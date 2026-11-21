@@ -55,8 +55,7 @@ impl Launcher {
             .as_ref()
             .and_then(super::alias_editor::Editor::focus_target)
             .or_else(|| self.saved_editor.as_ref().and_then(super::saved_editor::Editor::focus_target))
-            .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_target))
-            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.focus_target())
+            .or_else(|| self.scripts.focus_target())
             .or_else(|| self.folder_settings.is_some().then(folders::input_id))
             .or_else(|| self.application_picker.is_some().then(open_with::input_id))
     }
@@ -127,8 +126,7 @@ impl Launcher {
             .or_else(|| self.clipboard_history.panel.as_ref().map(super::clipboard_view::Panel::context))
             .or_else(|| self.alias_editor.as_ref().map(super::alias_editor::Editor::context))
             .or_else(|| self.saved_editor.as_ref().map(super::saved_editor::Editor::context))
-            .or_else(|| self.scripts.editor.as_ref().map(super::script_editor::Editor::context))
-            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.context())
+            .or_else(|| self.scripts.input_context())
             .or_else(|| self.appearance.as_ref().map(appearance::Panel::content_id))
     }
 
@@ -136,8 +134,7 @@ impl Launcher {
         self.saved_editor
             .as_ref()
             .and_then(super::saved_editor::Editor::focus_cycle)
-            .or_else(|| self.scripts.editor.as_ref().and_then(super::script_editor::Editor::focus_cycle))
-            .or_else(|| self.scripts.panel.as_ref()?.prompt()?.focus_cycle(self.scripts.generation))
+            .or_else(|| self.scripts.focus_cycle())
     }
 
     fn editor_view(&self) -> Option<Element<'_, Message>> {
@@ -160,7 +157,7 @@ impl Launcher {
         if let Some(editor) = &self.saved_editor {
             return Some(self.saved_editor_view(editor));
         }
-        self.scripts.editor.as_ref().map(super::script_editor::Editor::view)
+        self.scripts.editor.as_ref().map(super::script_editor::Editor::view).or_else(|| self.scripts.editor_view())
     }
 
     pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
@@ -355,6 +352,7 @@ impl Launcher {
             Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
             Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
             Builtin::CreateScript => self.open_script_editor(None),
+            Builtin::CreateWorkflow => self.open_workflow_editor(None),
             Builtin::Shortcuts => self.show_shortcuts(),
             Builtin::GlobalShortcuts => self.show_global_shortcuts(),
             Builtin::ClipboardHistory => self.show_clipboard_history(),

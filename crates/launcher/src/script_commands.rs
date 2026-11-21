@@ -16,7 +16,7 @@ use serde::Deserialize;
 
 use crate::matcher;
 
-pub use edit::{change, format_arguments, parse_arguments};
+pub use edit::{change, change_workflow, format_arguments, parse_arguments};
 pub use run::{Completion, Job, Report};
 pub use workflow::{Plan, Workflow};
 
@@ -80,6 +80,10 @@ impl Catalog {
 
     pub fn plan(&self, workflow: &Workflow) -> Result<Plan, String> {
         Plan::workflow(workflow, &self.commands)
+    }
+
+    pub fn commands(&self) -> &[Arc<Script>] {
+        &self.commands
     }
 }
 

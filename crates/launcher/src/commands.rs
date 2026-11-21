@@ -15,11 +15,12 @@ pub enum Builtin {
     GlobalShortcuts,
     CreateSnippet,
     CreateScript,
+    CreateWorkflow,
     ClipboardHistory,
     SwitchWindows,
 }
 
-pub const ALL: [Builtin; 12] = [
+pub const ALL: [Builtin; 13] = [
     Builtin::Settings,
     Builtin::Appearance,
     Builtin::Layout,
@@ -32,6 +33,7 @@ pub const ALL: [Builtin; 12] = [
     Builtin::ClipboardHistory,
     Builtin::SwitchWindows,
     Builtin::CreateScript,
+    Builtin::CreateWorkflow,
 ];
 
 struct Metadata {
@@ -48,6 +50,14 @@ const CREATE_SCRIPT: Metadata = Metadata {
     description: "Register an executable to run from search",
     icon: "utilities-terminal",
     keywords: "add script automation register executable",
+};
+
+const CREATE_WORKFLOW: Metadata = Metadata {
+    id: "create-workflow",
+    title: "Create workflow",
+    description: "Run local commands in order",
+    icon: "system-run",
+    keywords: "automation steps sequence",
 };
 
 const CREATE_LINK: Metadata = Metadata {
@@ -136,6 +146,7 @@ impl Builtin {
                 keywords: "new text template snippets reusable clipboard",
             },
             Self::CreateScript => &CREATE_SCRIPT,
+            Self::CreateWorkflow => &CREATE_WORKFLOW,
             Self::CreateLink => &CREATE_LINK,
         }
     }

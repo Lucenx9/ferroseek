@@ -15,6 +15,7 @@ mod settings;
 mod shortcut_settings;
 mod views;
 mod windows;
+mod workflow_editor;
 
 use std::sync::Mutex;
 
@@ -294,6 +295,8 @@ pub enum Message {
     LinkOpened(Result<(), RunError>),
     Script { generation: u64, event: scripts::Event },
     ScriptEdit { generation: u64, event: script_editor::Event },
+    WorkflowEdit { generation: u64, event: workflow_editor::Event },
+    WorkflowRemoveStep,
     SavedEditor { generation: u64, event: saved_editor::Event },
     AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
@@ -534,6 +537,9 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
+    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && matches!(key.as_ref(), Key::Character("d" | "D")) {
+        return Some(Message::WorkflowRemoveStep);
+    }
     if mods == Modifiers::CTRL {
         match key.as_ref() {
             Key::Character("s" | "S") => return Some(Message::FolderShortcut(folders::Shortcut::Save)),
@@ -781,7 +787,7 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
-            (Action::OpenCommand | Action::RunScript | Action::EditScript, _) => {
+            (Action::OpenCommand | Action::RunScript | Action::EditScript | Action::EditWorkflow, _) => {
                 self.activate_command(&item.target, action)
             }
             (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),

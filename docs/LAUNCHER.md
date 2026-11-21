@@ -572,7 +572,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   terminal preference and working directory, and the normal launch scope.
 - **Commands** open built-in launcher views. Search for **Settings**,
   **Appearance**, **Layout**, **Search folders**, **Search status**,
-  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**, **Create local command**,
+  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**, **Create local command**, **Create workflow**,
   **Clipboard history**, or **Switch windows**. Strong
   matches appear near the top in **All**. Choose **Commands** to browse the
   complete list or match shorter and less exact queries. Enter, double-click,
@@ -1002,8 +1002,20 @@ and desktop-assigned shortcuts currently address built-in commands.
 
 ### Workflows
 
-Add a workflow to the same file to run two to eight registered commands in
-order. Use their titles. Reopen FerroSeek to load it.
+Search for **Create workflow** and enter a title. Switch from **Details** to
+**Steps** with Ctrl+Tab. Choose **Add step** or press Ctrl+Enter to search
+registered commands, then click a result or press Enter to add it. A workflow
+runs two to eight steps in order.
+
+Use the arrow keys to select a step, Ctrl+Up or Ctrl+Down to move it, and
+Ctrl+Shift+D to remove it from the draft. The Steps view also offers buttons
+for each operation. Ctrl+S or **Save** selects the saved workflow in Commands.
+Choose **Actions → Edit workflow** to edit an existing workflow. Press Ctrl+D
+in the editor, then Ctrl+Enter to confirm deletion. Escape returns to the
+captured search and asks before discarding a changed draft.
+
+The launcher writes the workflow to the same TOML file. You can also add or
+edit it there and reopen FerroSeek to load the changes.
 
 ```toml
 [[workflow]]
@@ -1022,8 +1034,7 @@ stops the workflow and identifies the step that stopped it. The timeout is
 30 seconds per step and the first 64 KiB of output are shared across the
 workflow. Esc cancels the current process group and returns to search.
 
-Edit workflow definitions in the TOML. Update references before renaming or
-deleting a command used by a workflow.
+Update workflow steps before renaming or deleting a command used by a workflow.
 
 ## Favorites
 

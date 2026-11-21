@@ -423,6 +423,7 @@ pub enum Action {
     OpenCommand,
     RunScript,
     EditScript,
+    EditWorkflow,
     OpenLink,
     EditLink,
     CopySnippet,
@@ -454,6 +455,7 @@ impl Action {
             Action::Open | Action::OpenCommand | Action::OpenLink => "Open",
             Action::RunScript => "Run",
             Action::EditScript => "Edit command",
+            Action::EditWorkflow => "Edit workflow",
             Action::EditLink => "Edit link",
             Action::CopySnippet => "Copy snippet",
             Action::PasteSnippet => "Paste snippet",
@@ -501,6 +503,7 @@ impl Action {
             Self::EditAlias => &["set alias", "remove alias", "shortcut"],
             Self::EditSnippet => &["change text", "delete snippet"],
             Self::EditScript => &["edit script", "delete command"],
+            Self::EditWorkflow => &["configure workflow", "delete workflow"],
             Self::AddFavorite => &["pin"],
             // Keep "up" from selecting removal when a favorite is already first.
             Self::RemoveFavorite if matches!(tokens, [word] if "unpin".starts_with(word)) => &["unpin"],
@@ -541,6 +544,7 @@ impl Action {
             | Action::EditAlias
             | Action::EditSnippet
             | Action::EditScript
+            | Action::EditWorkflow
             | Action::OpenWith
             | Action::Details
             | Action::Preview
@@ -566,7 +570,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand, Action::EditAlias],
         Target::Script(_) => vec![Action::RunScript, Action::EditScript],
-        Target::Workflow(_) => vec![Action::RunScript],
+        Target::Workflow(_) => vec![Action::RunScript, Action::EditWorkflow],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],

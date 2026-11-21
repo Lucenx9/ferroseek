@@ -238,6 +238,8 @@ When a command asks for values, focus the first field and keep the first
 missing value in view on submit. Run applies those values to that invocation.
 Confirm a workflow with its ordered command names. Show the active step while
 running and identify the step that stopped the workflow in the result.
+In the workflow editor, separate metadata from step ordering. Add commands
+through a searchable chooser and preserve the selected step while reordering.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve
