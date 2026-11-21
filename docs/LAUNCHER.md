@@ -996,9 +996,34 @@ The launcher stops a command that is still running 30 seconds after it starts.
 Changes the command already made remain in effect.
 
 Titles must be unique within the file. The configuration accepts up to 128
-entries. If the Commands footer says **Check launcher-scripts.toml**, correct
+commands and workflows in total. If the Commands footer says **Check launcher-scripts.toml**, correct
 the file and reopen FerroSeek. Other results remain available. `--command`
 and desktop-assigned shortcuts currently address built-in commands.
+
+### Workflows
+
+Add a workflow to the same file to run two to eight registered commands in
+order. Use their titles. Reopen FerroSeek to load it.
+
+```toml
+[[workflow]]
+title = "Prepare release"
+description = "Build and check the release"
+steps = ["Build release", "Check release"]
+```
+
+Find the workflow in **Commands** and review the ordered steps before choosing
+**Run**. FerroSeek resolves every command before starting the first step.
+Steps share one value when their argument names match regardless of case.
+For steps with confirmation enabled, the review includes their executable
+and fixed arguments.
+The running view identifies the current step. A failed command or a timeout
+stops the workflow and identifies the step that stopped it. The timeout is
+30 seconds per step and the first 64 KiB of output are shared across the
+workflow. Esc cancels the current process group and returns to search.
+
+Edit workflow definitions in the TOML. Update references before renaming or
+deleting a command used by a workflow.
 
 ## Favorites
 

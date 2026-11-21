@@ -42,26 +42,45 @@ fn edit(path: &Path, previous: Option<&Script>, next: Option<Script>) -> io::Res
     check_writable(path)?;
     let source = read_source(path)?;
     let original = source.as_deref().unwrap_or("");
-    let commands = parse_manifest(original)?;
+    let manifest = parse_manifest(original)?;
     let index = previous
         .map(|old| {
-            commands
+            manifest
+                .command
                 .iter()
                 .position(|entry| entry == old)
                 .ok_or_else(|| io::Error::other("This command changed on disk. Reopen FerroSeek to load it."))
         })
         .transpose()?;
+    check_references(&manifest.workflow, previous, next.as_ref())?;
 
     let mut document = original.parse::<DocumentMut>().map_err(|error| io::Error::other(error.message().to_owned()))?;
     let list = document.as_table_mut().entry("command").or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
     update_list(list, index, previous, next.as_ref())?;
     let text = document.to_string();
     ensure_size(&text)?;
-    let commands = parse_manifest(&text)?;
+    let manifest = parse_manifest(&text)?;
     if text != original {
         persist(path, source.as_deref(), &text)?;
     }
-    Ok(Catalog::from_commands(commands))
+    Ok(Catalog::from_manifest(manifest))
+}
+
+fn check_references(workflows: &[super::Workflow], old: Option<&Script>, next: Option<&Script>) -> io::Result<()> {
+    let Some(old) = old else { return Ok(()) };
+    let title = crate::matcher::fold(&old.title);
+    if next.is_some_and(|next| crate::matcher::fold(&next.title) == title) {
+        return Ok(());
+    }
+    if let Some(workflow) =
+        workflows.iter().find(|workflow| workflow.steps.iter().any(|step| crate::matcher::fold(step.trim()) == title))
+    {
+        return Err(io::Error::other(format!(
+            "Update the “{}” workflow before removing or renaming this command.",
+            workflow.title
+        )));
+    }
+    Ok(())
 }
 
 fn list_error() -> io::Error {
@@ -206,5 +225,26 @@ mod tests {
         let catalog = change(&settings, Some(&catalog.commands[0]), Some(updated)).unwrap();
         assert!(!catalog.commands[0].confirm);
         assert!(std::fs::read_to_string(path).unwrap().contains("# local commands"));
+    }
+
+    #[test]
+    fn rejects_removing_a_command_used_by_a_workflow() {
+        let temp = tempfile::tempdir().unwrap();
+        let settings = temp.path().join("config.toml");
+        let path = manifest_path(&settings);
+        let source = r#"
+[[command]]
+title = "Build"
+executable = "/synthetic/build"
+
+[[workflow]]
+title = "Prepare"
+steps = ["BUILD", "Build"]
+"#;
+        std::fs::write(&path, source).unwrap();
+        let catalog = Catalog::load(&settings);
+        let command = &catalog.commands[0];
+        assert!(change(&settings, Some(command), None).unwrap_err().contains("Prepare"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
     }
 }

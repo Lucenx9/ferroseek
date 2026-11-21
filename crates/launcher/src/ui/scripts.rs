@@ -4,6 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use iced::futures::channel::mpsc;
 use iced::widget::operation::{self, AbsoluteOffset, RelativeOffset};
 use iced::widget::{Id, column, container, row, scrollable, space, text};
 use iced::{Element, Font, Length, Task, Theme};
@@ -14,7 +15,7 @@ use super::{palette, primary_hint, surface_style, update_content};
 use crate::backend::UiEvent;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{Action, Command, Scope, Target};
-use crate::script_commands::{Catalog, Completion, Job, Report, Script};
+use crate::script_commands::{Catalog, Completion, Job, Plan, Report, Script, Workflow};
 
 #[derive(Default)]
 pub(super) struct State {
@@ -51,19 +52,20 @@ pub enum Event {
     Back,
     Run,
     Copy,
-    Finished(Result<Report, String>),
+    StepStarted(usize),
+    Finished(Report),
     Input(usize, String),
     Focus(usize),
 }
 
 enum Stage {
     Confirm(Prompt),
-    Running { _job: Job },
-    Finished(Result<Report, String>),
+    Running { _job: Job, step: usize },
+    Finished(Report),
 }
 
 pub(super) struct Panel {
-    script: Arc<Script>,
+    plan: Arc<Plan>,
     stage: Stage,
     scroll: Id,
     viewport: Id,
@@ -71,9 +73,15 @@ pub(super) struct Panel {
 }
 
 impl Panel {
-    fn new(script: Arc<Script>) -> Self {
-        let prompt = Prompt::new(script.parameters.len());
-        Self { script, stage: Stage::Confirm(prompt), scroll: Id::unique(), viewport: Id::unique(), copied: false }
+    fn new(plan: Plan) -> Self {
+        let prompt = Prompt::new(plan.parameters.len());
+        Self {
+            plan: Arc::new(plan),
+            stage: Stage::Confirm(prompt),
+            scroll: Id::unique(),
+            viewport: Id::unique(),
+            copied: false,
+        }
     }
 
     pub(super) fn prompt(&self) -> Option<&Prompt> {
@@ -86,7 +94,7 @@ impl Panel {
     fn primary(&self) -> Option<(&'static str, &'static str, Event)> {
         match &self.stage {
             Stage::Confirm(_) => Some(("Ctrl+Enter", "Run", Event::Run)),
-            Stage::Finished(Ok(report)) if !report.output.is_empty() => {
+            Stage::Finished(report) if !report.output.is_empty() => {
                 let label = if self.copied { "Copied output" } else { "Copy output" };
                 Some(("Enter", label, Event::Copy))
             }
@@ -95,7 +103,7 @@ impl Panel {
     }
 
     pub(super) fn view(&self, generation: u64) -> Element<'_, Message> {
-        let title = self.script.title.as_str();
+        let title = self.plan.title.as_str();
         let header = page_header(
             iced::widget::responsive(move |size| {
                 text(label_for_width(title, size.width, 20.0, false)).size(20).wrapping(text::Wrapping::None).into()
@@ -126,21 +134,59 @@ impl Panel {
     fn body(&self, generation: u64) -> Element<'_, Message> {
         let body = match &self.stage {
             Stage::Confirm(prompt) => self.confirmation(prompt, generation),
-            Stage::Running { .. } => column![text("Running…").size(15)],
-            Stage::Finished(Err(error)) => column![error_text(error)],
-            Stage::Finished(Ok(report)) => report_body(report),
+            Stage::Running { step, .. } => self.running(*step),
+            Stage::Finished(report) => report_body(report),
         };
         body.spacing(8).padding(16).into()
     }
 
     fn confirmation<'a>(&'a self, prompt: &'a Prompt, generation: u64) -> iced::widget::Column<'a, Message> {
         let mut body = column![];
-        if self.script.confirm {
-            let executable = self.script.executable.display();
-            let args = self.script.args.iter().map(|arg| format!("{arg:?}")).collect::<Vec<_>>().join(" ");
-            body = body.push(text("Run this command?").size(15)).push(output_text(format!("{executable}\n{args}")));
+        if self.plan.confirm {
+            body = body.push(self.run_preview());
         }
-        body.push(prompt.view(&self.script.parameters, generation))
+        body.push(prompt.view(&self.plan.parameters, generation))
+    }
+
+    fn run_preview(&self) -> Element<'_, Message> {
+        if self.plan.is_workflow() {
+            let mut steps = column![text("Run these commands in order?").size(15)].spacing(6);
+            for (index, step) in self.plan.steps.iter().enumerate() {
+                steps = steps.push(text(format!("{}. {}", index + 1, step.script.title)).size(13));
+                if step.script.confirm {
+                    steps = steps.push(output_text(command_preview(&step.script)));
+                }
+            }
+            return steps.into();
+        }
+        let script = &self.plan.steps[0].script;
+        column![text("Run this command?").size(15), output_text(command_preview(script))].spacing(8).into()
+    }
+
+    fn running(&self, index: usize) -> iced::widget::Column<'_, Message> {
+        if self.plan.is_workflow() {
+            let step = &self.plan.steps[index];
+            column![
+                text(format!("Step {} of {}", index + 1, self.plan.steps.len())).size(13),
+                text(step.script.title.as_str()).size(15)
+            ]
+            .spacing(6)
+        } else {
+            column![text("Running…").size(15)]
+        }
+    }
+
+    fn start(&mut self, inputs: Vec<String>, generation: u64) -> Task<Message> {
+        let (tx, rx) = mpsc::unbounded();
+        let (job, work) = Job::start(Arc::clone(&self.plan), inputs, move |index| {
+            let _ = tx.unbounded_send(index);
+        });
+        self.stage = Stage::Running { _job: job, step: 0 };
+        crate::timing::event("script_started");
+        Task::batch([
+            Task::run(rx, move |index| Message::Script { generation, event: Event::StepStarted(index) }),
+            Task::perform(work, move |result| Message::Script { generation, event: Event::Finished(result) }),
+        ])
     }
 
     fn command(&self, command: Command, generation: u64) -> Task<Message> {
@@ -159,6 +205,12 @@ impl Panel {
     }
 }
 
+fn command_preview(script: &Script) -> String {
+    let executable = script.executable.display();
+    let args = script.args.iter().map(|arg| format!("{arg:?}")).collect::<Vec<_>>().join(" ");
+    format!("{executable}\n{args}")
+}
+
 fn output_text<'a>(value: impl iced::widget::text::IntoFragment<'a>) -> iced::widget::Text<'a> {
     text(value).font(Font::MONOSPACE).size(13).wrapping(text::Wrapping::WordOrGlyph)
 }
@@ -168,16 +220,20 @@ fn error_text(value: &str) -> iced::widget::Text<'_> {
 }
 
 fn report_body(report: &Report) -> iced::widget::Column<'_, Message> {
-    let summary = match report.completion {
-        Completion::Exited(status) if status.success() => text("Completed").size(15),
-        Completion::Exited(status) => {
+    let summary = match &report.completion {
+        Ok(Completion::Exited(status)) if status.success() => text("Completed").size(15),
+        Ok(Completion::Exited(status)) => {
             let message = format!("Command failed ({status})");
             text(message).size(15).style(|theme: &Theme| text::Style { color: Some(palette::ERROR.resolve(theme)) })
         }
-        Completion::Cancelled => text("Cancelled").size(15),
-        Completion::TimedOut => error_text("Stopped after 30 seconds."),
+        Ok(Completion::Cancelled) => text("Cancelled").size(15),
+        Ok(Completion::TimedOut) => error_text("Stopped after 30 seconds."),
+        Err(error) => error_text(error),
     };
     let mut body = column![summary];
+    if let Some(step) = &report.failed_step {
+        body = body.push(text(step).size(13));
+    }
     if report.truncated {
         body = body.push(text("Showing the first 64 KiB.").size(12));
     }
@@ -195,17 +251,29 @@ impl Launcher {
         }
         match (target, action) {
             (Target::Command(command), Action::OpenCommand) => self.open_builtin(*command),
-            (Target::Script(script), Action::RunScript) => self.open_script(script.clone()),
+            (Target::Script(script), Action::RunScript) => self.open_plan(Plan::single(script.clone())),
+            (Target::Workflow(workflow), Action::RunScript) => self.open_workflow(workflow),
             (Target::Script(script), Action::EditScript) => self.open_script_editor(Some(script.clone())),
             _ => Task::none(),
         }
     }
 
-    fn open_script(&mut self, script: Arc<Script>) -> Task<Message> {
-        let manual = script.confirm || !script.parameters.is_empty();
+    fn open_workflow(&mut self, workflow: &Workflow) -> Task<Message> {
+        match self.scripts.catalog.plan(workflow) {
+            Ok(plan) => self.open_plan(plan),
+            Err(error) => {
+                self.panel = None;
+                self.status = Status::Error(error);
+                self.return_to_parent()
+            }
+        }
+    }
+
+    fn open_plan(&mut self, plan: Plan) -> Task<Message> {
+        let manual = plan.confirm || !plan.parameters.is_empty();
         self.panel = None;
         self.scripts.generation += 1;
-        self.scripts.panel = Some(Panel::new(script));
+        self.scripts.panel = Some(Panel::new(plan));
         let action = if manual { self.script_event(Event::Focus(0)) } else { self.script_event(Event::Run) };
         Task::batch([self.resize(), action])
     }
@@ -245,17 +313,18 @@ impl Launcher {
                     Ok(inputs) => inputs,
                     Err(index) => return prompt.focus(index, &panel.scroll, &panel.viewport),
                 };
-                let (job, work) = Job::start(panel.script.clone(), inputs);
-                panel.stage = Stage::Running { _job: job };
-                crate::timing::event("script_started");
-                Task::perform(work, move |result| Message::Script { generation, event: Event::Finished(result) })
+                panel.start(inputs, generation)
+            }
+            (Event::StepStarted(index), Stage::Running { step, .. }) => {
+                *step = index;
+                Task::none()
             }
             (Event::Finished(result), Stage::Running { .. }) => {
                 panel.stage = Stage::Finished(result);
                 crate::timing::event("script_finished");
                 Task::none()
             }
-            (Event::Copy, Stage::Finished(Ok(report))) if !report.output.is_empty() => {
+            (Event::Copy, Stage::Finished(report)) if !report.output.is_empty() => {
                 let output = report.output.clone();
                 panel.copied = true;
                 self.write_clipboard(output)

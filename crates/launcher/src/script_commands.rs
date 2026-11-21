@@ -3,6 +3,7 @@
 
 mod edit;
 mod run;
+mod workflow;
 
 use std::collections::HashSet;
 use std::fs::OpenOptions;
@@ -17,6 +18,7 @@ use crate::matcher;
 
 pub use edit::{change, format_arguments, parse_arguments};
 pub use run::{Completion, Job, Report};
+pub use workflow::{Plan, Workflow};
 
 const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 const MAX_COMMANDS: usize = 128;
@@ -39,6 +41,7 @@ pub struct Script {
 #[derive(Debug, Clone, Default)]
 pub struct Catalog {
     commands: Vec<Arc<Script>>,
+    workflows: Vec<Arc<Workflow>>,
     pub error: Option<String>,
 }
 
@@ -47,42 +50,66 @@ pub struct Catalog {
 struct Manifest {
     #[serde(default)]
     command: Vec<Script>,
+    #[serde(default)]
+    workflow: Vec<Workflow>,
 }
 
 impl Catalog {
     pub fn load(settings: &Path) -> Self {
         match read_source(&manifest_path(settings)).and_then(|source| parse_manifest(source.as_deref().unwrap_or(""))) {
-            Ok(commands) => Self::from_commands(commands),
-            Err(error) => Self { commands: Vec::new(), error: Some(format!("Check launcher-scripts.toml. {error}")) },
+            Ok(manifest) => Self::from_manifest(manifest),
+            Err(error) => Self { error: Some(format!("Check launcher-scripts.toml. {error}")), ..Self::default() },
         }
     }
 
-    fn from_commands(commands: Vec<Script>) -> Self {
-        Self { commands: commands.into_iter().map(Arc::new).collect(), error: None }
+    fn from_manifest(manifest: Manifest) -> Self {
+        Self {
+            commands: manifest.command.into_iter().map(Arc::new).collect(),
+            workflows: manifest.workflow.into_iter().map(Arc::new).collect(),
+            error: None,
+        }
     }
 
     pub fn matching(&self, query: &str, all: bool) -> Vec<(&Arc<Script>, u32)> {
-        let query = query.trim();
-        if query.is_empty() {
-            return if all { Vec::new() } else { self.commands.iter().map(|command| (command, 0)).collect() };
-        }
-        if all && query.chars().take(2).count() < 2 {
-            return Vec::new();
-        }
-        let tokens = matcher::tokens(query);
-        self.commands
-            .iter()
-            .filter_map(|script| {
-                let title = matcher::fold(&script.title);
-                let score = if tokens.iter().map(String::as_str).eq(title.split_whitespace()) {
-                    matcher::EXACT
-                } else {
-                    matcher::score(&tokens, &[(title.as_str(), 100), (&matcher::fold(&script.description), 70)])?
-                };
-                (!all || score >= 600).then_some((script, score))
-            })
-            .collect()
+        matching(&self.commands, query, all, |script| (&script.title, &script.description))
     }
+
+    pub fn matching_workflows(&self, query: &str, all: bool) -> Vec<(&Arc<Workflow>, u32)> {
+        matching(&self.workflows, query, all, |workflow| (&workflow.title, &workflow.description))
+    }
+
+    pub fn plan(&self, workflow: &Workflow) -> Result<Plan, String> {
+        Plan::workflow(workflow, &self.commands)
+    }
+}
+
+fn matching<'a, T>(
+    entries: &'a [Arc<T>],
+    query: &str,
+    all: bool,
+    label: impl Fn(&T) -> (&str, &str),
+) -> Vec<(&'a Arc<T>, u32)> {
+    let query = query.trim();
+    if query.is_empty() {
+        return if all { Vec::new() } else { entries.iter().map(|entry| (entry, 0)).collect() };
+    }
+    if all && query.chars().take(2).count() < 2 {
+        return Vec::new();
+    }
+    let tokens = matcher::tokens(query);
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let (title, description) = label(entry);
+            let title = matcher::fold(title);
+            let score = if tokens.iter().map(String::as_str).eq(title.split_whitespace()) {
+                matcher::EXACT
+            } else {
+                matcher::score(&tokens, &[(title.as_str(), 100), (&matcher::fold(description), 70)])?
+            };
+            (!all || score >= 600).then_some((entry, score))
+        })
+        .collect()
 }
 
 fn manifest_path(settings: &Path) -> PathBuf {
@@ -113,11 +140,11 @@ fn ensure_size(source: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn parse_manifest(source: &str) -> io::Result<Vec<Script>> {
+fn parse_manifest(source: &str) -> io::Result<Manifest> {
     let mut manifest: Manifest =
         toml::from_str(source).map_err(|error| io::Error::other(error.message().to_owned()))?;
-    if manifest.command.len() > MAX_COMMANDS {
-        return Err(io::Error::other("Keep at most 128 commands."));
+    if manifest.command.len() + manifest.workflow.len() > MAX_COMMANDS {
+        return Err(io::Error::other("Keep at most 128 commands and workflows in total."));
     }
     let mut titles = HashSet::new();
     for (index, command) in manifest.command.iter_mut().enumerate() {
@@ -125,7 +152,13 @@ fn parse_manifest(source: &str) -> io::Result<Vec<Script>> {
         validate(command, &mut titles)
             .map_err(|reason| io::Error::other(format!("Command {}. {reason}", index + 1)))?;
     }
-    Ok(manifest.command)
+    for (index, workflow) in manifest.workflow.iter_mut().enumerate() {
+        workflow.title = workflow.title.trim().to_owned();
+        workflow
+            .validate(&mut titles)
+            .map_err(|reason| io::Error::other(format!("Workflow {}. {reason}", index + 1)))?;
+    }
+    Ok(manifest)
 }
 
 fn validate(command: &Script, titles: &mut HashSet<String>) -> Result<(), &'static str> {

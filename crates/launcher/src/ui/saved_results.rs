@@ -52,7 +52,13 @@ impl Launcher {
             .matching(&self.query, all)
             .into_iter()
             .map(|(script, score)| (model::script_item(script), score));
-        let mut matches: Vec<_> = links.chain(snippets).chain(scripts).collect();
+        let workflows = self
+            .scripts
+            .catalog
+            .matching_workflows(&self.query, all)
+            .into_iter()
+            .map(|(workflow, score)| (model::workflow_item(workflow), score));
+        let mut matches: Vec<_> = links.chain(snippets).chain(scripts).chain(workflows).collect();
         if self.query.trim().is_empty() {
             // The empty catalog already includes the pinned links and snippets.
             matches.retain(|(item, _)| !self.is_favorite(&item.target));

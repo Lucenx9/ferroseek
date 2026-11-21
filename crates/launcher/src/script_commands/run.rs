@@ -9,7 +9,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::Script;
+use super::{Plan, Script};
 
 const MAX_OUTPUT: usize = 64 * 1024;
 const TICK: Duration = Duration::from_millis(25);
@@ -24,7 +24,8 @@ pub enum Completion {
 
 #[derive(Debug, Clone)]
 pub struct Report {
-    pub completion: Completion,
+    pub completion: Result<Completion, String>,
+    pub failed_step: Option<String>,
     pub output: String,
     pub truncated: bool,
 }
@@ -38,12 +39,14 @@ struct Process {
 pub struct Job(Arc<Mutex<Process>>);
 
 impl Job {
-    pub fn start(script: Arc<Script>, inputs: Vec<String>) -> (Self, impl Future<Output = Result<Report, String>>) {
+    pub fn start(
+        plan: Arc<Plan>,
+        inputs: Vec<String>,
+        progress: impl FnMut(usize) + Send + 'static,
+    ) -> (Self, impl Future<Output = Report>) {
         let process = Arc::new(Mutex::new(Process::default()));
         let job = Self(Arc::clone(&process));
-        let work = zruntime::unblock(move || {
-            run(&script, &inputs, &process).map_err(|err| format!("Could not run command. {err}"))
-        });
+        let work = zruntime::unblock(move || run_plan(&plan, &inputs, &process, progress));
         (job, work)
     }
 
@@ -108,9 +111,14 @@ fn spawn(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Re
     Ok(output)
 }
 
-fn run(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Result<Report> {
+fn run_step(
+    script: &Script,
+    inputs: &[String],
+    process: &Mutex<Process>,
+    capture: &mut Capture,
+) -> io::Result<Completion> {
     let output = spawn(script, inputs, process)?;
-    let report = collect(output, process, Instant::now() + TIMEOUT);
+    let result = collect(output, process, Instant::now() + TIMEOUT, capture);
     let child = {
         let mut state = process.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.signal();
@@ -119,7 +127,29 @@ fn run(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Resu
     if let Some(mut child) = child {
         child.wait()?;
     }
-    report
+    result
+}
+
+fn run_plan(plan: &Plan, inputs: &[String], process: &Mutex<Process>, mut progress: impl FnMut(usize)) -> Report {
+    let mut capture = Capture::default();
+    if inputs.len() != plan.parameters.len() {
+        return capture.report(Err("Enter a value for every argument.".into()), None);
+    }
+    for (index, step) in plan.steps.iter().enumerate() {
+        progress(index);
+        if plan.is_workflow() {
+            capture.section(index, &step.script.title);
+        }
+        let result = run_step(&step.script, &step.inputs(inputs), process, &mut capture)
+            .map_err(|error| format!("Could not run command. {error}"));
+        let failed = !matches!(result, Ok(Completion::Exited(status)) if status.success());
+        if failed || index + 1 == plan.steps.len() {
+            let failed_step =
+                (failed && plan.is_workflow()).then(|| format!("Step {} · {}", index + 1, step.script.title));
+            return capture.report(result, failed_step);
+        }
+    }
+    capture.report(Err("This workflow has no steps.".into()), None)
 }
 
 #[derive(Default)]
@@ -162,12 +192,19 @@ impl Capture {
         }
     }
 
-    fn report(self, completion: Completion) -> Report {
+    fn section(&mut self, index: usize, title: &str) {
+        if index > 0 {
+            self.append(b"\n");
+        }
+        self.append(format!("[{} · {title}]\n", index + 1).as_bytes());
+    }
+
+    fn report(self, completion: Result<Completion, String>, failed_step: Option<String>) -> Report {
         let output = String::from_utf8_lossy(&self.bytes)
             .chars()
             .filter(|&c| matches!(c, '\n' | '\t') || !c.is_control())
             .collect();
-        Report { completion, output, truncated: self.truncated }
+        Report { completion, failed_step, output, truncated: self.truncated }
     }
 
     fn drain(&mut self, output: &mut UnixStream) -> io::Result<()> {
@@ -178,8 +215,12 @@ impl Capture {
     }
 }
 
-fn collect(mut output: UnixStream, process: &Mutex<Process>, deadline: Instant) -> io::Result<Report> {
-    let mut capture = Capture::default();
+fn collect(
+    mut output: UnixStream,
+    process: &Mutex<Process>,
+    deadline: Instant,
+    capture: &mut Capture,
+) -> io::Result<Completion> {
     let mut open = true;
     let completion = loop {
         if let Some(end) = process.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).completion(deadline)? {
@@ -194,7 +235,7 @@ fn collect(mut output: UnixStream, process: &Mutex<Process>, deadline: Instant) 
     if open {
         capture.drain(&mut output)?;
     }
-    Ok(capture.report(completion))
+    Ok(completion)
 }
 
 #[cfg(test)]
@@ -213,21 +254,51 @@ mod tests {
         }
     }
 
+    fn run(script: Script, inputs: &[String]) -> Report {
+        run_plan(&Plan::single(Arc::new(script)), inputs, &Mutex::new(Process::default()), |_| {})
+    }
+
     #[test]
     fn captures_literal_arguments_and_stderr_even_on_failure() {
-        let script = shell("printf '%s\\n' \"$1\" \"$2\"; printf 'fixture error\\n' >&2; exit 7", &["--fixed"]);
-        let report = run(&script, &["a path $HOME ; *.txt".into()], &Mutex::new(Process::default())).unwrap();
+        let script = Script {
+            parameters: vec!["Literal argument".into()],
+            ..shell("printf '%s\\n' \"$1\" \"$2\"; printf 'fixture error\\n' >&2; exit 7", &["--fixed"])
+        };
+        let report = run(script, &["a path $HOME ; *.txt".into()]);
         assert_eq!(report.output, "--fixed\na path $HOME ; *.txt\nfixture error\n");
-        assert!(matches!(report.completion, Completion::Exited(status) if status.code() == Some(7)));
+        assert!(matches!(report.completion, Ok(Completion::Exited(status)) if status.code() == Some(7)));
     }
 
     #[test]
     fn keeps_a_bounded_output_prefix_while_draining_the_child() {
         let chunk = "x".repeat(4096);
         let script = shell("n=0; while [ \"$n\" -lt 32 ]; do printf '%s' \"$1\"; n=$((n+1)); done", &[&chunk]);
-        let report = run(&script, &[], &Mutex::new(Process::default())).unwrap();
+        let report = run(script, &[]);
         assert_eq!((report.output.len(), report.truncated), (MAX_OUTPUT, true));
-        assert!(matches!(report.completion, Completion::Exited(status) if status.success()));
+        assert!(matches!(report.completion, Ok(Completion::Exited(status)) if status.success()));
+    }
+
+    #[test]
+    fn a_failed_step_keeps_earlier_output_and_stops_the_workflow() {
+        let mut commands = Vec::new();
+        for (title, source) in [
+            ("Build", "printf 'Build complete\\n'"),
+            ("Check", "printf 'Check failed\\n' >&2; exit 7"),
+            ("Publish", "printf 'Must not run\\n'"),
+        ] {
+            commands.push(Arc::new(Script { title: title.into(), ..shell(source, &[]) }));
+        }
+        let workflow = super::super::Workflow {
+            title: "Prepare".into(),
+            description: String::new(),
+            steps: commands.iter().map(|script| script.title.clone()).collect(),
+        };
+        let plan = Plan::workflow(&workflow, &commands).unwrap();
+        let mut started = Vec::new();
+        let report = run_plan(&plan, &[], &Mutex::new(Process::default()), |index| started.push(index));
+        assert_eq!(started, [0, 1]);
+        assert_eq!(report.failed_step.as_deref(), Some("Step 2 · Check"));
+        assert_eq!(report.output, "[1 · Build]\nBuild complete\n\n[2 · Check]\nCheck failed\n");
     }
 
     #[test]
@@ -239,9 +310,9 @@ mod tests {
             if cancel {
                 job.cancel();
             }
-            let report = collect(output, &job.0, Instant::now()).unwrap();
+            let completion = collect(output, &job.0, Instant::now(), &mut Capture::default()).unwrap();
             let expected = if cancel { Completion::Cancelled } else { Completion::TimedOut };
-            assert_eq!(report.completion, expected);
+            assert_eq!(completion, expected);
             let mut child = job.0.lock().unwrap().child.take().unwrap();
             assert!(!child.wait().unwrap().success());
         }

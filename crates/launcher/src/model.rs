@@ -16,7 +16,7 @@ use crate::apps::App;
 use crate::backend::FileHit;
 use crate::commands::{self, Builtin};
 use crate::favorites::Kind as FavoriteKind;
-use crate::script_commands::Script;
+use crate::script_commands::{Script, Workflow};
 use crate::snippets::Snippet;
 use crate::usage::Kind;
 use crate::{calc, links, matcher, saved, uri};
@@ -100,6 +100,7 @@ pub enum Target {
     Calc(String),
     Command(Builtin),
     Script(Arc<Script>),
+    Workflow(Arc<Workflow>),
     Link(links::Link, String),
     Snippet(Snippet),
     UnavailableAlias(saved::Alias),
@@ -378,6 +379,21 @@ pub fn link_item(link: &links::Link, terms: &str) -> Item {
     }
 }
 
+pub(crate) fn workflow_item(workflow: &Arc<Workflow>) -> Item {
+    Item {
+        target: Target::Workflow(workflow.clone()),
+        section: Section::Commands,
+        title: workflow.title.clone(),
+        subtitle: if workflow.description.is_empty() {
+            format!("{} steps", workflow.steps.len())
+        } else {
+            workflow.description.clone()
+        },
+        icon: "system-run".into(),
+        tag: "Workflow",
+    }
+}
+
 pub fn fallback_item(link: &links::Link, terms: &str) -> Option<Item> {
     let host = link.fallback_host(terms)?;
     Some(Item {
@@ -550,6 +566,7 @@ pub fn actions_for(t: &Target, favorite: bool) -> Vec<Action> {
         Target::Calc(_) => vec![Action::CopyResult, Action::UseResult],
         Target::Command(_) => vec![Action::OpenCommand, Action::EditAlias],
         Target::Script(_) => vec![Action::RunScript, Action::EditScript],
+        Target::Workflow(_) => vec![Action::RunScript],
         Target::Link(..) => vec![Action::OpenLink, Action::EditLink],
         Target::Snippet(_) => vec![Action::CopySnippet, Action::EditSnippet],
         Target::UnavailableAlias(_) => vec![Action::EditAlias],

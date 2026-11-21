@@ -140,7 +140,10 @@ Complete desktop validation before expanding the platform.
 - [x] Create, edit and delete local commands in the launcher, with explicit save,
   discard, and delete confirmation.
 - [x] Prompt for named positional arguments at run time and pass them literally.
-- [ ] Evaluate reusable workflows before designing a general extension API.
+- [x] Run named command sequences with shared inputs, step progress and
+  stop-on-failure behavior.
+- [ ] Add workflow creation and editing in the launcher before designing a
+  general extension API.
 
 ## Optional AI agent integration
 

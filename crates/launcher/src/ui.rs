@@ -702,6 +702,7 @@ impl Launcher {
                     Target::Calc(_) => &["accessories-calculator", "calc"],
                     Target::Command(_) => &["preferences-system", "applications-system"],
                     Target::Script(_) => &["utilities-terminal", "application-x-executable"],
+                    Target::Workflow(_) => &["system-run", "application-x-executable"],
                     Target::Link(..) => &["insert-link"],
                     Target::Snippet(_) => &["text-x-generic"],
                     Target::UnavailableAlias(_) => &["dialog-information"],
