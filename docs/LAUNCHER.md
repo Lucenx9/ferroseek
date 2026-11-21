@@ -43,17 +43,31 @@ unless `--enable` is supplied. Review indexing roots before enabling it.
 `./scripts/uninstall.sh --launcher` removes only the launcher and retains
 the engine and integrations. See [installation](INSTALLATION.md).
 
+## Settings
+
+Open **Settings** in the search header or press Ctrl+Shift+S. Use Up/Down or
+Tab/Shift+Tab to select a page and Enter to open it, or click its row. Appearance
+contains colors and layout. File search groups **Search folders** and
+**Search status**. Back or Esc returns to Settings with the same page selected.
+Esc from Settings returns to the current search. Each page also has a direct
+shortcut shown next to its name.
+
+![Settings grouped by launcher and file search](assets/launcher-settings.png)
+
+The search, Settings, and Search status screenshots show the launcher at 1× in
+isolated virtual KWin 5.27.11 with the tiny-skia renderer and synthetic data.
+
 ## Appearance
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
 
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
-with the tiny-skia renderer and synthetic data. The refreshed search, folder
-browser and text-preview images use the same setup. These captures do not extend
+with the tiny-skia renderer and synthetic data. The folder browser and
+text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
-Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
+Choose **Settings → Appearance**, or press **Ctrl+Shift+Comma**.
 **System**, **Light** and **Dark** control the color mode. Choose an independent
 **Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures
 show search, selection and secondary text with the same semantic colors as the
@@ -64,7 +78,7 @@ group related choices; the footer explains live preview and saving unless
 unsaved changes need attention. Up/Down or Tab/Shift+Tab move
 between choices, and Enter selects one.
 Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
-or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
+or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to the previous view. Unsaved
 changes require explicit discard (Ctrl+D); Esc keeps editing at that prompt.
 Ctrl+R reloads saved preferences when there are no unsaved edits. Search state
 and in-flight results are retained while editing.
@@ -154,6 +168,7 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
 | Ctrl+K | open/close the searchable action panel for the selected row |
+| Ctrl+Shift+S | open/close Settings |
 | Ctrl+I | open/close file search status |
 | Ctrl+Shift+Comma | appearance preferences |
 | Ctrl+R | refresh while file search status is open |
@@ -342,14 +357,11 @@ records file usage and closes the launcher.
 
 ## File search status
 
-Click **Search status** to the right of the search filters, or press Ctrl+I, to check the
-search service without leaving the launcher. Empty file searches and search
-errors also offer **Check search status**. Esc or **Back to search** returns
-to the same query, filter and selected result.
+Choose **Settings → Search status**, or press Ctrl+I, to check the search
+service. Empty file searches and search errors also offer **Check search status**.
+Esc or **Back** returns to the previous view and preserves the search context.
 
 ![File search status with synthetic indexed folders](assets/launcher-index-status.png)
-
-Screenshot from a nested test session with sample files.
 
 The view distinguishes starting, indexing, watching for changes, paused and
 stopping states. It shows indexed file/folder counts, queued folders and indexed
@@ -384,7 +396,7 @@ folders disables file indexing. Esc closes an unsaved first-run screen without
 creating a configuration or starting the service. CLI and explicitly enabled
 services retain their existing configuration/default behavior.
 
-Later, open **Search folders** in the search header or press Ctrl+,. Empty file results
+Later, choose **Settings → Search folders** or press Ctrl+,. Empty file results
 also offer **Choose folders**. Type an absolute path or `~/Documents` and press
 Enter to add it; use Up/Down to select a folder and Ctrl+D or **Remove** to remove
 it. New folders must exist, be readable directories and not be symbolic links;
@@ -560,7 +572,7 @@ results were reordered.
 **Hide** or Esc closes the sidebar before clearing the search; it preserves the
 current query, filter and selection and stops reads on subsequent navigation.
 Preview stays enabled only for the current launcher session. Modal screens such as
-index status, folder and appearance settings, File details and Open with hide the sidebar and
+Settings, index status, folder and appearance settings, File details and Open with hide the sidebar and
 pause new preview reads. Returning resumes it for the current selected file.
 Opening, refreshing or copying a preview does not record launch history.
 

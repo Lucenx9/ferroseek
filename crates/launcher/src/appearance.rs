@@ -417,30 +417,29 @@ impl Panel {
         let save = button(ui::primary_hint("Ctrl+S", "Save"))
             .padding([4, 8])
             .style(command_style(self.cursor.selected == self.save_index()));
-        let back = button(ui::hint("Esc", "Back to search"))
+        let back = button(ui::hint("Esc", "Back"))
             .padding([4, 8])
             .style(command_style(self.cursor.selected == self.save_index() + 1));
         let footer = if self.confirm {
             row![
-                text("Discard changes?").size(13),
-                space::horizontal(),
+                text("Discard changes?").size(13).width(Length::Fill),
                 button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep).style(ui::status_button_style),
                 button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard).style(ui::status_button_style)
             ]
-            .spacing(12)
+            .spacing(8)
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() { "Unsaved changes" } else { "Changes preview immediately" }).size(11).style(
-                    move |theme: &Theme| text::Style {
+                text(if self.dirty() { "Unsaved changes" } else { "Changes preview immediately" })
+                    .size(11)
+                    .width(Length::Fill)
+                    .style(move |theme: &Theme| text::Style {
                         color: Some(if self.dirty() { palette::TEXT } else { palette::DIM }.resolve(theme)),
-                    }
-                ),
-                space::horizontal(),
+                    }),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
             ]
-            .spacing(12)
+            .spacing(8)
             .align_y(iced::Center)
         };
         let notice: Element<'_, Event> = if self.notice.is_empty() {

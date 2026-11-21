@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Secondary-view presentation, transitions and replies.
 
-use super::{Launcher, Message, SearchStatusPanel, hint, page_header, search_id, status_button_style, update};
+use super::{Launcher, Message, SearchStatusPanel, hint, page_header, settings, status_button_style, update};
 use crate::backend::SearchStatus;
 use crate::model::ClickTracker;
 use crate::{appearance, details, folders, open_with, preview, timing};
@@ -18,6 +18,7 @@ pub(crate) fn file_page_header<'a, M: Clone + 'a>(title: &'static str, back: M, 
             row![back, text(title).size(20), space::horizontal(), refresh].spacing(12).align_y(Vertical::Center);
         container(heading).center_y(Length::Fill).into()
     }))
+    .into()
 }
 
 impl Launcher {
@@ -144,13 +145,14 @@ impl Launcher {
         }
         self.clicks = ClickTracker::default();
         self.panel = None;
+        self.settings = self.settings.map(|_| settings::Entry::SearchStatus);
         let load = self.refresh_search_status();
         Task::batch([load, self.resize()])
     }
 
     pub(super) fn close_search_status(&mut self) -> Task<Message> {
         self.search_status = None;
-        Task::batch([self.resize(), crate::input::focus(search_id())])
+        self.return_to_parent()
     }
 
     pub(super) fn search_status_loaded(
@@ -168,6 +170,7 @@ impl Launcher {
     }
 
     pub(super) fn show_appearance(&mut self) -> Task<Message> {
+        self.settings = self.settings.map(|_| settings::Entry::Appearance);
         self.panel = None;
         self.search_status = None;
         self.clicks = ClickTracker::default();

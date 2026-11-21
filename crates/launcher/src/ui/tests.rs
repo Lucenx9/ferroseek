@@ -465,6 +465,7 @@ fn search_state() -> Launcher {
         preferences: Preferences::default(),
         system_dark: None,
         opaque: false,
+        settings: None,
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -3107,6 +3108,7 @@ fn invalid_application_action_keeps_the_menu_usable_and_does_not_record_usage() 
 struct RenderedLabels {
     text: Vec<(String, iced::Rectangle)>,
     inputs: Vec<iced::Rectangle>,
+    scroll_offsets: Vec<iced::Vector>,
 }
 
 impl iced::advanced::widget::Operation for RenderedLabels {
@@ -3115,6 +3117,16 @@ impl iced::advanced::widget::Operation for RenderedLabels {
     }
     fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
         self.text.push((value.to_string(), bounds));
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&Id>,
+        _: iced::Rectangle,
+        _: iced::Rectangle,
+        translation: iced::Vector,
+        _: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        self.scroll_offsets.push(translation);
     }
     fn text_input(
         &mut self,
@@ -3188,17 +3200,133 @@ fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
     for width in [320, 608, 640, 720, 880] {
         let mut state = search_state();
         let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), false, false);
-        state.placement = Some(layout::Geometry { width, header_extra: if width < 512 { 30 } else { 0 }, ..geometry });
+        state.placement = Some(layout::Geometry { width, ..geometry });
         let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
         let input = labels.inputs[0];
         assert_eq!(input.width, width as f32 - 32.0);
-        for name in ["All", "Applications", "Files", "Search status", "Search folders", "Appearance"] {
+        for name in ["All", "Applications", "Files", "Settings"] {
             let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(bounds.y >= input.y + input.height, "{name} overlaps the query at {width}px");
             assert!(bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD, "{name}: {bounds:?}");
-            assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT + state.placement.unwrap().header_extra as f32);
+            assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT);
         }
     }
+}
+
+#[test]
+fn settings_navigation_keeps_search_and_ignores_stale_search_input() {
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Scope(Scope::Files));
+    let _ = update(&mut state, Message::Query("report".into()));
+    let generation = state.generation;
+    let mut shortcut = typed("S", Modifiers::CTRL | Modifiers::SHIFT);
+    if let Event::Keyboard(keyboard::Event::KeyPressed { text, .. }) = &mut shortcut {
+        *text = Some("S".into());
+    }
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    widget_batch(&mut state, &mut cache, &[shortcut], false);
+    assert!(state.settings_menu_open());
+    let _ = update(&mut state, Message::Query("queued edit".into()));
+    let _ = update(&mut state, Message::Scope(Scope::Applications));
+    let _ = update(&mut state, Message::Files { generation, result: Ok(Some(file_hits())) });
+    let selected = state.selected().unwrap().target.clone();
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.folder_settings.is_some());
+    assert!(!state.settings_menu_open());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings_menu_open());
+    assert_eq!(state.settings, Some(settings::Entry::SearchFolders));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.search_status.is_some());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.settings, Some(settings::Entry::SearchStatus));
+    let _ = update(&mut state, Message::ShowFolders);
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.settings, Some(settings::Entry::SearchFolders));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings.is_none() && state.search_status.is_none());
+    assert_eq!((state.query.as_str(), state.generation, state.scope), ("report", generation, Scope::Files));
+    assert_eq!(state.selected().unwrap().target, selected);
+}
+
+#[test]
+fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
+    let mut state = search_state();
+    state.output_bounds = Some((352, 800));
+    let _ = state.resize();
+    let click = |state: &mut Launcher, label: &str| {
+        let width = state.window_width as f32;
+        let labels = rendered_labels(view_content(state), iced::Size::new(width, full_height() as f32));
+        let (_, bounds) = labels.text.iter().find(|(value, _)| value == label).unwrap();
+        assert!(bounds.x >= PAD && bounds.x + bounds.width <= width - PAD, "{label}: {bounds:?}");
+        let messages = pointer_messages(
+            state,
+            iced::Point::new(bounds.center_x(), bounds.center_y()),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(!messages.is_empty(), "{label} must be clickable for {:?}: {bounds:?}", state.settings);
+        for message in messages {
+            let _ = update(state, message);
+        }
+    };
+    click(&mut state, "Settings");
+    for (label, entry) in
+        [("Appearance", settings::Entry::Appearance), ("Search status", settings::Entry::SearchStatus)]
+    {
+        click(&mut state, label);
+        if entry == settings::Entry::Appearance {
+            let generation = state.appearance_generation;
+            let _ = update(
+                &mut state,
+                Message::Appearance {
+                    generation,
+                    event: appearance::Event::Loaded(Err("Cannot read settings".into())),
+                },
+            );
+        }
+        assert!(!state.settings_menu_open());
+        click(&mut state, "Back");
+        assert!(state.settings_menu_open());
+        assert_eq!(state.settings, Some(entry));
+    }
+    click(&mut state, "Back to search");
+    assert!(state.settings.is_none());
+}
+
+#[test]
+fn settings_scroll_does_not_carry_into_search_status() {
+    use iced::Size;
+    use iced_runtime::{Action as RuntimeAction, UserInterface, task, user_interface::Cache};
+
+    let mut state = search_state();
+    state.output_bounds = Some((352, 300));
+    let _ = update(&mut state, Message::ShowSettings);
+    let scroll = update(&mut state, Message::Cmd(Command::Last));
+    let mut renderer =
+        iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+    let size = Size::new(state.window_width as f32, state.window_height as f32);
+    let mut menu = UserInterface::build(view(&state), size, Cache::default(), &mut renderer);
+    let mut stream = task::into_stream(scroll).unwrap();
+    let Some(RuntimeAction::Widget(mut operation)) = iced::futures::executor::block_on(stream.next()) else {
+        panic!("moving to the final settings entry must scroll it into view");
+    };
+    menu.operate(&renderer, operation.as_mut());
+    let mut layout = RenderedLabels::default();
+    menu.operate(&renderer, &mut layout);
+    assert!(layout.scroll_offsets.iter().any(|offset| offset.y > 0.0));
+    let cache = menu.into_cache();
+
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let generation = state.status_generation;
+    let error = "The search service is temporarily unavailable. ".repeat(20);
+    let _ = update(&mut state, Message::SearchStatusLoaded { generation, result: Err(error) });
+    let size = Size::new(state.window_width as f32, state.window_height as f32);
+    let mut status = UserInterface::build(view(&state), size, cache, &mut renderer);
+    let mut layout = RenderedLabels::default();
+    status.operate(&renderer, &mut layout);
+    assert_eq!(layout.scroll_offsets, vec![iced::Vector::ZERO]);
 }
 
 #[test]
@@ -3347,7 +3475,7 @@ fn secondary_pages_share_title_and_return_action_alignment() {
         let labels = rendered_labels(page, iced::Size::new(720.0, 515.0)).text;
         let (_, heading) = labels.iter().find(|(value, _)| value == title).unwrap();
         assert!((heading.center_y() - 44.0).abs() < 0.5, "{title}: {heading:?}");
-        let (_, back) = labels.iter().find(|(value, _)| value == "Back to search").unwrap();
+        let (_, back) = labels.iter().rev().find(|(value, _)| value == "Back to search" || value == "Back").unwrap();
         assert!((back.center_y() - 490.0).abs() < 0.5, "{title}: {back:?}");
     }
 }

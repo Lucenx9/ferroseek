@@ -21,6 +21,13 @@ pub fn capture<'a, R: iced::advanced::Renderer + 'a>(
     Element::new(Input { content, epoch, focus, context })
 }
 
+fn shortcut_owns_text(event: &Event) -> bool {
+    matches!(
+        ui::input_event(event, iced::event::Status::Ignored),
+        Some(Message::ShowAppearance | Message::ShowSettings)
+    )
+}
+
 struct Input<'a, R> {
     content: Element<'a, Message, Theme, R>,
     epoch: u64,
@@ -190,7 +197,7 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
             let mut messages = Vec::new();
             let mut inner = Shell::new(&mut messages);
             // A printable global shortcut must not edit the focused text field.
-            if !matches!(ui::input_event(event, iced::event::Status::Ignored), Some(Message::ShowAppearance)) {
+            if !shortcut_owns_text(event) {
                 self.content
                     .as_widget_mut()
                     .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
+mod settings;
 mod views;
 
 use std::sync::Mutex;
@@ -189,6 +190,7 @@ pub struct Launcher {
     preferences: Preferences,
     system_dark: Option<bool>,
     opaque: bool,
+    settings: Option<settings::Entry>,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
     input_epoch: u64,
@@ -265,6 +267,8 @@ pub enum Message {
     Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
     OpenWith { generation: u64, event: open_with::Event },
+    ShowSettings,
+    SettingsSelected(settings::Entry),
     ShowSearchStatus,
     ShowFolders,
     ShowAppearance,
@@ -377,6 +381,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         preferences,
         system_dark: None,
         opaque,
+        settings: None,
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -488,6 +493,9 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
+    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && matches!(key.as_ref(), Key::Character("s" | "S")) {
+        return Some(Message::ShowSettings);
+    }
     if mods == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Character(",") {
         return Some(Message::ShowAppearance);
     }
@@ -552,7 +560,7 @@ impl Launcher {
             self.appearance = None;
             timing::event("appearance_closed");
             self.appearance_generation += 1;
-            Task::batch([task, self.resize(), crate::input::focus(search_id())])
+            Task::batch([task, self.return_to_parent()])
         } else {
             Task::batch([task, self.resize()])
         }
@@ -627,14 +635,13 @@ impl Launcher {
         let compact = self.search_folder.is_none()
             && self.query.trim().is_empty()
             && self.items.is_empty()
-            && self.search_status.is_none()
-            && self.folder_settings.is_none()
-            && self.appearance.is_none()
-            && self.application_picker.is_none()
-            && self.file_details.is_none()
+            && !self.search_suspended()
             && !self.preview_enabled
             && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
-        let geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
+        let mut geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
+        if self.settings_menu_open() {
+            geometry = geometry.with_content_height(settings::HEIGHT, self.output_bounds);
+        }
         self.cursor.visible = geometry.rows;
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
@@ -976,13 +983,17 @@ impl Launcher {
         ])
     }
 
+    fn search_suspended(&self) -> bool {
+        self.file_details.is_some()
+            || self.application_picker.is_some()
+            || self.folder_settings.is_some()
+            || self.appearance.is_some()
+            || self.search_status.is_some()
+            || self.settings.is_some()
+    }
+
     fn preview_visible(&self) -> bool {
-        self.preview_enabled
-            && self.file_details.is_none()
-            && self.application_picker.is_none()
-            && self.folder_settings.is_none()
-            && self.appearance.is_none()
-            && self.search_status.is_none()
+        self.preview_enabled && !self.search_suspended()
     }
 
     fn preview_context(&self) -> (Option<Target>, bool) {
@@ -1170,6 +1181,7 @@ impl Launcher {
     }
 
     fn show_folders(&mut self, first_run: bool) -> Task<Message> {
+        self.settings = self.settings.map(|_| settings::Entry::SearchFolders);
         self.folder_generation += 1;
         let generation = self.folder_generation;
         self.panel = None;
@@ -1192,10 +1204,11 @@ impl Launcher {
             folders::Effect::Close { refresh } => {
                 self.folder_settings = None;
                 self.folder_generation += 1;
-                let refresh = if refresh { update(self, Message::Query(self.query.clone())) } else { Task::none() };
-                Task::batch([task, refresh, self.resize(), crate::input::focus(search_id())])
+                let refresh = if refresh { query_changed(self, self.query.clone()) } else { Task::none() };
+                Task::batch([task, refresh, self.return_to_parent()])
             }
             folders::Effect::Applied => {
+                self.settings = None;
                 self.folder_settings = None;
                 self.folder_generation += 1;
                 let root = self.folder_search_history.drain(..).next();
@@ -1265,12 +1278,7 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     }
     if let Message::TimingFrame(at) = message {
         timing::appearance_frame(at);
-        let visible = s.panel.is_none()
-            && s.file_details.is_none()
-            && s.application_picker.is_none()
-            && s.folder_settings.is_none()
-            && s.appearance.is_none()
-            && s.search_status.is_none();
+        let visible = s.panel.is_none() && !s.search_suspended();
         timing::frame(at, s.generation, visible);
         return Task::none();
     }
@@ -1312,6 +1320,8 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             s.system_dark = dark;
             Task::none()
         }
+        Message::ShowSettings => s.toggle_settings(),
+        Message::SettingsSelected(entry) => s.choose_setting(entry),
         Message::ShowFolders => s.toggle_folders(),
         Message::FolderShortcut(shortcut) => s.folder_shortcut(shortcut),
         Message::Folder { generation, event } => s.folder_event(generation, event),
@@ -1365,8 +1375,8 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
                 }
                 return Task::none();
             }
-            if s.search_status.is_some() || s.folder_settings.is_some() {
-                return Task::none(); // the status scrollable handles its own wheel events
+            if s.search_suspended() {
+                return Task::none(); // modal scrollables handle their own wheel events
             }
             move_results(s, dy)
         }
@@ -1584,7 +1594,7 @@ fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
         | Message::Selected(_)
         | Message::Clicked(_)
         | Message::ContextMenu(_)
-        | Message::PanelClicked { .. } => file_panel || s.folder_settings.is_some() || s.search_status.is_some(),
+        | Message::PanelClicked { .. } => s.search_suspended(),
         Message::ShowSearchStatus => file_panel || s.folder_settings.is_some(),
         Message::ShowFolders | Message::ResultsWheel(_) => file_panel,
         _ => false,
@@ -1592,13 +1602,7 @@ fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
 }
 
 fn refresh_current_view(s: &mut Launcher) -> Task<Message> {
-    if s.search_folder.is_some()
-        && s.file_details.is_none()
-        && s.application_picker.is_none()
-        && s.folder_settings.is_none()
-        && s.appearance.is_none()
-        && s.search_status.is_none()
-    {
+    if s.search_folder.is_some() && !s.search_suspended() {
         return s.refresh_folder();
     }
     if s.preview_visible() && s.text_preview.is_some() {
@@ -1679,6 +1683,9 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             Command::Last => widget::operation::snap_to(status_scroll_id(), RelativeOffset::END),
             _ => Task::none(),
         };
+    }
+    if let Some(selected) = s.settings {
+        return s.settings_command(selected, cmd);
     }
     match cmd {
         Command::ScrollPreview(_) => {
@@ -1799,6 +1806,8 @@ fn view(s: &Launcher) -> Element<'_, Message> {
         Some(folders::input_id())
     } else if s.application_picker.is_some() {
         Some(open_with::input_id())
+    } else if s.settings.is_some() {
+        None
     } else if s.panel.is_some() {
         Some(actions_id())
     } else {
@@ -1833,6 +1842,9 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     }
     if let Some(status) = &s.search_status {
         return search_status_view(status);
+    }
+    if let Some(selected) = s.settings {
+        return settings::view(selected);
     }
     let placeholder = if s.search_folder.is_some() {
         "Search this folder and subfolders…"
@@ -1880,22 +1892,6 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
             .style(move |theme, status| tab_style(theme, status, selected)),
         )
     });
-    let index_status = button(text("Search status").size(12))
-        .on_press(Message::ShowSearchStatus)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let folders = button(text("Search folders").size(12))
-        .on_press(Message::ShowFolders)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let appearance = button(text("Appearance").size(12))
-        .on_press(Message::ShowAppearance)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
         let path = folder.path.as_deref().and_then(|path| path.to_str());
@@ -1930,14 +1926,11 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
-        let navigation = row![index_status, folders, appearance].spacing(4).align_y(Vertical::Center);
-        if header_extra > 0 {
-            column![input, row![scopes, space::horizontal()], row![space::horizontal(), navigation]].spacing(8).into()
-        } else {
-            column![input, row![scopes, space::horizontal(), navigation].align_y(Vertical::Center)].spacing(8).into()
-        }
+        column![input, row![scopes, space::horizontal(), settings::header_button()].align_y(Vertical::Center)]
+            .spacing(8)
+            .into()
     };
-    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT + header_extra as f32).align_y(Vertical::Center);
+    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {
@@ -2008,8 +2001,8 @@ pub(crate) fn surface_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub(crate) fn page_header<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
-    container(content).height(INPUT_HEIGHT).padding(padding::left(16).right(8)).align_y(Vertical::Center).into()
+pub(crate) fn page_header<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> container::Container<'a, M> {
+    container(content).height(INPUT_HEIGHT).padding(padding::left(16).right(8)).align_y(Vertical::Center)
 }
 
 pub(crate) fn divider<'a, M: 'a>() -> Element<'a, M> {
@@ -2181,14 +2174,10 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     let detail = scrollable(content).id(status_scroll_id()).height(Length::Fill);
     let footer = container(
         row![
-            text("Snapshot · Refresh to check for changes").size(12).style(move |theme: &iced::Theme| {
+            text("Refresh to check for changes").size(12).width(Length::Fill).style(move |theme: &iced::Theme| {
                 iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
             }),
-            space::horizontal(),
-            button(hint("Esc", "Back to search"))
-                .on_press(Message::CloseSearchStatus)
-                .padding([4, 8])
-                .style(status_button_style),
+            button(hint("Esc", "Back")).on_press(Message::CloseSearchStatus).padding([4, 8]).style(status_button_style),
         ]
         .align_y(Vertical::Center),
     )

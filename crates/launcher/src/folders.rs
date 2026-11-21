@@ -524,7 +524,7 @@ impl Panel {
             );
         }
         let mut save = button(ui::hint("Ctrl+S", "Save & apply")).padding([4, 8]).style(ui::status_button_style);
-        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back to search" }))
+        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" }))
             .padding([4, 8])
             .style(ui::status_button_style);
         if self.phase == Phase::Ready && self.document.is_some() && self.pending.is_none() {

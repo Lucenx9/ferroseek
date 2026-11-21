@@ -125,7 +125,7 @@ to duplicate in each screen:
 | Width presets | Compact 640, Standard 720, Wide 880 |
 | Optional preview | Adds 260 before output bounds are applied |
 | Output edge allowance / shell padding | 16 / 8 |
-| Header / footer | 72 / 34; narrow headers add 30 |
+| Header / footer | 72 / 34; Settings uses a 56-pixel header |
 | Result slot | 48 high, including clickable padding |
 | Result highlight | 44 high; inset 2 vertically and 4 horizontally |
 | Result content gap / selection bar | 12 / 3 |
@@ -199,8 +199,10 @@ Show shortcut badges when space permits. Back and the shortcuts remain available
 
 ### Settings and state feedback
 
-Group settings by the user's decision, with consistent labels and a visible
-current choice. Appearance previews immediately, but Save persists changes;
+The search header has one Settings entry. Group its destinations by the user's
+decision, with a visible keyboard selection. Back from a settings page returns
+to its entry point, and Back from Settings preserves the search context.
+Appearance previews immediately, but Save persists changes;
 Back with unsaved edits requires explicit discard, and Escape at that prompt
 keeps editing. Save failures retain the draft. Preserve the distinct save/apply
 behavior of folder settings documented in [LAUNCHER.md](docs/LAUNCHER.md).

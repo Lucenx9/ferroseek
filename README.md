@@ -53,7 +53,7 @@ This installs `ferroseek-launcher`, the indexing daemon and the CLI under your
 user account, without sudo. Existing configuration and indexes are preserved;
 installation does not start or restart indexing. On first launch, choose your
 search folders and use **Save & apply** before file search starts. Existing
-configurations are retained; use **Search folders** or Ctrl+, to review them.
+configurations are retained; use **Settings → Search folders** or Ctrl+, to review them.
 
 ```sh
 ferroseek-launcher
@@ -64,7 +64,7 @@ Running the command again closes the open launcher. Clicking another window also
 compositor moves keyboard focus away; the [launcher guide](docs/LAUNCHER.md) lists exceptions. The installer does not
 register a global shortcut or change desktop settings.
 
-Choose **Appearance** for System/Light/Dark mode, paired color themes and a
+Choose **Settings → Appearance** for System/Light/Dark mode, paired color themes and a
 saved Glass/Solid preference. Glass has a solid fallback;
 `ferroseek-launcher --opaque` forces Solid for the session. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).
 
@@ -80,6 +80,7 @@ configuration, optional service enablement, archives and uninstall.
 | Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
+| Ctrl+Shift+S | Open Settings |
 | Ctrl+I | Show file search status; Esc returns to search |
 | Ctrl+Shift+Comma | Appearance preferences |
 | Ctrl+, | Choose search folders; Ctrl+S saves and applies |
