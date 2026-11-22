@@ -22,6 +22,7 @@ jobs:
         with:
           cache-on-failure: true
       - name: Exercise real keyboard input in virtual KWin
+        id: interaction
         run: scripts/check launcher "${{ matrix.profile }}" "$RUNNER_TEMP/launcher-interaction"
       - name: Exercise constrained layout in virtual KWin
         if: matrix.profile == 'us-1x' || matrix.profile == 'us-1.5x'
@@ -48,7 +49,29 @@ jobs:
           export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
           xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/screenshots"
       - uses: actions/upload-artifact@v4
+        id: evidence
         if: always()
         with:
           name: launcher-interaction-${{ matrix.profile }}
           path: ${{ runner.temp }}/launcher-interaction
+      - name: Summarize launcher evidence
+        if: always()
+        env:
+          PROFILE: ${{ matrix.profile }}
+          INTERACTION: ${{ steps.interaction.outcome }}
+          ARTIFACT: ${{ steps.evidence.outputs.artifact-url }}
+        run: |
+          {
+            printf 'Virtual KWin %s at %s\n' "$PROFILE" "$GITHUB_SHA"
+            echo
+            echo "Interaction check: $INTERACTION"
+            if [[ -n "$ARTIFACT" ]]; then echo "[Logs and captures]($ARTIFACT)"; fi
+            if [[ "$INTERACTION" == success && "$PROFILE" != us-multi ]]; then
+              echo
+              echo '| Mode / renderer | Repeat trials | Main entry to keyboard focus p95 (µs) | Final edit to results redraw p95 (µs) |'
+              echo '|---|---:|---:|---:|'
+              jq -r '.summaries | to_entries[] | .value.repeats as $r |
+                "| \(.key) | \($r.query_frame_us.n) | \($r.keyboard_focus_us.p95) | \($r.query_frame_us.p95) |"' \
+                "$RUNNER_TEMP/launcher-interaction/latency.json"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
