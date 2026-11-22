@@ -62,6 +62,7 @@ launcher() {
     local profile=$1 output=$2
     [[ "$output" == /* ]] || output=$invocation_dir/$output
     release_build -p ferroseek-launcher -p ferroseek-daemon
+    unset FERROSEEK_SMOKE_ISOLATED FERROSEEK_SMOKE_SCENARIO
     export FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_MODE=all
     export FERROSEEK_SMOKE_PROFILE="$profile" LIBGL_ALWAYS_SOFTWARE=1 QT_LOGGING_RULES='*.debug=false'
     echo "Launcher artifacts: $output"
