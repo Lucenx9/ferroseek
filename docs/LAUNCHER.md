@@ -528,8 +528,10 @@ selected result's primary action in the footer to run it. On 640 px and wider
 windows, clickable secondary (**Show in folder**, **Use result**) and
 **Browse here** footer controls act on the displayed result as well; at 640 px
 folder-browser width, **Browse here** takes priority over the secondary action
-so the item count stays readable. With no selection or in **File details**,
-clicking the **Esc** control in the footer takes that Escape step.
+so the item count stays readable. With no selection, clicking the **Esc**
+control in the footer takes that Escape step. In **File details**, the footer
+**Esc** control is available on wider layouts; on narrow layouts, use the
+header **Back** control or the Esc key.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**

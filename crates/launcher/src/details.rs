@@ -8,7 +8,7 @@ use crate::backend::{FileDetails, FileHit};
 use crate::model::Command;
 use crate::ui::{self, palette};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     Back,
     Refresh,
@@ -163,14 +163,15 @@ impl Panel {
             .spacing(8)
             .align_y(Vertical::Center);
             let (copy, preview) = if size.width >= 560.0 {
-                controls = controls.push(ui::footer_button(ui::hint("Esc", "Back to search"), Some(Event::Back)));
+                controls =
+                    controls.push(ui::keyed_footer_button(Event::Back, ui::hint("Esc", "Back to search"), Event::Back));
                 (ui::hint("Ctrl+Shift+C", copy_label), ui::primary_hint("Enter", "Preview text"))
             } else {
                 (text(copy_label).size(12).into(), ui::primary_label("Preview text"))
             };
             let controls = controls
-                .push(ui::footer_button(copy, Some(Event::CopyLocation)))
-                .push(ui::footer_button(preview, Some(Event::Preview)));
+                .push(ui::keyed_footer_button(Event::CopyLocation, copy, Event::CopyLocation))
+                .push(ui::keyed_footer_button(Event::Preview, preview, Event::Preview));
             container(controls).center_y(Length::Fill).into()
         });
         container(content)

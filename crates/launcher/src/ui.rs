@@ -2844,11 +2844,11 @@ impl<'a, K: Clone + PartialEq + 'static, M: 'a> Widget<M, Theme, iced::Renderer>
     }
 }
 
-fn keyed_footer_button<'a>(
-    key: FooterKey,
-    content: impl Into<Element<'a, Message>>,
-    message: Message,
-) -> Element<'a, Message> {
+pub(crate) fn keyed_footer_button<'a, K: Clone + PartialEq + 'static, M: Clone + 'a>(
+    key: K,
+    content: impl Into<Element<'a, M>>,
+    message: M,
+) -> Element<'a, M> {
     Element::new(Keyed { key, child: footer_button(content, Some(message)) })
 }
 

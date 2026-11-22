@@ -4418,6 +4418,57 @@ fn narrow_file_details_footer_keeps_copy_feedback_and_actions_visible() {
 }
 
 #[test]
+fn file_details_footer_press_cancels_when_width_changes_action_in_slot() {
+    use iced_runtime::user_interface::Cache;
+
+    let panel = details::Panel::new(file_hits().remove(0));
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+    let position = |width, label| {
+        let labels = rendered_labels(panel.view(), iced::Size::new(width, 515.0)).text;
+        mouse::Cursor::Available(labels.iter().find(|(value, _)| value == label).unwrap().1.center())
+    };
+    let send = |cache: &mut Cache, width, cursor, events: &[Event]| {
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let mut ui = iced_runtime::UserInterface::build(
+            panel.view(),
+            iced::Size::new(width, 515.0),
+            std::mem::take(cache),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        ui.update(events, cursor, &mut renderer, &mut iced::advanced::clipboard::Null, &mut messages);
+        *cache = ui.into_cache();
+        messages
+    };
+
+    for (old_width, old_label, new_width, new_label) in [
+        (720.0, "Back to search", 320.0, "Copy path"),
+        (720.0, "Copy path", 320.0, "Preview text"),
+        (320.0, "Copy path", 720.0, "Back to search"),
+        (320.0, "Preview text", 720.0, "Copy path"),
+    ] {
+        let mut cache = Cache::default();
+        let old_cursor = position(old_width, old_label);
+        let new_cursor = position(new_width, new_label);
+        assert!(send(&mut cache, old_width, old_cursor, std::slice::from_ref(&press)).is_empty());
+        assert!(
+            send(&mut cache, new_width, new_cursor, std::slice::from_ref(&release)).is_empty(),
+            "releasing {old_label} after resizing must not trigger {new_label}"
+        );
+        let messages = send(&mut cache, new_width, new_cursor, &[press.clone(), release.clone()]);
+        assert_eq!(messages.len(), 1, "a fresh click on {new_label} must work");
+        assert!(matches!(
+            (new_label, &messages[0]),
+            ("Back to search", details::Event::Back)
+                | ("Copy path", details::Event::CopyLocation)
+                | ("Preview text", details::Event::Preview)
+        ));
+    }
+}
+
+#[test]
 fn narrow_search_footer_keeps_feedback_and_both_actions_readable() {
     let mut state = search_state();
     state.output_bounds = Some((320, 332));
