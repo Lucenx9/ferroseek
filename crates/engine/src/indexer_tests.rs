@@ -679,6 +679,33 @@ fn offline_changes_quick_vs_full_reconcile() {
 }
 
 #[test]
+fn quick_reconcile_recovers_metadata_during_and_after_watch_exhaustion() {
+    let mut f = fx();
+    let dir = f.p("unwatched");
+    let file = dir.join("report.txt");
+    touch(&file);
+    f.ix.st.watch_failures.insert(dir.clone(), libc::ENOSPC);
+    f.scan(Mode::Quick);
+    let reader = Reader::open(&f.db).unwrap();
+    let size = || reader.lookup(&file).unwrap().unwrap().1.size;
+    assert_eq!(f.ix.watched_dirs(), 1, "only the root has a watch");
+    assert_eq!(size(), 1);
+    let mtime = fs::metadata(&dir).unwrap().modified().unwrap();
+
+    fs::write(&file, b"changed").unwrap();
+    f.ix.st.watch_failures.insert(dir.clone(), libc::ENOSPC);
+    f.scan(Mode::Quick);
+    assert_eq!(f.ix.watched_dirs(), 1);
+    let size_without_watch = size();
+
+    fs::write(&file, b"changed again").unwrap();
+    f.scan(Mode::Quick);
+    assert_eq!(f.ix.watched_dirs(), 2, "the subdirectory watch is restored");
+    assert_eq!(fs::metadata(&dir).unwrap().modified().unwrap(), mtime);
+    assert_eq!((size_without_watch, size()), (7, 13));
+}
+
+#[test]
 fn permission_denied_directory_is_skipped_not_fatal() {
     let mut f = fx();
     touch(&f.p("open/fine.txt"));
