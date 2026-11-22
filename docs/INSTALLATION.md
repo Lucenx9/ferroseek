@@ -169,6 +169,35 @@ configuration edits share the file transaction, but clients concurrently
 rewriting their configuration are not synchronized by the installer lock;
 close their configuration editors during registration.
 
+### Check a launcher against a running older daemon
+
+A current launcher can search and open indexed files against the daemon at
+`38b05d4`, the mainline revision before `ListDirectory`. Browsing an indexed
+folder reports “Folder navigation requires an updated daemon.” After the daemon
+restarts with the current executable, refreshing the same folder can list its
+entries.
+
+The following test builds that Git revision from its lockfile. It uses the
+current launcher's backend, two daemon processes, one private bus connection
+and one temporary index. A stub opener records the path it receives. The test
+covers the D-Bus boundary and leaves graphical interaction and installer file
+replacement to their respective smoke tests.
+
+```sh
+(
+  set -e
+  fixture=$(mktemp -d)
+  trap 'rm -rf "$fixture"' EXIT
+  git archive 38b05d404f2c9fa6c4665592ac1da02d694aa02c | tar -x -C "$fixture"
+  cargo build --locked --manifest-path "$fixture/Cargo.toml" --target-dir "$fixture/build" -p ferroseek-daemon
+  cargo build --locked --target-dir target -p ferroseek-daemon
+  FERROSEEK_OLD_DAEMON="$fixture/build/debug/ferroseekd" \
+    FERROSEEK_CURRENT_DAEMON="$PWD/target/debug/ferroseekd" \
+    cargo test --locked -p ferroseek-launcher --bin ferroseek-launcher \
+      backend::tests::upgrade::launcher_recovers_after_daemon_upgrade -- --ignored --exact
+)
+```
+
 ## Uninstall
 
 ```sh

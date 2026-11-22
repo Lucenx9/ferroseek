@@ -770,11 +770,14 @@ impl Backend {
 mod tests {
     use super::*;
 
-    struct StalledStatus;
+    mod upgrade;
+
+    struct StalledStatus(mpsc::UnboundedSender<()>);
 
     #[zbus::interface(name = "io.github.ferroseek.FerroSeek1")]
     impl StalledStatus {
         async fn file_search_status(&self) -> (String, u64, u64, u64, bool, u64, Vec<String>) {
+            self.0.unbounded_send(()).unwrap();
             std::future::pending().await
         }
     }
@@ -866,16 +869,16 @@ mod tests {
         }
     }
 
-    struct TestBus(std::process::Child);
+    struct TestChild(std::process::Child);
 
-    impl Drop for TestBus {
+    impl Drop for TestChild {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let _ = self.0.wait();
         }
     }
 
-    fn private_bus() -> (tempfile::TempDir, TestBus, String) {
+    fn private_bus() -> (tempfile::TempDir, TestChild, String) {
         use std::io::BufRead;
         use std::process::{Command, Stdio};
 
@@ -891,7 +894,7 @@ mod tests {
 </busconfig>"#, services.display())).unwrap();
         // Explicit addresses and an empty activation directory exclude the
         // user's session bus, services and index from this regression.
-        let mut bus = TestBus(
+        let mut bus = TestChild(
             Command::new("dbus-daemon")
                 .arg("--config-file")
                 .arg(&config)
@@ -989,50 +992,6 @@ mod tests {
                 iced::futures::future::Either::Right((Ok(()), _)) => {}
                 _ => panic!("missing portal blocked fallback"),
             }
-        });
-    }
-
-    #[test]
-    fn stalled_status_releases_queued_search_and_open_requests() {
-        let (_temp, _bus, address) = private_bus();
-        zbus::block_on(async {
-            let (opened_tx, opened_rx) = std::sync::mpsc::channel();
-            let _service = zbus::connection::Builder::address(address.trim())
-                .name(DAEMON_BUS_NAME)
-                .serve_at(CONTROL_PATH, StalledStatus)
-                .serve_at(SEARCH_PATH, SearchService(opened_tx))
-                .build()
-                .await
-                .unwrap();
-            let conn = zbus::connection::Builder::address(address.trim())
-                // A watchdog makes a missing production bound fail, not hang.
-                .method_timeout(Duration::from_secs(10))
-                .build()
-                .await
-                .unwrap();
-            let (tx, rx) = mpsc::unbounded();
-            let (status_tx, status_rx) = oneshot::channel();
-            let (search_tx, search_rx) = oneshot::channel();
-            let (run_tx, run_rx) = oneshot::channel();
-            tx.unbounded_send(Request::Status { reply: status_tx }).unwrap();
-            tx.unbounded_send(Request::Search { folder: None, query: "report".into(), reply: search_tx }).unwrap();
-            tx.unbounded_send(Request::Run {
-                id: "file:///synthetic/report.txt".into(),
-                action: ACTION_OPEN_PARENT.into(),
-                reply: run_tx,
-            })
-            .unwrap();
-            drop(tx);
-            let verify = async {
-                assert_eq!(status_rx.await.unwrap().unwrap_err(), STATUS_TIMED_OUT);
-                assert_eq!(search_rx.await.unwrap().unwrap()[0].name, "report.txt");
-                run_rx.await.unwrap().unwrap();
-            };
-            iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), verify).await;
-            assert_eq!(
-                opened_rx.try_recv().unwrap(),
-                ("file:///synthetic/report.txt".into(), ACTION_OPEN_PARENT.into())
-            );
         });
     }
 
@@ -1358,71 +1317,85 @@ mod tests {
         }
     }
 
+    async fn queue_burst_around_run(
+        backend: Backend,
+        mut stalled: mpsc::UnboundedReceiver<()>,
+    ) -> (String, usize, Duration) {
+        const PAIRS_PER_BURST: usize = 64;
+        let hits = backend.clone().search("report".into()).await.unwrap().unwrap();
+        let captured = hits[0].id.clone();
+        let mut status = Box::pin(backend.clone().status());
+        assert!(iced::futures::poll!(&mut status).is_pending());
+        stalled.next().await.unwrap();
+
+        // Keep every completion alive so cancellation cannot explain the delivery count.
+        let mut lists = Vec::new();
+        let mut searches = Vec::new();
+        let mut burst = |side: &str| {
+            for i in 0..PAIRS_PER_BURST {
+                let folder = format!("{side}-{i}");
+                lists.push(backend.clone().list_directory(folder.clone()));
+                searches.push(backend.clone().search_within(folder, "report".into()));
+            }
+        };
+        burst("before");
+        let before = backend.clone().list_directory("before-open".into());
+        let started = std::time::Instant::now();
+        let mut run = Box::pin(backend.clone().run(captured.clone(), ACTION_OPEN_PARENT));
+        assert!(iced::futures::poll!(&mut run).is_pending());
+        burst("after");
+        let after = backend.clone().search_within("after-open".into(), "report".into());
+
+        run.await.unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(status.await.unwrap_err(), STATUS_TIMED_OUT);
+        assert!(before.await.is_ok());
+        assert_eq!(after.await.unwrap().unwrap()[0].id, captured);
+        let queued_reads = lists.len() + searches.len() + 2;
+        for search in searches {
+            assert!(search.await.unwrap().is_none());
+        }
+        for list in lists {
+            assert!(list.await.is_err());
+        }
+        (captured, queued_reads, elapsed)
+    }
+
     #[test]
     fn queued_searches_and_lists_coalesce_without_crossing_open_requests() {
         let (_temp, _bus, address) = private_bus();
         zbus::block_on(async {
+            let (entered, stalled) = mpsc::unbounded();
             let (observed, requests) = std::sync::mpsc::channel();
             let _service = zbus::connection::Builder::address(address.trim())
                 .name(DAEMON_BUS_NAME)
+                .serve_at(CONTROL_PATH, StalledStatus(entered))
                 .serve_at(SEARCH_PATH, SearchService(observed))
                 .build()
                 .await
                 .unwrap();
             let conn = zbus::connection::Builder::address(address.trim()).build().await.unwrap();
             let (tx, rx) = mpsc::unbounded();
-            let (blocked, blocked_reply) = oneshot::channel();
-            tx.unbounded_send(Request::Run { id: "blocked".into(), action: "stall".into(), reply: blocked }).unwrap();
-            let (old_list, old_list_reply) = oneshot::channel();
-            tx.unbounded_send(Request::ListDirectory { folder: "obsolete-list".into(), reply: old_list }).unwrap();
-            let (old_search, old_search_reply) = oneshot::channel();
-            tx.unbounded_send(Request::Search {
-                query: "report".into(),
-                folder: Some("obsolete-search".into()),
-                reply: old_search,
-            })
-            .unwrap();
-            let (first, first_reply) = oneshot::channel();
-            tx.unbounded_send(Request::ListDirectory { folder: "before-open".into(), reply: first }).unwrap();
-            let (open, open_reply) = oneshot::channel();
-            tx.unbounded_send(Request::Run { id: "open-barrier".into(), action: String::new(), reply: open }).unwrap();
-            let (obsolete, obsolete_reply) = oneshot::channel();
-            tx.unbounded_send(Request::ListDirectory { folder: "obsolete-after".into(), reply: obsolete }).unwrap();
-            let (latest, latest_reply) = oneshot::channel();
-            tx.unbounded_send(Request::Search {
-                query: "report".into(),
-                folder: Some("after-open".into()),
-                reply: latest,
-            })
-            .unwrap();
-            drop(tx);
-            let verify = async {
-                assert!(blocked_reply.await.unwrap().is_err());
-                assert!(old_list_reply.await.is_err() && old_search_reply.await.is_err());
-                assert!(first_reply.await.unwrap().is_ok());
-                assert!(open_reply.await.unwrap().is_ok());
-                assert!(obsolete_reply.await.is_err());
-                assert!(latest_reply.await.unwrap().is_ok());
-                assert_eq!(
-                    requests.try_iter().collect::<Vec<_>>(),
-                    [
-                        ("blocked".into(), "stall".into()),
-                        ("before-open".into(), "list".into()),
-                        ("open-barrier".into(), String::new()),
-                        ("after-open".into(), "report".into())
-                    ]
-                );
-            };
-            iced::futures::future::join(
-                serve(
-                    conn,
-                    rx,
-                    Timeouts { open: Duration::from_millis(40), ..Timeouts::default() },
-                    Activation::default(),
-                ),
-                verify,
-            )
-            .await;
+            let burst = queue_burst_around_run(Backend { tx }, stalled);
+            let work = iced::futures::future::join(serve(conn, rx, Timeouts::default(), Activation::default()), burst);
+            let (_, (captured, queued_reads, elapsed)) = zruntime::SharedRuntime::current()
+                .unwrap()
+                .timeout(Duration::from_secs(30), work)
+                .await
+                .expect("stalled status blocked the queue");
+            let delivered: Vec<_> = requests.try_iter().collect();
+            assert_eq!(
+                delivered,
+                [
+                    ("before-open".into(), "list".into()),
+                    (captured, ACTION_OPEN_PARENT.into()),
+                    ("after-open".into(), "report".into()),
+                ]
+            );
+            eprintln!(
+                "queued {queued_reads} reads and 1 Run, delivered {} calls, Run enqueue to confirmation {elapsed:?}",
+                delivered.len()
+            );
         });
     }
 
