@@ -51,8 +51,9 @@ def wait_for_idle(cli, daemon):
     while time.monotonic() < deadline:
         if daemon.poll() is not None:
             raise RuntimeError(f'daemon exited during startup with {daemon.returncode}')
-        status = subprocess.run([cli, 'status'], capture_output=True, text=True, timeout=3).stdout
-        lines = {line.strip() for line in status.splitlines()}
+        result = subprocess.run([cli, 'status'], capture_output=True, text=True, timeout=3)
+        status = result.stdout + result.stderr
+        lines = {line.strip() for line in result.stdout.splitlines()}
         if {f'daemon: running (pid {daemon.pid})', 'state: idle', 'queued_dirs: 0'} <= lines:
             return
         time.sleep(0.05)

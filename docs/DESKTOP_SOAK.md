@@ -67,7 +67,11 @@ detect drift. It restarts the daemon with the same index, waits for that process
 to report idle and runs the oracle again. The check passes only on a stable match
 after automatic recovery. The script prints the seed. Use `--seed NUMBER` to
 repeat the filesystem operations. The kernel determines which live events have
-reached the index when the daemon stops.
+reached the index when the daemon stops. This workload exercises directory
+listing changes. An in-place edit while the daemon is stopped can leave cached
+file size and modification time stale because the parent directory keeps its
+mtime. A full reconciliation refreshes those fields. The engine test
+`offline_changes_quick_vs_full_reconcile` covers that distinction.
 
 Deterministic tests inject EIO, ESTALE and EACCES at stat boundaries and EIO
 inside directory iteration, exercising the real reconciliation code with real
