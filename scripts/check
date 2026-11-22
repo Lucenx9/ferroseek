@@ -32,6 +32,7 @@ workspace() {
     packaging
     python3 tests/benchmark-smoke.py
     python3 tests/verify-index-smoke.py
+    python3 tests/index-recovery.py target/release
     python3 tests/mcp-smoke.py target/release/ferroseek-mcp target/release/ferroseek
     python3 tests/mcp-discovery-smoke.py
     tests/dbus-smoke.sh target/release/ferroseekd
