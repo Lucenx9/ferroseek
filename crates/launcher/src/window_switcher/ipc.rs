@@ -5,7 +5,7 @@ use std::io::{self, BufRead, Read, Write};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use super::{Action, Update};
+use super::{Action, Entry};
 
 pub const HELPER: &str = "ferroseek-plasma-windows";
 pub const REQUEST_LIMIT: u64 = 4096;
@@ -19,8 +19,9 @@ pub struct Request {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub enum Response {
-    Catalog(Update),
+pub enum Response<T = Vec<Entry>> {
+    Windows { entries: T, complete: bool },
+    Unavailable(String),
     Finished { request: u64, error: Option<String> },
 }
 
@@ -35,9 +36,75 @@ pub fn receive<T: DeserializeOwned>(input: &mut impl BufRead, line: &mut Vec<u8>
     Ok(Some(serde_json::from_slice(line)?))
 }
 
-pub fn send(output: &mut impl Write, message: &impl Serialize) -> io::Result<()> {
+pub fn send(output: &mut impl Write, message: &impl Serialize, limit: u64) -> io::Result<()> {
     let mut line = serde_json::to_vec(message)?;
     line.push(b'\n');
+    if line.len() as u64 > limit {
+        return Err(frame_too_large());
+    }
     output.write_all(&line)?;
     output.flush()
+}
+
+pub fn send_windows(output: &mut impl Write, entries: &[Entry], limit: u64) -> io::Result<()> {
+    let empty = Response::Windows { entries: &entries[..0], complete: false };
+    let overhead = serde_json::to_vec(&empty)?.len() as u64 + 1;
+    let mut start = 0;
+    let mut bytes = overhead;
+    for (index, entry) in entries.iter().enumerate() {
+        let size = serde_json::to_vec(entry)?.len() as u64;
+        if overhead + size > limit {
+            return Err(frame_too_large());
+        }
+        let joined = bytes + size + u64::from(index > start);
+        if joined > limit {
+            send(output, &Response::Windows { entries: &entries[start..index], complete: false }, limit)?;
+            start = index;
+            bytes = overhead + size;
+        } else {
+            bytes = joined;
+        }
+    }
+    send(output, &Response::Windows { entries: &entries[start..], complete: true }, limit)
+}
+
+fn frame_too_large() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, "helper message exceeds the frame size limit")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_window_catalogs_split_at_encoded_frame_boundaries() {
+        let title = "\0".repeat(20);
+        let windows =
+            [Entry { id: 1, title: title.clone(), ..Entry::default() }, Entry { id: 2, title, ..Entry::default() }];
+        let first = Response::Windows { entries: &windows[..1], complete: false };
+        let limit = serde_json::to_vec(&first).unwrap().len() as u64 + 1;
+        let mut output = Vec::new();
+        send_windows(&mut output, &windows, limit).unwrap();
+        let mut input = output.as_slice();
+        let mut line = Vec::new();
+        for (index, window) in windows.into_iter().enumerate() {
+            let frame: Response = receive(&mut input, &mut line, limit).unwrap().unwrap();
+            match frame {
+                Response::Windows { entries, complete } => {
+                    assert_eq!(entries, [window]);
+                    assert_eq!(complete, index == 1);
+                }
+                _ => panic!("expected a window frame"),
+            }
+        }
+        assert!(receive::<Response>(&mut input, &mut line, limit).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_record_that_cannot_fit_never_writes_an_oversized_frame() {
+        let window = Entry { title: "\0".repeat(100), ..Entry::default() };
+        let mut output = Vec::new();
+        assert_eq!(send_windows(&mut output, &[window], 256).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(output.is_empty());
+    }
 }

@@ -277,13 +277,19 @@ impl Editor {
     fn edit_text(&mut self, action: text_editor::Action) {
         let Value::Text(content) = &mut self.value else { return };
         if action.is_edit() {
-            if exceeds_body_limit(content, &action) {
+            let original = content.text();
+            let cursor = content.cursor();
+            content.perform(action);
+            if content.text().len() > MAX_BODY_BYTES {
+                *content = text_editor::Content::with_text(&original);
+                content.move_to(cursor);
                 self.error = Some("Use at most 8 KiB of text.".into());
                 return;
             }
             self.error = None;
+        } else {
+            content.perform(action);
         }
-        content.perform(action);
         self.focus = Field::Value;
     }
 
@@ -432,18 +438,6 @@ impl Editor {
     }
 }
 
-fn exceeds_body_limit(content: &text_editor::Content, action: &text_editor::Action) -> bool {
-    use text_editor::{Action, Edit};
-    let added = match action {
-        Action::Edit(Edit::Insert(character)) => character.len_utf8(),
-        Action::Edit(Edit::Paste(text)) => text.len(),
-        Action::Edit(Edit::Enter) => content.line_ending().map_or(1, |ending| ending.as_str().len().max(1)),
-        _ => return false,
-    };
-    let selected = content.selection().map_or(0, |selection| selection.len());
-    content.text().len().saturating_sub(selected).saturating_add(added) > MAX_BODY_BYTES
-}
-
 fn multiline_style(theme: &iced::Theme, status: text_editor::Status) -> text_editor::Style {
     let status = match status {
         text_editor::Status::Focused { is_hovered } => text_input::Status::Focused { is_hovered },
@@ -587,6 +581,10 @@ impl Launcher {
     }
 
     fn select_saved_entry(&mut self, kind: Kind, name: &str) -> Task<Message> {
+        if self.search_folder.take().is_some() {
+            self.folder_search_history.clear();
+            self.scope_generation += 1;
+        }
         self.scope = Scope::Commands;
         let changed = update(self, Message::Query(String::new()));
         if let Some(index) = self.items.iter().position(|item| kind.contains(&item.target) && item.title == name) {
@@ -594,5 +592,28 @@ impl Launcher {
         }
         self.status = Status::Notice(format!("{} saved", kind.noun()));
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use text_editor::{Action, Edit};
+
+    #[test]
+    fn snippet_capacity_uses_the_edited_buffer_with_crlf() {
+        let original = format!("{}\r\nb", "a".repeat(MAX_BODY_BYTES - 3));
+        let snippet = Snippet::new(SnippetFields { name: "Snippet", body: &original, keyword: "" }).unwrap();
+        let mut editor = Editor::new(Kind::Snippet, Some(Entry::Snippet(snippet)), 0, None);
+        editor.edit_text(Action::SelectAll);
+        let replacement = "x".repeat(MAX_BODY_BYTES);
+        editor.edit_text(Action::Edit(Edit::Paste(Arc::new(replacement.clone()))));
+        assert_eq!(editor.value.text(), replacement);
+        assert!(editor.error.is_none());
+
+        editor.edit_text(Action::Edit(Edit::Insert('é')));
+        assert_eq!(editor.value.text(), replacement);
+        assert!(editor.error.is_some());
     }
 }

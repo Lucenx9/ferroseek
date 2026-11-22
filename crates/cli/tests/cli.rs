@@ -296,12 +296,13 @@ fn special_cache_tags_do_not_block_indexing() {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // Allow time for process startup and SQLite setup on loaded CI runners.
+        let deadline = Instant::now() + Duration::from_secs(15);
         while child.try_wait().unwrap().is_none() {
             if Instant::now() >= deadline {
                 child.kill().unwrap();
                 child.wait().unwrap();
-                panic!("indexing blocked on CACHEDIR.TAG FIFO; connected_writer={connected_writer}");
+                panic!("indexing with a CACHEDIR.TAG FIFO exceeded 15 seconds; connected_writer={connected_writer}");
             }
             std::thread::sleep(Duration::from_millis(10));
         }

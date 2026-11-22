@@ -244,7 +244,6 @@ fn query_prefill_is_applied_before_the_first_input_event() {
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
             settings_path: config.path().to_path_buf(),
-            paste_target: None,
         },
         Material::default(),
         output::Observer::default(),
@@ -574,7 +573,6 @@ fn search_state() -> Launcher {
         shortcuts: shortcut_settings::State::new(Default::default()),
         global_shortcuts: global_shortcut_settings::State::default(),
         clipboard_history: clipboard_view::State::new(true),
-        paste: paste::State::new(None),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
@@ -604,6 +602,7 @@ fn search_state() -> Launcher {
         scope_generation: 0,
         app_hits: Vec::new(),
         files: Vec::new(),
+        file_search_succeeded: false,
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
@@ -1000,12 +999,13 @@ fn saved_search_fallback_waits_for_current_empty_results() {
     let _ = update(&mut s, Message::Query("first unmatched".into()));
     let old = s.generation;
     let query = "caffè &key=1";
-    let _ = update(&mut s, Message::Query(query.into()));
+    let _ = s.open_setup_destination(Destination::Search(query.into()));
     let generation = s.generation;
     let _ = update(&mut s, Message::Files { generation: old, result: Ok(Some(vec![])) });
     assert!(s.items.is_empty(), "an earlier empty reply must not expose a fallback");
     let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![])) });
     let item = s.selected().unwrap();
+    assert!(matches!(&s.status, Status::Notice(notice) if notice.starts_with("Folders applied")));
     assert_eq!((item.title.as_str(), item.subtitle.as_str()), ("Search with Guide", "example.net"));
     assert_eq!(item.target, Target::Link(link, query.into()));
     let target = item.target.clone();
@@ -1994,6 +1994,61 @@ fn search_folder_hit(path: &str) -> FileHit {
         subtext: "/synthetic".into(),
         is_dir: true,
     }
+}
+
+#[test]
+fn folder_listing_finishes_while_a_saved_editor_is_open() {
+    let mut s = search_state();
+    let folder = search_folder_hit("/synthetic/Reports");
+    let _ = s.enter_folder_search(folder.clone());
+    let generation = s.generation;
+    let _ = s.open_saved_editor(saved_editor::Kind::Snippet, None);
+    let _ = update(&mut s, Message::FolderListed { generation: generation - 1, result: Ok((file_hits(), true)) });
+    assert!(s.files.is_empty());
+    let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+    assert!(s.saved_editor.is_some());
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!(s.search_folder, Some(folder));
+    assert_eq!(s.files, file_hits());
+    assert!(s.folder_more);
+    assert_eq!(s.status, Status::Idle);
+}
+
+#[test]
+fn saving_a_snippet_from_folder_search_selects_it_in_commands() {
+    use crate::snippets::{Fields, Snippet};
+    use saved_editor::{Event, Field, Kind};
+
+    let mut s = search_state();
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports"));
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports/Child"));
+    let folder_generation = s.generation;
+    let _ = s.open_saved_editor(Kind::Snippet, None);
+    let generation = s.edit_generation;
+    let send = |s: &mut Launcher, event| update(s, Message::SavedEditor { generation, event });
+    let _ = send(&mut s, Event::Input(Field::Name, "Signature".into()));
+    let _ = send(
+        &mut s,
+        Event::Text(iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Insert('x'))),
+    );
+    let _ = send(&mut s, Event::Save);
+    let snippet = Snippet::new(Fields { name: "Signature", body: "x", keyword: "" }).unwrap();
+    let store = saved::Store { snippets: vec![snippet.clone()], ..saved::Store::default() };
+    let _ = send(&mut s, Event::Written { name: Some("Signature".into()), result: Ok(store) });
+    let _ = update(&mut s, Message::FolderListed { generation: folder_generation, result: Ok((file_hits(), true)) });
+    assert_eq!(s.scope, Scope::Commands);
+    assert!(s.search_folder.is_none() && s.folder_search_history.is_empty() && s.files.is_empty());
+    assert_eq!(s.selected().unwrap().target, Target::Snippet(snippet));
+}
+
+#[test]
+fn empty_commands_reports_catalog_errors() {
+    let mut s = search_state();
+    s.scripts.catalog.error = Some("invalid manifest".into());
+    s.scope = Scope::Commands;
+    let _ = update(&mut s, Message::Query("never a matching command".into()));
+    assert!(s.items.is_empty());
+    assert_eq!(empty_results_text(&s).0, "Command catalog unavailable");
 }
 
 #[test]
@@ -4487,7 +4542,7 @@ fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
         assert_eq!(panel.cursor.selected, expected);
         let target = &state.selected().unwrap().target;
         let labels = rendered_labels(
-            action_panel(panel, target, None),
+            action_panel(panel, target),
             iced::Size::new(state.window_width as f32, state.window_height as f32),
         );
         for name in ["Synthetic workspace editor", "Esc", "Close actions", "Run"] {
@@ -4520,7 +4575,7 @@ fn filtering_actions_keeps_the_field_and_return_hint_in_place() {
         let snapshot = |state: &Launcher| {
             let panel = state.panel.as_ref().unwrap();
             rendered_labels(
-                action_panel(panel, &state.selected().unwrap().target, None),
+                action_panel(panel, &state.selected().unwrap().target),
                 iced::Size::new(state.window_width as f32, state.window_height as f32),
             )
         };

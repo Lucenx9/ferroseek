@@ -19,7 +19,6 @@ use crate::{folders, timing, usage};
 const HEIGHT: u32 = 536;
 const EMPTY_HEIGHT: u32 = 292;
 const LIST_HEADER: u32 = 198;
-const PASTE_BAR_HEIGHT: u32 = 30;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Shortcut {
@@ -27,7 +26,6 @@ pub enum Shortcut {
     Retention,
     Pin,
     PinnedOnly,
-    Paste,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +47,6 @@ pub enum Event {
     Refresh,
     Copy(u64),
     Copied(Option<String>),
-    Paste(u64),
     Back,
 }
 
@@ -69,7 +66,6 @@ impl State {
 enum Pending {
     Edit,
     Copy,
-    Paste,
 }
 
 pub(super) struct Panel {
@@ -89,6 +85,7 @@ pub(super) struct Panel {
     pending: Option<Pending>,
     confirm: bool,
     error: Option<String>,
+    feed_error: Option<String>,
     note: &'static str,
 }
 
@@ -111,6 +108,7 @@ impl Panel {
             pending: None,
             confirm: false,
             error: None,
+            feed_error: None,
             note: "",
         }
     }
@@ -154,12 +152,6 @@ impl Panel {
         self.copy_target().filter(|entry| entry.id == id && self.can_act()).map(|entry| entry.text.clone())
     }
 
-    pub(super) fn paste_feedback(&mut self, error: Option<&str>) {
-        self.pending = error.is_none().then_some(Pending::Paste);
-        self.error = error.map(str::to_owned);
-        self.note = "";
-    }
-
     fn filter(&mut self, selected: Option<u64>) {
         let terms = crate::matcher::tokens(&self.query);
         self.matches = self
@@ -181,11 +173,12 @@ impl Panel {
         match result {
             Ok(snapshot) => {
                 let selected = self.selected().map(|entry| entry.id);
+                self.feed_error = None;
                 self.snapshot = Some(snapshot);
                 self.filter(selected);
                 timing::event("clipboard_history_ready");
             }
-            Err(error) => self.error = Some(error),
+            Err(error) => self.feed_error = Some(error),
         }
     }
 
@@ -197,17 +190,18 @@ impl Panel {
 
     fn start_feed(&mut self) -> Task<Event> {
         let Some(profile) = self.profile.clone() else { return Task::none() };
-        let events = stream::unfold((profile, None), |(profile, previous)| async move {
+        let events = stream::unfold((profile, None, false), |(profile, previous, delay)| async move {
             let (profile, stamp, update) = zruntime::unblock(move || {
-                if previous.is_some() {
+                if delay {
                     std::thread::sleep(std::time::Duration::from_millis(450));
                 }
                 let stamp = profile.stamp();
                 let update = (previous != Some(stamp)).then(|| profile.snapshot().map_err(|error| error.to_string()));
-                (profile, stamp, update)
+                let next = if update.as_ref().is_some_and(Result::is_err) { None } else { Some(stamp) };
+                (profile, next, update)
             })
             .await;
-            Some((update, (profile, Some(stamp))))
+            Some((update, (profile, stamp, true)))
         })
         .filter_map(iced::futures::future::ready);
         let (task, handle) = Task::run(events, Event::Load).abortable();
@@ -380,7 +374,7 @@ impl Panel {
         self.press.take() == Some((id, true)) && self.can_act()
     }
 
-    fn view(&self, generation: u64, width: u32, paste_label: Option<&str>) -> Element<'_, Message> {
+    fn view(&self, generation: u64, width: u32) -> Element<'_, Message> {
         let label = if width < 400 { "Clipboard" } else { "Clipboard history" };
         let mut title = row![text(label).size(20), space::horizontal()].spacing(8).align_y(iced::Center);
         if self.preview.is_none() {
@@ -400,35 +394,11 @@ impl Panel {
         } else {
             column![self.search(), self.controls(width), self.rows()].height(Length::Fill).into()
         };
-        let mut body = column![title, divider(), content];
-        if let Some(label) = paste_label {
-            body = body.push(self.paste_bar(label, width));
-        }
-        let body = body.push(divider()).push(self.footer(width));
+        let body = column![title, divider(), content, divider(), self.footer(width)];
         let view = container(body).padding(PAD).width(Length::Fill).height(Length::Fill).style(surface_style);
         crate::shortcuts::capture_numbered(
             Element::from(view).map(move |event| Message::Clipboard { generation, event }),
         )
-    }
-
-    fn paste_bar(&self, label: &str, width: u32) -> Element<'_, Event> {
-        let destination = format!("Paste into {label}");
-        let destination = responsive(move |size| {
-            text(label_for_width(&destination, size.width, 12.0, false)).size(12).wrapping(text::Wrapping::None).into()
-        })
-        .width(Length::Fill)
-        .height(Length::Shrink);
-        let action = if width < 460 { text("Paste").size(12).into() } else { hint("Alt+Enter", "Paste") };
-        let target = self.copy_target().filter(|_| self.can_act()).map(|entry| Event::Paste(entry.id));
-        container(
-            row![destination, button(action).on_press_maybe(target).padding([4, 8]).style(status_button_style)]
-                .spacing(8)
-                .align_y(iced::Center),
-        )
-        .padding([2, 10])
-        .height(PASTE_BAR_HEIGHT)
-        .align_y(iced::Center)
-        .into()
     }
 
     fn pin_filter(&self, width: u32) -> Element<'_, Event> {
@@ -451,7 +421,7 @@ impl Panel {
         )
         .id(self.preview_scroll.clone())
         .height(Length::Fill);
-        if self.error.is_some() || self.pending.is_some() {
+        if self.feedback().is_some() {
             column![self.notice(), preview].height(Length::Fill).into()
         } else {
             preview.into()
@@ -519,20 +489,29 @@ impl Panel {
         .into()
     }
 
-    fn message(&self) -> (&str, palette::Role) {
-        if self.confirm {
-            return ("Clear all entries, including pins?", palette::TEXT);
-        }
-        if let Some(error) = &self.error {
-            return (error, palette::ERROR);
-        }
+    fn feedback(&self) -> Option<(&str, palette::Role)> {
         if let Some(operation) = &self.pending {
             let message = match operation {
                 Pending::Edit => "Saving clipboard history…",
                 Pending::Copy => "Copying text…",
-                Pending::Paste => "Pasting text…",
             };
-            return (message, palette::DIM);
+            return Some((message, palette::DIM));
+        }
+        if let Some(error) = &self.error {
+            return Some((error, palette::ERROR));
+        }
+        if !self.note.is_empty() {
+            return Some((self.note, palette::DIM));
+        }
+        self.feed_error.as_deref().map(|error| (error, palette::ERROR))
+    }
+
+    fn message(&self) -> (&str, palette::Role) {
+        if self.confirm {
+            return ("Clear all entries, including pins?", palette::TEXT);
+        }
+        if let Some(feedback) = self.feedback() {
+            return feedback;
         }
         if self.private {
             return ("Clipboard history is paused for private use.", palette::DIM);
@@ -541,7 +520,7 @@ impl Panel {
             return ("Clipboard history needs a local state folder.", palette::DIM);
         }
         let message = self.snapshot.as_ref().map_or("Loading clipboard history…", recorder_message);
-        (if self.note.is_empty() { message } else { self.note }, palette::DIM)
+        (message, palette::DIM)
     }
 
     fn notice(&self) -> Element<'_, Event> {
@@ -623,7 +602,6 @@ impl Shortcut {
             Self::Retention => Some(Event::Retention),
             Self::Pin => panel.selected().map(|entry| Event::Pin(entry.id)),
             Self::PinnedOnly => Some(Event::PinnedOnly),
-            Self::Paste => panel.copy_target().map(|entry| Event::Paste(entry.id)),
         }
     }
 }
@@ -692,13 +670,12 @@ impl Launcher {
     }
 
     pub(super) fn clipboard_view<'a>(&self, panel: &'a Panel) -> Element<'a, Message> {
-        panel.view(self.clipboard_history.generation, self.window_width, self.paste.label())
+        panel.view(self.clipboard_history.generation, self.window_width)
     }
 
     pub(super) fn resize_clipboard(&mut self, height: u32) {
         if let Some(panel) = &mut self.clipboard_history.panel {
-            let bar = if self.paste.label().is_some() { PASTE_BAR_HEIGHT } else { 0 };
-            panel.update_rows(height.saturating_sub(bar));
+            panel.update_rows(height);
         }
     }
 
@@ -728,10 +705,6 @@ impl Launcher {
             Event::Copy(id) | Event::DoubleClick(id) => {
                 self.copy_history_entry(id, matches!(event, Event::DoubleClick(_)))
             }
-            Event::Paste(id) => {
-                let text = panel.copy_text(id);
-                text.map_or_else(Task::none, |text| self.paste_text(text, super::paste::Origin::History))
-            }
             Event::Preview(id) if panel.can_act() => panel.begin_preview(id),
             Event::ScrollPreview(command) => panel.scroll_preview(command),
             Event::Back => self.back_from_clipboard(),
@@ -745,7 +718,10 @@ impl Launcher {
         if edited {
             panel.pending = None;
         }
-        panel.received(result);
+        match result {
+            Err(error) if edited => panel.error = Some(error),
+            result => panel.received(result),
+        }
         let focus = if edited { panel.focus().map_or_else(Task::none, crate::input::focus) } else { Task::none() };
         if height == panel.height() { focus } else { Task::batch([focus, self.resize()]) }
     }
@@ -758,7 +734,7 @@ impl Launcher {
         let Some(text) = panel.copy_text(id) else { return Task::none() };
         panel.pending = Some(Pending::Copy);
         panel.error = None;
-        panel.note = "Copying text…";
+        panel.note = "";
         let generation = self.clipboard_history.generation;
         let handoff = zruntime::unblock(move || publish::handoff(&text).err().map(|_| text));
         Task::perform(handoff, move |result| Message::Clipboard { generation, event: Event::Copied(result) })
@@ -767,11 +743,14 @@ impl Launcher {
     fn history_copy_finished(&mut self, fallback: Option<String>) -> Task<Message> {
         let panel = self.clipboard_history.panel.as_mut().unwrap();
         panel.pending = None;
-        panel.note = "Copied text";
         let focus = panel.focus().map_or_else(Task::none, crate::input::focus);
         match fallback {
-            Some(text) => Task::batch([self.write_clipboard(text), focus]),
+            Some(text) => {
+                panel.note = "Copied text. Keep FerroSeek open while you paste.";
+                Task::batch([self.write_clipboard(text), focus])
+            }
             None => {
+                panel.note = "Copied text. Paste it in the destination app.";
                 timing::event("clipboard_handoff_ready");
                 self.clipboard_owner = false;
                 focus
@@ -799,5 +778,24 @@ impl Launcher {
         }
         self.clipboard_history.panel = None;
         self.return_to_parent()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovering_history_feed_clears_only_the_feed_error() {
+        let mut panel = Panel::new(None, false);
+        panel.received(Err("Temporary read error".into()));
+        assert_eq!(panel.message().0, "Temporary read error");
+        let snapshot = Snapshot { policy: Default::default(), entries: Vec::new(), recorder: Recorder::Idle };
+        panel.received(Ok(snapshot.clone()));
+        assert_ne!(panel.message().0, "Temporary read error");
+
+        panel.error = Some("Edit failed".into());
+        panel.received(Ok(snapshot));
+        assert_eq!(panel.message().0, "Edit failed");
     }
 }

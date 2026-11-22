@@ -14,7 +14,7 @@ use crate::input::FocusCycle;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::matcher;
 use crate::model::{ClickTracker, Command, Target};
-use crate::script_commands::{self, Catalog, Script, Workflow};
+use crate::script_commands::{self, Saved, Script, Workflow};
 
 const MAX_STEPS: usize = 8;
 const ROW_HEIGHT: f32 = 36.0;
@@ -43,7 +43,7 @@ pub enum Event {
     Delete,
     Secondary,
     Back,
-    Written { title: Option<String>, result: Result<Catalog, String> },
+    Written { title: Option<String>, result: Result<Saved, String> },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -615,26 +615,28 @@ impl Launcher {
         Task::perform(write, move |event| Message::WorkflowEdit { generation, event })
     }
 
-    fn workflow_written(&mut self, title: Option<String>, result: Result<Catalog, String>) -> Task<Message> {
+    fn workflow_written(&mut self, title: Option<String>, result: Result<Saved, String>) -> Task<Message> {
         let editor = self.scripts.workflow_editor.as_mut().unwrap();
         if editor.mode != Mode::Writing {
             return Task::none();
         }
-        self.scripts.catalog = match result {
-            Ok(catalog) => catalog,
+        let Saved { catalog, warning } = match result {
+            Ok(saved) => saved,
             Err(error) => {
                 editor.mode = editor.previous_mode;
                 editor.error = Some(error);
                 return editor.apply_focus();
             }
         };
+        self.scripts.catalog = catalog;
         self.scripts.workflow_editor = None;
         crate::timing::event("workflow_editor_written");
         if let Some(title) = title {
-            self.select_saved_local(&title, |target| matches!(target, Target::Workflow(_)), "Workflow saved")
+            let notice = warning.as_deref().unwrap_or("Workflow saved");
+            self.select_saved_local(&title, |target| matches!(target, Target::Workflow(_)), notice)
         } else {
             self.rebuild(true);
-            self.status = Status::Notice("Workflow deleted".into());
+            self.status = Status::Notice(warning.unwrap_or_else(|| "Workflow deleted".into()));
             self.return_to_parent()
         }
     }

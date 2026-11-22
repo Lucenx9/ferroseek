@@ -13,7 +13,7 @@ use crate::folders::Shortcut;
 use crate::input::FocusCycle;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{ClickTracker, Command, Target};
-use crate::script_commands::{self, Catalog, Script};
+use crate::script_commands::{self, Saved, Script};
 
 const FIELDS: [Field; 5] = [Field::Title, Field::Executable, Field::Description, Field::Arguments, Field::Parameters];
 
@@ -46,7 +46,7 @@ pub enum Event {
     Back,
     Save,
     Delete,
-    Written { title: Option<String>, result: Result<Catalog, String> },
+    Written { title: Option<String>, result: Result<Saved, String> },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -345,26 +345,28 @@ impl Launcher {
         Task::perform(write, move |event| Message::ScriptEdit { generation, event })
     }
 
-    fn script_written(&mut self, title: Option<String>, result: Result<Catalog, String>) -> Task<Message> {
+    fn script_written(&mut self, title: Option<String>, result: Result<Saved, String>) -> Task<Message> {
         let editor = self.scripts.editor.as_mut().unwrap();
         if editor.mode != Mode::Writing {
             return Task::none();
         }
-        self.scripts.catalog = match result {
-            Ok(catalog) => catalog,
+        let Saved { catalog, warning } = match result {
+            Ok(saved) => saved,
             Err(error) => {
                 editor.mode = Mode::Editing;
                 editor.error = Some(error);
                 return editor.focus(editor.focus);
             }
         };
+        self.scripts.catalog = catalog;
         self.scripts.editor = None;
         crate::timing::event("script_editor_written");
         if let Some(title) = title {
-            self.select_saved_local(&title, |target| matches!(target, Target::Script(_)), "Command saved")
+            let notice = warning.as_deref().unwrap_or("Command saved");
+            self.select_saved_local(&title, |target| matches!(target, Target::Script(_)), notice)
         } else {
             self.rebuild(true);
-            self.status = Status::Notice("Command deleted".into());
+            self.status = Status::Notice(warning.unwrap_or_else(|| "Command deleted".into()));
             self.return_to_parent()
         }
     }

@@ -5,7 +5,6 @@ mod alias_editor;
 pub(crate) mod clipboard_view;
 mod favorites;
 mod global_shortcut_settings;
-mod paste;
 mod saved_editor;
 mod saved_results;
 mod script_editor;
@@ -97,7 +96,6 @@ pub struct Boot {
     pub usage: Usage,
     pub favorites: Favorites,
     pub settings_path: std::path::PathBuf,
-    pub paste_target: Option<crate::window_switcher::PasteTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +103,7 @@ enum Status {
     Idle,
     Searching,
     Error(String),
+    CatalogError,
     Notice(String),
 }
 
@@ -205,6 +204,7 @@ struct FolderSearchFrame {
     folder: Option<FileHit>,
     more: bool,
     files: Vec<FileHit>,
+    file_search_succeeded: bool,
     cursor: Cursor,
     selected: Option<Target>,
 }
@@ -222,7 +222,6 @@ pub struct Launcher {
     shortcuts: shortcut_settings::State,
     global_shortcuts: global_shortcut_settings::State,
     clipboard_history: clipboard_view::State,
-    paste: paste::State,
     window_switcher: windows::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
@@ -258,6 +257,7 @@ pub struct Launcher {
     app_hits: Vec<(usize, u32)>,
     /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
+    file_search_succeeded: bool,
     items: Vec<Item>,
     /// Resolved icon per item, filled when the list is rebuilt.
     item_icons: Vec<Option<Icon>>,
@@ -322,8 +322,6 @@ pub enum Message {
     ShortcutRecorded(Result<Chord, &'static str>),
     Clipboard { generation: u64, event: clipboard_view::Event },
     ClipboardShortcut(clipboard_view::Shortcut),
-    PasteSnippet,
-    Paste { attempt: u64, event: paste::Event },
     Windows { generation: u64, event: windows::Event },
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
@@ -435,7 +433,6 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         shortcuts: shortcut_settings::State::new(data.config.shortcuts),
         global_shortcuts: global_shortcut_settings::State::default(),
         clipboard_history: clipboard_view::State::new(data.private),
-        paste: paste::State::new(data.paste_target),
         window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
@@ -465,6 +462,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         scope_generation: 0,
         app_hits: Vec::new(),
         files: Vec::new(),
+        file_search_succeeded: false,
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
@@ -718,7 +716,8 @@ impl Launcher {
             && !self.preview_enabled
             && self.panel.is_none();
         let needs_room = matches!(self.status, Status::Searching)
-            || (self.items.is_empty() && matches!(self.status, Status::Error(_) | Status::Notice(_)));
+            || (self.items.is_empty()
+                && matches!(self.status, Status::Error(_) | Status::CatalogError | Status::Notice(_)));
         (home && !needs_room).then_some(self.items.len())
     }
 
@@ -887,10 +886,6 @@ impl Launcher {
         if matches!(item.target, Target::App(_)) {
             panel.actions.push(Action::EditAlias);
         }
-        if matches!(item.target, Target::Snippet(_)) && self.paste.label().is_some() {
-            // Keep Paste immediately after the two original snippet actions.
-            panel.actions.insert(panel.actions.len() - 1, Action::PasteSnippet);
-        }
         let runnable_local = self.scripts.history_key(&item.target).is_some();
         if runnable_local {
             panel.actions.push(Action::ResetRanking);
@@ -1004,6 +999,7 @@ impl Launcher {
             folder: self.search_folder.take(),
             more: self.folder_more,
             files: self.files.clone(),
+            file_search_succeeded: self.file_search_succeeded,
             cursor: self.cursor,
             selected: self.selected().map(|item| item.target.clone()),
         });
@@ -1020,6 +1016,7 @@ impl Launcher {
         self.search_folder = frame.folder;
         self.folder_more = frame.more;
         self.files = frame.files;
+        self.file_search_succeeded = frame.file_search_succeeded;
         self.generation += 1;
         self.scope_generation += 1;
         self.panel = None;
@@ -1312,11 +1309,19 @@ impl Launcher {
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
     let (previous_preview, previous_home) = (s.preview_context(), s.home_rows());
-    let query_boundary = matches!(&message, Message::Query(_)) && !s.paste.busy();
-    let task = s.route_paste(&message).unwrap_or_else(|| match message {
+    let query_boundary = matches!(&message, Message::Query(_));
+    let task = match message {
         Message::Ui(UiEvent::OpenCommand(request)) => s.deliver_command(request),
+        Message::FolderListed { generation, result } if generation == s.generation => {
+            let result = result.map(|(files, more)| {
+                s.folder_more = more;
+                Some(files)
+            });
+            files_loaded(s, generation, result)
+        }
+        Message::FolderListed { .. } => Task::none(),
         message => update_inner(s, message),
-    });
+    };
     if previous_preview.1 && !s.preview_visible() && s.preview_enabled {
         let loading = s.preview_request.is_some();
         s.cancel_preview(loading);
@@ -1474,16 +1479,6 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::FolderListed { generation, result } => {
-            if generation != s.generation {
-                return Task::none();
-            }
-            let result = result.map(|(files, more)| {
-                s.folder_more = more;
-                Some(files)
-            });
-            update(s, Message::Files { generation, result })
-        }
         Message::Files { generation, result } => files_loaded(s, generation, result),
         Message::Cmd(cmd) => command(s, cmd),
         Message::Wheel(dy) => wheel(s, dy),
@@ -1593,6 +1588,7 @@ fn query_changed(s: &mut Launcher, q: String) -> Task<Message> {
     // Results of the previous query must not stay actionable while
     // this one is searched.
     s.files.clear();
+    s.file_search_succeeded = false;
     s.folder_more = false;
     s.status = if file_query { Status::Searching } else { s.scripts.search_status(s.scope) };
     s.rebuild(false);
@@ -1611,6 +1607,7 @@ fn files_loaded(s: &mut Launcher, generation: u64, result: Result<Option<Vec<Fil
     match result {
         Ok(Some(files)) => {
             s.files = files;
+            s.file_search_succeeded = true;
             if matches!(s.status, Status::Searching | Status::Idle) {
                 s.status = Status::Idle;
             }
@@ -1618,6 +1615,7 @@ fn files_loaded(s: &mut Launcher, generation: u64, result: Result<Option<Vec<Fil
         Ok(None) => return Task::none(),
         Err(e) => {
             s.files.clear();
+            s.file_search_succeeded = false;
             s.status =
                 Status::Error(if s.search_folder.is_some() { e } else { format!("File search unavailable: {e}") });
         }
@@ -1695,7 +1693,6 @@ fn update_appearance(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Ui(_)
         | Message::FocusLost
         | Message::Files { .. }
-        | Message::FolderListed { .. }
         | Message::PreviewLoaded { .. }
         | Message::DetailsLoaded { .. }
         | Message::ApplicationsLoaded { .. }
@@ -2073,7 +2070,7 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let surface = container(body).padding(PAD).width(Length::Fill).height(Length::Fill).style(surface_style);
 
     crate::shortcuts::capture_numbered(match (&s.panel, s.selected()) {
-        (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target, s.paste.label())].into(),
+        (Some(p), Some(item)) => stack![surface, action_panel(p, &item.target)].into(),
         _ => surface.into(),
     })
 }
@@ -2313,6 +2310,7 @@ fn empty_results_text(s: &Launcher) -> (&'static str, &'static str) {
     let short = query.chars().count() < MIN_FILE_QUERY;
     match &s.status {
         Status::Searching => ("Searching…", ""),
+        Status::CatalogError => ("Command catalog unavailable", "Check launcher-scripts.toml and reopen FerroSeek."),
         Status::Error(_) if s.scope == Scope::Files => {
             ("File search unavailable", "Switch to Applications to search installed apps.")
         }
@@ -2455,6 +2453,7 @@ fn search_status_text(s: &Launcher) -> (String, palette::Role) {
     let calculating = s.search_folder.is_none() && calc::is_explicit(query);
     match &s.status {
         Status::Error(e) => (e.clone(), palette::ERROR),
+        Status::CatalogError => ("Check launcher-scripts.toml".into(), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
         Status::Searching if listing_folder => ("Loading folder…".into(), palette::DIM),
         Status::Searching => ("Searching…".into(), palette::DIM),
@@ -2634,7 +2633,7 @@ fn numbered_slot<M: 'static>(slot: usize, selected: bool, available: bool) -> El
     }
 }
 
-fn action_panel<'a>(p: &'a Panel, target: &Target, paste_label: Option<&'a str>) -> Element<'a, Message> {
+fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let input = text_input("Search actions…", &p.query)
         .id(actions_id())
         .on_input(Message::ActionQuery)
@@ -2663,7 +2662,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target, paste_label: Option<&'a str>)
     .padding([0, 12]);
     let header = column![title, input].spacing(8);
     let actions = p.filtered_actions();
-    let list = action_list(p, target, &actions, paste_label);
+    let list = action_list(p, target, &actions);
     let footer = action_footer(p, target, &actions);
     let col = column![header, list, footer].spacing(8);
     let panel = container(col).width(360).padding(8).style(|theme| container::Style {
@@ -2727,12 +2726,7 @@ fn action_footer(p: &Panel, target: &Target, actions: &[Action]) -> Element<'sta
     .into()
 }
 
-fn action_list<'a>(
-    p: &'a Panel,
-    target: &Target,
-    actions: &[Action],
-    paste_label: Option<&'a str>,
-) -> Element<'a, Message> {
+fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element<'a, Message> {
     let mut list = column![].spacing(ACTION_ROW_GAP);
     if actions.is_empty() {
         list = list.push(
@@ -2752,7 +2746,7 @@ fn action_list<'a>(
         let a = actions[i];
         let selected = i == p.cursor.selected;
         let label = widget::responsive(move |size| {
-            paste::action_title(p.label(a), paste_label.filter(|_| a == Action::PasteSnippet), size.width)
+            text(label_for_width(p.label(a), size.width, 14.0, false)).size(14).wrapping(text::Wrapping::None).into()
         })
         .height(Length::Shrink);
         let content = row![

@@ -186,7 +186,7 @@ impl Portal<'_> {
         let changes = self.0.receive_signal("ShortcutsChanged").await.map_err(|error| error.to_string())?;
         let monitor = async {
             let version = self.0.get_property::<u32>("version").await.unwrap_or(1).max(1);
-            let shortcuts = self.ensure_shortcuts(session).await?;
+            let shortcuts = self.bind_shortcuts(session).await?;
             let labels = binding_labels(shortcuts);
             if labels.is_empty() {
                 println!("No shortcut labels were reported. Choose FerroSeek shortcuts in desktop settings.");
@@ -226,11 +226,8 @@ impl Portal<'_> {
         decode_shortcuts(properties)
     }
 
-    async fn ensure_shortcuts(&self, session: &OwnedObjectPath) -> Result<Shortcuts, String> {
-        let saved = self.list_shortcuts(session).await?;
-        if saved.iter().any(|(id, _)| Target::from_id(id).is_some()) {
-            return Ok(saved);
-        }
+    async fn bind_shortcuts(&self, session: &OwnedObjectPath) -> Result<Shortcuts, String> {
+        // ListShortcuts can report prior assignments before this session binds its actions.
         let bind = RequestToken::new()?;
         let properties =
             self.request("BindShortcuts", &bind, &(session, shortcut_definitions(), "", bind.options())).await?;

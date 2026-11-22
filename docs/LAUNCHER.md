@@ -35,7 +35,7 @@ copying text that remains available after the launcher closes.
 | Option | Effect |
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
-| `--command ID` | open a built-in command directly |
+| `--command ID` | open a built-in command or review a local command or workflow |
 | `--list-commands` | print built-in command IDs and titles |
 | `--global-shortcuts` | listen for global shortcuts assigned through the desktop portal |
 | `--private` | skip launch history, hide clipboard history and pause clipboard recording |
@@ -238,11 +238,6 @@ result displays the keyword and line count. Open **Actions → Edit snippet**
 to read or change the full text. To delete, press Ctrl+D in the editor and
 confirm with Ctrl+D. Escape at the confirmation keeps editing.
 
-On desktops that support [direct paste](#clipboard-history), press Alt+Enter
-with a snippet selected, or choose **Actions → Paste snippet**. The action
-lists the original window. FerroSeek checks that window before sending the
-paste shortcut. Copy remains available for manual paste.
-
 FerroSeek keeps up to 128 snippets with unique names and up to 8 KiB of text
 each. Keywords share the same namespace as saved links and aliases. Snippets
 are saved only when you explicitly save them, including in private sessions.
@@ -250,7 +245,7 @@ They use the owner-only `launcher-links` file beside the main configuration.
 
 ## Clipboard history
 
-![Clipboard history with a selected pin and Paste showing its destination](assets/launcher-clipboard-history.png)
+![Clipboard history with a selected pin and its copy and preview controls](assets/launcher-clipboard-history.png)
 
 The history view was captured in nested Labwc and the
 [full text preview](assets/launcher-clipboard-preview.png) in virtual KWin
@@ -269,20 +264,6 @@ input seat and clipboard data control, the copied text stays available when
 you close the launcher. You can return to the previous app and press its paste
 shortcut, even with recording stopped. Otherwise keep the launcher open while
 you paste.
-
-When **Paste** shows a destination, select text and click **Paste** or press
-Alt+Enter. This also works from the text preview. FerroSeek puts the selection
-on the clipboard, releases keyboard focus and sends Ctrl+V after observing
-the original window become active. If the window cannot be confirmed, paste
-manually. Use **Copy** for apps with a different paste shortcut.
-
-Direct paste needs one input seat, clipboard data control and an input
-interface the compositor grants. It supports wlr foreign-toplevel management
-with a virtual keyboard, and Plasma window management with the KWin
-keyboard-symbol and modifier-state interfaces. On Plasma, FerroSeek waits
-for shortcut modifiers to clear. Use **Copy** if the seat's keymap cannot
-send Ctrl+V directly in every configured layout. **Paste** also requires
-FerroSeek to identify the original window before opening.
 
 Use **Pin** or Ctrl+Shift+P to keep the selected entry. Pinned entries appear
 first. **Pinned** or Ctrl+G narrows the current search to pins. **Show all** or
@@ -343,10 +324,11 @@ FerroSeek uses the interfaces the compositor advertises. The launcher installer
 registers a small helper for **Switch windows** on Plasma. On KWin 5.27, which
 restricts window management, the helper receives that permission through its own
 desktop entry. The command starts the helper when opened and closes it when
-you leave. Direct paste still needs the separate input support described under
-[Clipboard history](#clipboard-history).
+you leave.
 
 The compositor manages focus and window state and may decline a request.
+FerroSeek closes when the compositor confirms the switch. If confirmation
+is unavailable, the launcher keeps the filter and selection so you can retry.
 Keyboard, pointer and live updates were tested at 1× on virtual Labwc 0.7.1
 and KWin 6.8.3 with tiny-skia and synthetic application windows. An isolated
 KWin 5.27.11 installation also verified keyboard switching, maximize and restore,
@@ -1014,13 +996,15 @@ command again. Confirmation and argument fields apply as on the first run.
 Fields start empty. Esc from this form returns to the previous output.
 Esc from the output returns to the captured search. During
 execution, Esc or **Cancel** stops the process group and returns to search.
-The launcher stops a command that is still running 30 seconds after it starts.
-Changes the command already made remain in effect.
+The launcher stops remaining processes in the group when the command exits
+or reaches its 30-second timeout. Changes the command already made remain
+in effect.
 
 Titles must be unique within the file. The configuration accepts up to 128
 commands and workflows in total. If the Commands footer says **Check launcher-scripts.toml**, correct
-the file and reopen FerroSeek. Other results remain available. `--command`
-and desktop-assigned shortcuts currently address built-in commands.
+the file and reopen FerroSeek. Other results remain available. Open a local
+command or workflow from a desktop shortcut using the
+[copied launch command](#shortcuts).
 
 ### Workflows
 
@@ -1316,7 +1300,7 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
 | Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
-| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width. Clipboard paste by keyboard, pointer and from preview into a GTK editor, including a 320 px capture and recovery when the destination closes | Physical outputs, other keyboard layouts, multiple seats and further paste targets |
+| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width. Clipboard recording, pinning and copying from history | Physical outputs, other keyboard layouts and multiple seats |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)

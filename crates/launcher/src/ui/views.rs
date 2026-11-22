@@ -138,19 +138,9 @@ impl Launcher {
             None
         };
         shortcut.map_or_else(
-            || self.search_shortcuts(),
+            || Routing::Commands(self.shortcuts.bindings),
             |action| Routing::Only(self.shortcuts.bindings.get(action), action),
         )
-    }
-
-    fn search_shortcuts(&self) -> Routing {
-        let bindings = self.shortcuts.bindings;
-        if self.paste.label().is_some() && self.selected().is_some_and(|item| matches!(item.target, Target::Snippet(_)))
-        {
-            Routing::Snippet(bindings)
-        } else {
-            Routing::Commands(bindings)
-        }
     }
 
     fn overrides_launcher_shortcuts(&self) -> bool {
@@ -409,10 +399,6 @@ impl Launcher {
 
     pub(super) fn deliver_command(&mut self, request: CommandRequest) -> Task<Message> {
         let Some(reply) = request.take_reply() else { return Task::none() };
-        if self.paste.busy() {
-            let _ = reply.send(Err("Wait for the current paste to finish."));
-            return Task::none();
-        }
         if self.opening.is_some() || self.search_suspended() {
             let _ = reply.send(Err("Return to the launcher search before opening another command."));
             return Task::none();

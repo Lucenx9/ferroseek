@@ -10,6 +10,8 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::apps::{App, ExecError, executable_exists};
 
@@ -99,7 +101,33 @@ pub fn launch_file(app: &App, path: &Path, uri: &str, token: Option<&str>) -> io
 
 /// Submit an already validated HTTP(S) destination to the user's default handler.
 pub fn open_web(url: &str, token: Option<&str>) -> io::Result<()> {
-    spawn(None, vec!["xdg-open", url], token).map(drop)
+    let url = url.to_owned();
+    let token = token.map(str::to_owned);
+    let (send, status) = mpsc::channel();
+    std::thread::Builder::new().name("xdg-open".into()).spawn(move || {
+        let mut child = match spawn(None, vec!["xdg-open", &url], token.as_deref()) {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = send.send(Err(error));
+                return;
+            }
+        };
+        let _ = send.send(Ok(()));
+        let result = child.wait().and_then(|status| {
+            if status.success() { Ok(()) } else { Err(io::Error::other(format!("xdg-open failed ({status})"))) }
+        });
+        let _ = send.send(result);
+    })?;
+
+    let disconnected = || io::Error::other("Could not read xdg-open's status");
+    status.recv().map_err(|_| disconnected())??;
+    // Some handlers keep xdg-open alive while the browser is running.
+    // Report immediate rejections and leave a long-running child to the waiter.
+    match status.recv_timeout(Duration::from_millis(500)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(disconnected()),
+    }
 }
 
 fn spawn<S: AsRef<OsStr>>(
@@ -120,8 +148,6 @@ fn spawn<S: AsRef<OsStr>>(
     if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
-    // The launcher exits right after; the child is reparented, not reaped
-    // here.
     cmd.spawn()
 }
 
@@ -188,6 +214,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn web_open_reports_a_prompt_handler_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CASE: &str = "FERROSEEK_TEST_WEB_OPEN_FAILURE";
+        if std::env::var_os(CASE).is_some() {
+            let error = open_web("https://example.test", None).unwrap_err();
+            assert!(error.to_string().contains("exit status: 4"));
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let opener = temp.path().join("xdg-open");
+        std::fs::write(&opener, "#!/bin/sh\nexit 4\n").unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "launch::tests::web_open_reports_a_prompt_handler_failure"])
+            .env(CASE, "1")
+            .env("PATH", temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]

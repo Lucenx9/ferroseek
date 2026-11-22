@@ -3,8 +3,8 @@
 
 use std::env;
 use std::future::Future;
-use std::io::{self, BufReader};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::io::{self, BufRead, BufReader};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -64,7 +64,7 @@ impl Helper {
         let pending = Pending::default();
         let replies = pending.clone();
         std::thread::Builder::new().name("plasma-windows".into()).spawn(move || {
-            read_responses(output, &send, &replies);
+            read_responses(BufReader::new(output), &send, &replies);
             replies.lock().unwrap().take();
             drop(process);
         })?;
@@ -77,7 +77,7 @@ impl Helper {
         let pending = self.pending.clone();
         let (reply, receive) = oneshot::channel();
         pending.lock().unwrap().replace((request, reply));
-        let sent = ipc::send(&mut self.input, &Request { request, window, action });
+        let sent = ipc::send(&mut self.input, &Request { request, window, action }, ipc::REQUEST_LIMIT);
         async move {
             let result = wait_for_reply(sent, receive).await;
             take_reply(&pending, request);
@@ -99,16 +99,20 @@ fn take_reply(pending: &Pending, request: u64) -> Option<Reply> {
     if pending.as_ref().is_some_and(|(id, _)| *id == request) { pending.take().map(|(_, reply)| reply) } else { None }
 }
 
-fn read_responses(output: ChildStdout, updates: &mpsc::UnboundedSender<Update>, pending: &Pending) {
-    let mut input = BufReader::new(output);
+fn read_responses(mut input: impl BufRead, updates: &mpsc::UnboundedSender<Update>, pending: &Pending) {
     let mut line = Vec::new();
-    while let Ok(Some(response)) = ipc::receive(&mut input, &mut line, ipc::RESPONSE_LIMIT) {
+    let mut windows = Vec::new();
+    while let Ok(Some(response)) = ipc::receive::<Response>(&mut input, &mut line, ipc::RESPONSE_LIMIT) {
         match response {
-            Response::Catalog(update) => {
-                let unavailable = matches!(update, Update::Unavailable(_));
-                if updates.unbounded_send(update).is_err() || unavailable {
+            Response::Windows { entries, complete } => {
+                windows.extend(entries);
+                if complete && updates.unbounded_send(Update::Windows(std::mem::take(&mut windows))).is_err() {
                     return;
                 }
+            }
+            Response::Unavailable(error) => {
+                let _ = updates.unbounded_send(Update::Unavailable(error));
+                return;
             }
             Response::Finished { request, error } => {
                 if let Some(reply) = take_reply(pending, request) {
@@ -144,5 +148,22 @@ mod tests {
         take_reply(&pending, 2).unwrap().send(Ok(())).unwrap();
         assert_eq!(receive.try_recv().unwrap(), Some(Ok(())));
         assert!(take_reply(&pending, 2).is_none());
+    }
+
+    #[test]
+    fn only_complete_window_snapshots_are_delivered() {
+        use super::super::Entry;
+
+        let mut input = Vec::new();
+        for (id, complete) in [(1, false), (2, true), (3, false)] {
+            let entries = [Entry { id, ..Entry::default() }];
+            ipc::send(&mut input, &Response::Windows { entries, complete }, ipc::RESPONSE_LIMIT).unwrap();
+        }
+        let (send, mut updates) = mpsc::unbounded();
+        read_responses(input.as_slice(), &send, &Pending::default());
+        let Update::Windows(windows) = updates.try_recv().unwrap() else { panic!("expected a complete snapshot") };
+        assert_eq!(windows.iter().map(|window| window.id).collect::<Vec<_>>(), [1, 2]);
+        assert!(matches!(updates.try_recv(), Ok(Update::Unavailable(_))));
+        assert!(updates.try_recv().is_err());
     }
 }

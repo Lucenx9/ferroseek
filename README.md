@@ -120,7 +120,7 @@ and the [desktop validation matrix](docs/LAUNCHER.md#desktop-validation).
 The next priorities are real desktop validation, reliable activation, clear
 appearance settings and latency checks on real desktops. A first
 [virtual KWin diagnostic baseline](docs/BENCHMARKS.md#12-launcher-interaction-latency)
-is available. Window switching and a plugin API are planned work. See the [roadmap](docs/ROADMAP.md).
+is available. **Switch windows** works on supported Wayland sessions. A plugin API is planned. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools
 

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Search open windows without changing the parent search.
 
+use std::time::Duration;
+
 use iced::widget::{Id, button, column, container, image, mouse_area, responsive, row, space, svg, text, text_input};
 use iced::{Element, Length, Task, Theme};
+use iced_layershell::reexport::KeyboardInteractivity;
 
 use super::{
     ICON_SIZE, Launcher, Message, divider, field_style, footer_style, hint, label_for_width, numbered_slot,
@@ -17,6 +20,8 @@ use crate::window_switcher::{Action, Entry, Update, client::Client};
 
 const LIST_CHROME: u32 = 172;
 pub(super) const HEIGHT: u32 = LIST_CHROME + ROW_HEIGHT as u32 * 5;
+const RELEASE_TIMEOUT: Duration = Duration::from_millis(750);
+const RELEASE_FAILED: &str = "Could not release keyboard focus. Try switching again.";
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -26,6 +31,7 @@ pub enum Event {
     DoubleClick(u64),
     OpenActions(u64),
     Run(u64, Action),
+    ReleaseTimedOut(u64),
     Finished(Result<(), String>),
     Back,
 }
@@ -55,10 +61,23 @@ pub(super) struct Panel {
     selected_closed: bool,
     press: Option<(u64, bool)>,
     session: Option<Client>,
-    pending: Option<Action>,
+    pending: Option<Pending>,
+    switch_attempt: u64,
     menu: Option<usize>,
     confirmation: Option<&'static str>,
     error: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Releasing(u64),
+    Applying(Action),
+}
+
+impl Pending {
+    fn switching(self) -> bool {
+        matches!(self, Self::Releasing(_) | Self::Applying(Action::Switch))
+    }
 }
 
 impl Panel {
@@ -73,6 +92,7 @@ impl Panel {
             press: None,
             session: None,
             pending: None,
+            switch_attempt: 0,
             menu: None,
             confirmation: None,
             error: None,
@@ -115,7 +135,7 @@ impl Panel {
         true
     }
 
-    fn receive(&mut self, update: Update, apps: &[App], icons: &mut Icons) -> Task<Event> {
+    fn receive(&mut self, update: Update, apps: &[App], icons: &mut Icons) -> Task<Message> {
         match update {
             Update::Windows(windows) => {
                 let selection = self.selected();
@@ -125,8 +145,7 @@ impl Panel {
                 self.selected_closed |= closed;
             }
             Update::Unavailable(message) => {
-                self.windows = None;
-                self.matches.clear();
+                self.menu = None;
                 self.session = None;
                 self.error = Some(message);
             }
@@ -206,33 +225,75 @@ impl Panel {
         self.confirmation = None;
     }
 
-    fn run(&mut self, id: u64, action: Action) -> Task<Event> {
+    fn switching(&self) -> bool {
+        self.pending.is_some_and(Pending::switching)
+    }
+
+    fn interactive(&self) -> bool {
+        self.session.is_some() && self.pending.is_none()
+    }
+
+    fn run(&mut self, id: u64, action: Action, generation: u64) -> Task<Message> {
         if self.selected() != Some(id) || self.menu.is_some() == (action == Action::Switch) {
             return Task::none();
         }
-        let Some(session) = &mut self.session else { return Task::none() };
-        self.pending = Some(action);
         self.error = None;
         self.confirmation = None;
-        Task::perform(session.perform(id, action), Event::Finished)
+        if action != Action::Switch {
+            return self.request(id, action, generation);
+        }
+
+        self.pending = Some(Pending::Releasing(id));
+        self.switch_attempt += 1;
+        let attempt = self.switch_attempt;
+        // The helper uses a separate Wayland connection. Wait for keyboard
+        // leave before sending it an activation request.
+        Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None)).chain(Task::perform(
+            async {
+                if let Ok(runtime) = zruntime::SharedRuntime::current() {
+                    runtime.sleep(RELEASE_TIMEOUT).await;
+                }
+            },
+            move |()| Message::Windows { generation, event: Event::ReleaseTimedOut(attempt) },
+        ))
     }
 
-    fn event(&mut self, event: Event) -> Task<Event> {
+    fn keyboard_released(&mut self, generation: u64) -> Task<Message> {
+        let Some(Pending::Releasing(id)) = self.pending else { return Task::none() };
+        self.request(id, Action::Switch, generation)
+    }
+
+    fn request(&mut self, id: u64, action: Action, generation: u64) -> Task<Message> {
+        let Some(session) = &mut self.session else {
+            let error =
+                self.error.clone().unwrap_or_else(|| "Could not read open windows. Reopen Switch windows.".into());
+            return self.finish(Err(error));
+        };
+        self.pending = Some(Pending::Applying(action));
+        Task::perform(session.perform(id, action), move |result| Message::Windows {
+            generation,
+            event: Event::Finished(result),
+        })
+    }
+
+    fn event(&mut self, event: Event, generation: u64) -> Task<Message> {
         match event {
-            Event::Finished(result) => {
-                self.finish(result);
-                Task::none()
+            Event::Finished(result) => self.finish(result),
+            Event::ReleaseTimedOut(attempt)
+                if self.switch_attempt == attempt && matches!(self.pending, Some(Pending::Releasing(_))) =>
+            {
+                self.finish(Err(RELEASE_FAILED.into()))
             }
-            Event::Back if self.pending != Some(Action::Switch) => {
+            Event::Back if !self.switching() => {
                 self.menu = None;
                 crate::input::focus(self.input())
             }
-            _ if self.pending.is_some() => Task::none(),
-            event => self.apply_input(event),
+            _ if !self.interactive() => Task::none(),
+            event => self.apply_input(event, generation),
         }
     }
 
-    fn apply_input(&mut self, event: Event) -> Task<Event> {
+    fn apply_input(&mut self, event: Event, generation: u64) -> Task<Message> {
         match event {
             Event::OpenActions(id) if self.select(id) => {
                 self.menu = Some(0);
@@ -240,29 +301,40 @@ impl Panel {
                 self.confirmation = None;
                 self.error = None;
             }
-            Event::Query(query) if self.menu.is_none() && self.session.is_some() => self.change_query(query),
+            Event::Query(query) if self.menu.is_none() => self.change_query(query),
             Event::Press(id) if self.menu.is_none() => self.press(id),
-            Event::DoubleClick(id) if self.press.take() == Some((id, true)) => return self.run(id, Action::Switch),
-            Event::Run(id, action) => return self.run(id, action),
+            Event::DoubleClick(id) if self.press.take() == Some((id, true)) => {
+                return self.run(id, Action::Switch, generation);
+            }
+            Event::Run(id, action) => return self.run(id, action, generation),
             _ => {}
         }
         Task::none()
     }
 
-    fn finish(&mut self, result: Result<(), String>) {
-        let Some(action) = self.pending.take() else { return };
+    fn finish(&mut self, result: Result<(), String>) -> Task<Message> {
+        let Some(pending) = self.pending.take() else { return Task::none() };
         match result {
-            Ok(()) => self.confirmation = Some(action.confirmation()),
+            Ok(()) => {
+                if let Pending::Applying(action) = pending {
+                    self.confirmation = Some(action.confirmation());
+                }
+            }
             Err(error) => self.error = Some(error),
         }
+        if pending.switching() {
+            return Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::Exclusive))
+                .chain(crate::input::focus(self.input()));
+        }
+        Task::none()
     }
 
     fn notice(&self) -> String {
         if let Some(error) = &self.error {
             return error.clone();
         }
-        if let Some(action) = self.pending {
-            return if action == Action::Switch {
+        if let Some(pending) = self.pending {
+            return if pending.switching() {
                 "Switching windows…".into()
             } else {
                 "Waiting for the desktop…".into()
@@ -290,8 +362,7 @@ impl Panel {
     }
 
     pub(super) fn view(&self, generation: u64, action_key: String) -> Element<'_, Message> {
-        let back =
-            button(text("Back").size(12)).on_press_maybe((self.pending != Some(Action::Switch)).then_some(Event::Back));
+        let back = button(text("Back").size(12)).on_press_maybe((!self.switching()).then_some(Event::Back));
         let heading = if self.menu.is_some() { "Window actions" } else { "Switch windows" };
         let title = row![back.padding([6, 8]).style(status_button_style), text(heading).size(20)]
             .align_y(iced::Center)
@@ -315,7 +386,7 @@ impl Panel {
     fn filter(&self) -> Element<'_, Event> {
         text_input("Search by window title or app…", &self.query)
             .id(self.input())
-            .on_input_maybe(self.session.as_ref().filter(|_| self.pending.is_none()).map(|_| Event::Query))
+            .on_input_maybe(self.interactive().then_some(Event::Query))
             .padding([6, 8])
             .style(field_style)
             .into()
@@ -339,7 +410,7 @@ impl Panel {
         let list = self.cursor.window(self.matches.len()).enumerate().fold(column![], |rows, (slot, index)| {
             let entry = &self.windows()[self.matches[index]];
             let selected = !self.selected_closed && index == self.cursor.selected;
-            rows.push(entry.view(slot, selected, self.pending.is_some()))
+            rows.push(entry.view(slot, selected, self.interactive()))
         });
         column![self.notice_label(), list].height(Length::Fill).padding([0, 4]).into()
     }
@@ -352,12 +423,12 @@ impl Panel {
                 let content = row![
                     text(action.label()).size(15),
                     space::horizontal(),
-                    numbered_slot::<Event>(slot, selected, self.pending.is_none()),
+                    numbered_slot::<Event>(slot, selected, self.interactive()),
                 ]
                 .align_y(iced::Center)
                 .padding([0, 10]);
                 let row = button(selectable_result_row(content, selected))
-                    .on_press_maybe(self.pending.is_none().then_some(Event::Run(entry.id, action)))
+                    .on_press_maybe(self.interactive().then_some(Event::Run(entry.id, action)))
                     .padding(0)
                     .style(|theme: &Theme, _| button::Style {
                         text_color: palette::TEXT.resolve(theme),
@@ -371,11 +442,11 @@ impl Panel {
 
     fn footer(&self, action_key: String) -> Element<'_, Event> {
         let back = button(hint("Esc", "Back"))
-            .on_press_maybe((self.pending != Some(Action::Switch)).then_some(Event::Back))
+            .on_press_maybe((!self.switching()).then_some(Event::Back))
             .padding([4, 6])
             .style(status_button_style);
         let mut actions = row![back, space::horizontal()].align_y(iced::Center);
-        if let Some(id) = self.selected().filter(|_| self.pending.is_none()) {
+        if let Some(id) = self.selected().filter(|_| self.interactive()) {
             actions = actions.extend(self.footer_actions(id, action_key));
         }
         container(actions).height(FOOTER_HEIGHT).padding([0.0, PAD]).align_y(iced::Center).style(footer_style).into()
@@ -434,7 +505,7 @@ impl WindowRow {
         terms.iter().all(|term| self.search.iter().any(|field| field.contains(term)))
     }
 
-    fn view(&self, slot: usize, selected: bool, switching: bool) -> Element<'_, Event> {
+    fn view(&self, slot: usize, selected: bool, interactive: bool) -> Element<'_, Event> {
         let title = window_title(&self.entry);
         let icon: Element<'_, Event> = match self.icon.clone() {
             Some(Icon::Svg(handle)) => svg(handle).width(ICON_SIZE).height(ICON_SIZE).into(),
@@ -446,12 +517,12 @@ impl WindowRow {
             column![row_label(title, 15, palette::TEXT), row_label(self.label.as_str(), 12, palette::DIM)]
                 .width(Length::Fill)
                 .spacing(2),
-            numbered_slot(slot, selected, !switching),
+            numbered_slot(slot, selected, interactive),
         ]
         .spacing(12)
         .align_y(iced::Center);
         let row = selectable_result_row(content.padding([0, 10]), selected);
-        if switching {
+        if !interactive {
             return row;
         }
         mouse_area(row)
@@ -504,17 +575,19 @@ impl Launcher {
         if panel.routes_to_parent(&message) {
             return update_content(self, message);
         }
-        let task = match panel.input_event(message, generation) {
-            Some(Event::Back) if panel.menu.is_none() && panel.pending != Some(Action::Switch) => {
+        if matches!(message, Message::FocusLost) {
+            return panel.keyboard_released(generation);
+        }
+        match panel.input_event(message, generation) {
+            Some(Event::Back) if panel.menu.is_none() && !panel.switching() => {
                 self.window_switcher.panel = None;
-                return Task::batch([self.resize(), crate::input::focus(search_id())]);
+                Task::batch([self.resize(), crate::input::focus(search_id())])
             }
-            Some(Event::Finished(Ok(()))) if panel.pending == Some(Action::Switch) => return iced::exit(),
+            Some(Event::Finished(Ok(()))) if panel.pending == Some(Pending::Applying(Action::Switch)) => iced::exit(),
             Some(Event::Update(update)) => panel.receive(update, &self.apps, &mut self.icons),
-            Some(event) => panel.event(event),
+            Some(event) => panel.event(event, generation),
             None => Task::none(),
-        };
-        task.map(move |event| Message::Windows { generation, event })
+        }
     }
 }
 
@@ -522,7 +595,7 @@ impl Panel {
     fn routes_to_parent(&self, message: &Message) -> bool {
         match message {
             Message::Files { .. } | Message::Ui(_) | Message::InputClipboard(_) => true,
-            Message::FocusLost => self.pending.is_none(),
+            Message::FocusLost => !self.switching(),
             _ => false,
         }
     }
@@ -530,9 +603,9 @@ impl Panel {
     fn input_event(&mut self, message: Message, generation: u64) -> Option<Event> {
         match message {
             Message::Windows { generation: current, event } if current == generation => Some(event),
-            Message::Cmd(Command::Back) if self.pending != Some(Action::Switch) => Some(Event::Back),
-            Message::Cmd(command) if self.pending.is_none() => self.command(command),
-            Message::Wheel(delta) if self.pending.is_none() && self.menu.is_none() => {
+            Message::Cmd(Command::Back) if !self.switching() => Some(Event::Back),
+            Message::Cmd(command) if self.interactive() => self.command(command),
+            Message::Wheel(delta) if self.interactive() && self.menu.is_none() => {
                 self.move_by(-(delta.signum() as isize));
                 None
             }
@@ -583,12 +656,67 @@ mod tests {
     fn window_actions_follow_confirmed_state_and_keep_selection() {
         let mut panel = Panel::new();
         refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
-        let _ = panel.event(Event::OpenActions(2));
+        panel.select(2);
+        panel.menu = Some(0);
         assert!(matches!(panel.command(Command::Activate), Some(Event::Run(2, Action::Maximize(true)))));
         refresh(&mut panel, vec![Entry { maximized: true, ..window(2, "Notes") }]);
         assert!(matches!(panel.command(Command::Activate), Some(Event::Run(2, Action::Maximize(false)))));
         refresh(&mut panel, vec![window(1, "Report")]);
         assert!(panel.menu.is_none());
         assert!(panel.command(Command::Activate).is_none());
+    }
+
+    #[test]
+    fn focus_loss_dismisses_window_state_actions_only() {
+        let mut panel = Panel::new();
+        panel.pending = Some(Pending::Applying(Action::Maximize(true)));
+        assert!(panel.routes_to_parent(&Message::FocusLost));
+        panel.pending = Some(Pending::Releasing(2));
+        assert!(!panel.routes_to_parent(&Message::FocusLost));
+        panel.pending = Some(Pending::Applying(Action::Switch));
+        assert!(!panel.routes_to_parent(&Message::FocusLost));
+    }
+
+    #[test]
+    fn a_switch_failure_restores_input_and_preserves_the_filter_and_target() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_runtime::Action as RuntimeAction;
+
+        for (pending, event) in [
+            (Pending::Releasing(2), Event::ReleaseTimedOut(1)),
+            (Pending::Applying(Action::Switch), Event::Finished(Err("Activation unconfirmed".into()))),
+        ] {
+            let mut panel = Panel::new();
+            refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
+            panel.change_query("notes".into());
+            panel.pending = Some(pending);
+            panel.switch_attempt = 1;
+            let stale = panel.event(Event::ReleaseTimedOut(0), 1);
+            assert!(iced_runtime::task::into_stream(stale).is_none());
+            assert!(panel.switching());
+
+            let restore = panel.event(event, 1);
+            let mut actions = iced_runtime::task::into_stream(restore).unwrap();
+            assert!(matches!(
+                block_on(actions.next()),
+                Some(RuntimeAction::Output(Message::KeyboardInteractivityChange(KeyboardInteractivity::Exclusive)))
+            ));
+            assert!(matches!(block_on(actions.next()), Some(RuntimeAction::Widget(_))));
+            assert!(panel.pending.is_none());
+            assert_eq!(panel.query, "notes");
+            assert_eq!(panel.selected(), Some(2));
+            assert!(panel.error.is_some());
+        }
+    }
+
+    #[test]
+    fn window_helper_disconnect_keeps_the_last_complete_selection() {
+        let mut panel = Panel::new();
+        refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
+        panel.change_query("notes".into());
+        let _ = panel.receive(Update::Unavailable("Disconnected".into()), &[], &mut Icons::disabled());
+        assert_eq!(panel.query, "notes");
+        assert_eq!(panel.selected(), Some(2));
+        assert_eq!(panel.error.as_deref(), Some("Disconnected"));
     }
 }

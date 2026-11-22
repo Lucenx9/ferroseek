@@ -4,58 +4,20 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use wayland_client::{delegate_noop, globals::GlobalListContents};
+use wayland_client::delegate_noop;
 use wayland_protocols::ext::data_control::v1::client::ext_data_control_source_v1 as ext_source;
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_source_v1 as wlr_source;
 
 use super::{
-    Connection, Device, Dispatch, MAX_TRANSFERS, MIME_TYPES, Protocol, QueueHandle, TEXT_LIMIT, TRANSFER_DEADLINE,
-    advance_with_control, event_created_child, ext_device, ext_manager, ext_offer, ready, wl_registry, wl_seat,
-    wlr_device, wlr_manager, wlr_offer,
+    Connection, Device, Dispatch, Globals, MAX_TRANSFERS, MIME_TYPES, Protocol, QueueHandle, SETUP_DEADLINE, SyncDone,
+    TEXT_LIMIT, TRANSFER_DEADLINE, WAIT_MS, advance, event_created_child, ext_device, ext_manager, ext_offer, ready,
+    roundtrip_until, wl_callback, wl_registry, wl_seat, wlr_device, wlr_manager, wlr_offer,
 };
 
-#[derive(Debug)]
-pub struct Lease(Mutex<Option<Control>>);
-
-#[derive(Debug)]
-struct Control {
-    input: ChildStdin,
-    response: ChildStdout,
-}
-
-impl Control {
-    fn confirm(&mut self) -> io::Result<()> {
-        self.input.write_all(&[1])?;
-        receive_ack(&mut self.response, 250)
-    }
-}
-
-impl Lease {
-    pub fn is_current(&self) -> bool {
-        // When the compositor cancels the source, the owner exits and closes this pipe.
-        self.0
-            .lock()
-            .ok()
-            .and_then(|control| control.as_ref().map(|control| matches!(ready(control.response.as_fd(), 0), Ok(false))))
-            .unwrap_or(false)
-    }
-
-    pub fn confirm_current(&self) -> bool {
-        let Ok(mut control) = self.0.lock() else { return false };
-        if control.as_mut().is_some_and(|control| control.confirm().is_ok()) {
-            return true;
-        }
-        // Never consume a late acknowledgment as a reply to another check.
-        *control = None;
-        false
-    }
-}
-
-pub fn handoff(text: &str) -> io::Result<Lease> {
+pub fn handoff(text: &str) -> io::Result<()> {
     validate(text)?;
     let mut child = Command::new(std::env::current_exe()?)
         .arg("--serve-clipboard")
@@ -63,27 +25,23 @@ pub fn handoff(text: &str) -> io::Result<Lease> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()?;
-    let lease = match await_selection(&mut child, text.as_bytes()) {
-        Ok(lease) => lease,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
-    };
+    if let Err(error) = await_selection(&mut child, text.as_bytes()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
     std::thread::spawn(move || {
         let _ = child.wait();
     });
-    Ok(lease)
+    Ok(())
 }
 
-fn await_selection(child: &mut Child, text: &[u8]) -> io::Result<Lease> {
+fn await_selection(child: &mut Child, text: &[u8]) -> io::Result<()> {
     let mut input = child.stdin.take().expect("piped input");
     input.write_all(&(text.len() as u32).to_le_bytes())?;
     input.write_all(text)?;
-    let mut response = child.stdout.take().expect("piped response");
-    receive_ack(&mut response, 1200)?;
-    Ok(Lease(Mutex::new(Some(Control { input, response }))))
+    drop(input);
+    receive_ack(&mut child.stdout.take().expect("piped response"), 1200)
 }
 
 fn receive_ack(response: &mut ChildStdout, timeout_ms: i32) -> io::Result<()> {
@@ -99,27 +57,31 @@ fn receive_ack(response: &mut ChildStdout, timeout_ms: i32) -> io::Result<()> {
 }
 
 pub fn serve() -> io::Result<()> {
-    let mut input = io::stdin().lock();
-    let text = read_text(&mut input)?;
+    let text = read_text(&mut io::stdin().lock())?;
     validate(&text)?;
-    let (globals, mut queue, protocol) = Protocol::connect()?;
-    if globals.contents().clone_list().iter().filter(|global| global.interface == "wl_seat").count() != 1 {
+    let deadline = Instant::now() + SETUP_DEADLINE;
+    let mut state = Source { text, selected: false, closed: false, transfers: Vec::new() };
+    let (connection, registry, mut queue, protocol) = Protocol::connect(&mut state, deadline)?;
+    if registry.globals.iter().filter(|global| global.interface == "wl_seat").count() != 1 {
         return Err(io::Error::other("Clipboard ownership requires exactly one input seat."));
     }
-    let device = protocol.bind(&globals, &queue.handle())?;
-    let mut state = Source { text, selected: false, closed: false, transfers: Vec::new() };
-    queue.roundtrip(&mut state).map_err(io::Error::other)?;
+    let device = protocol.bind(&registry, &queue.handle())?;
+    roundtrip_until(&connection, &mut queue, &mut state, deadline)?;
     if state.closed {
         return Err(io::Error::other("The desktop does not allow clipboard ownership."));
     }
     state.selected = false;
     device.publish(&queue.handle());
-    queue.roundtrip(&mut state).map_err(io::Error::other)?;
+    roundtrip_until(&connection, &mut queue, &mut state, deadline)?;
     if state.closed || !state.selected {
         return Err(io::Error::other("The desktop rejected the clipboard selection."));
     }
     acknowledge()?;
-    serve_selection(&mut queue, &mut state, &mut input)
+    while !state.closed {
+        advance(&mut queue, &mut state, WAIT_MS)?;
+        state.transfers.retain_mut(|transfer| transfer.write_step(state.text.as_bytes()));
+    }
+    Ok(())
 }
 
 fn read_text(input: &mut impl Read) -> io::Result<String> {
@@ -132,43 +94,6 @@ fn read_text(input: &mut impl Read) -> io::Result<String> {
     let mut text = vec![0; length];
     input.read_exact(&mut text)?;
     String::from_utf8(text).map_err(io::Error::other)
-}
-
-fn serve_selection(
-    queue: &mut wayland_client::EventQueue<Source>,
-    state: &mut Source,
-    input: &mut io::StdinLock<'_>,
-) -> io::Result<()> {
-    let mut control_open = true;
-    while !state.closed {
-        advance_with_control(queue, state, control_open.then(|| input.as_fd()))?;
-        state.transfers.retain_mut(|transfer| transfer.write_step(state.text.as_bytes()));
-        if control_open {
-            control_open = handle_check(queue, state, input)?;
-        }
-    }
-    Ok(())
-}
-
-fn handle_check(
-    queue: &mut wayland_client::EventQueue<Source>,
-    state: &mut Source,
-    input: &mut io::StdinLock<'_>,
-) -> io::Result<bool> {
-    if !ready(input.as_fd(), 0)? {
-        return Ok(true);
-    }
-    let mut request = [0];
-    if input.read(&mut request)? == 0 || request != [1] {
-        return Ok(false);
-    }
-    // A pipe that is still open does not prove the compositor has kept our
-    // selection. Drain cancellation events before replying to the launcher.
-    queue.roundtrip(state).map_err(io::Error::other)?;
-    if !state.closed {
-        acknowledge()?;
-    }
-    Ok(true)
 }
 
 fn acknowledge() -> io::Result<()> {
@@ -261,7 +186,7 @@ impl Device {
     }
 }
 
-ignore_events!(Source, wl_registry::WlRegistry, GlobalListContents);
+dispatch_setup!(Source);
 delegate_noop!(Source: ignore wl_seat::WlSeat);
 
 macro_rules! dispatch_source {

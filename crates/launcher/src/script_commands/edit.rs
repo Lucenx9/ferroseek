@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Comment-preserving writes to the local command manifest.
 
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value};
@@ -30,7 +32,13 @@ fn argument_array(args: &[String]) -> Array {
     args.iter().map(|arg| Value::from(arg.as_str())).collect()
 }
 
-pub fn change(settings: &Path, previous: Option<&Script>, next: Option<Script>) -> Result<Catalog, String> {
+#[derive(Debug, Clone)]
+pub struct Saved {
+    pub catalog: Catalog,
+    pub warning: Option<String>,
+}
+
+pub fn change(settings: &Path, previous: Option<&Script>, next: Option<Script>) -> Result<Saved, String> {
     change_manifest(settings, |manifest, document| {
         let index = existing_index(&manifest.command, previous, "command")?;
         check_references(&manifest.workflow, previous, next.as_ref())?;
@@ -39,11 +47,7 @@ pub fn change(settings: &Path, previous: Option<&Script>, next: Option<Script>) 
     })
 }
 
-pub fn change_workflow(
-    settings: &Path,
-    previous: Option<&Workflow>,
-    next: Option<Workflow>,
-) -> Result<Catalog, String> {
+pub fn change_workflow(settings: &Path, previous: Option<&Workflow>, next: Option<Workflow>) -> Result<Saved, String> {
     change_manifest(settings, |manifest, document| {
         let index = existing_index(&manifest.workflow, previous, "workflow")?;
         if let Some(next) = &next {
@@ -68,7 +72,7 @@ fn existing_index<T: PartialEq>(entries: &[T], previous: Option<&T>, name: &str)
 fn change_manifest(
     settings: &Path,
     update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Result<()>,
-) -> Result<Catalog, String> {
+) -> Result<Saved, String> {
     let path = manifest_path(settings);
     usage::with_lock(&path, false, || edit(&path, update)).map_err(|error| match error.kind() {
         io::ErrorKind::WouldBlock => "The command file is busy. Try again.".into(),
@@ -76,8 +80,8 @@ fn change_manifest(
     })
 }
 
-fn edit(path: &Path, update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Result<()>) -> io::Result<Catalog> {
-    check_writable(path)?;
+fn edit(path: &Path, update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Result<()>) -> io::Result<Saved> {
+    revision(path)?;
     let source = read_source(path)?;
     let original = source.as_deref().unwrap_or("");
     let manifest = parse_manifest(original)?;
@@ -86,10 +90,8 @@ fn edit(path: &Path, update: impl FnOnce(Manifest, &mut DocumentMut) -> io::Resu
     let text = document.to_string();
     ensure_size(&text)?;
     let manifest = parse_manifest(&text)?;
-    if text != original {
-        persist(path, source.as_deref(), &text)?;
-    }
-    Ok(Catalog::from_manifest(manifest))
+    let warning = if text != original { persist(path, source.as_deref(), &text)? } else { None };
+    Ok(Saved { catalog: Catalog::from_manifest(manifest), warning })
 }
 
 fn check_references(workflows: &[super::Workflow], old: Option<&Script>, next: Option<&Script>) -> io::Result<()> {
@@ -190,35 +192,72 @@ impl Record for Workflow {
 
 fn set(table: &mut dyn TableLike, key: &str, mut value: Value) {
     if let Some(old) = table.get(key).and_then(Item::as_value) {
-        *value.decor_mut() = old.decor().clone();
+        if let (Some(previous), Some(next)) = (old.as_array(), value.as_array_mut()) {
+            *next = retain_array_formatting(previous, next);
+        } else {
+            *value.decor_mut() = old.decor().clone();
+        }
     }
     table.insert(key, Item::Value(value));
 }
 
-fn check_writable(path: &Path) -> io::Result<()> {
+fn retain_array_formatting(previous: &Array, next: &Array) -> Array {
+    let mut entries = HashMap::<&str, VecDeque<&Value>>::new();
+    for (text, entry) in previous.iter().filter_map(|entry| Some((entry.as_str()?, entry))) {
+        entries.entry(text).or_default().push_back(entry);
+    }
+    let mut formatted = Array::new();
+    *formatted.decor_mut() = previous.decor().clone();
+    formatted.set_trailing(previous.trailing().clone());
+    formatted.set_trailing_comma(previous.trailing_comma() && !next.is_empty());
+    for entry in next.iter() {
+        if let Some(old) = entry.as_str().and_then(|text| entries.get_mut(text)).and_then(VecDeque::pop_front) {
+            formatted.push_formatted(old.clone());
+        } else {
+            formatted.push(entry.clone());
+        }
+    }
+    formatted
+}
+
+// The inode detects replacements, while ctime catches in-place edits, including those
+// that preserve the modification time.
+fn revision(path: &Path) -> io::Result<Option<(u64, u64, i64, i64)>> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => {
             Err(io::Error::other("Edit the linked launcher-scripts.toml file directly."))
         }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Ok(meta) => Ok(Some((meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec()))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
 
-fn persist(path: &Path, source: Option<&str>, text: &str) -> io::Result<()> {
+fn changed_on_disk() -> io::Error {
+    io::Error::other("The command list changed on disk. Reopen FerroSeek before saving.")
+}
+
+fn persist(path: &Path, source: Option<&str>, text: &str) -> io::Result<Option<String>> {
     let parent = path.parent().ok_or_else(|| io::Error::other("The command manifest needs a parent folder."))?;
+    let directory = std::fs::File::open(parent)?;
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
     temp.write_all(text.as_bytes())?;
     temp.as_file().sync_all()?;
-    check_writable(path)?;
-    if read_source(path)?.as_deref() != source {
-        return Err(io::Error::other("The command list changed on disk. Reopen FerroSeek before saving."));
+    if let Some(source) = source {
+        let before = revision(path)?;
+        if read_source(path)?.as_deref() != Some(source) || revision(path)? != before {
+            return Err(changed_on_disk());
+        }
+        temp.persist(path).map_err(|error| error.error)?;
+    } else {
+        temp.persist_noclobber(path).map_err(|error| {
+            if error.error.kind() == io::ErrorKind::AlreadyExists { changed_on_disk() } else { error.error }
+        })?;
     }
-    temp.persist(path).map_err(|e| e.error)?;
-    std::fs::File::open(parent).and_then(|dir| dir.sync_all()).map_err(|e| {
-        io::Error::other(format!("Commands were written but durability could not be confirmed. Reopen FerroSeek. {e}"))
-    })
+    Ok(directory.sync_all().err().map(|error| {
+        log::warn!("Could not sync command manifest directory: {error}");
+        "Commands were written. Disk sync failed.".to_owned()
+    }))
 }
 
 #[cfg(test)]
@@ -243,13 +282,55 @@ mod tests {
         std::fs::write(&path, source).unwrap();
         let original = Catalog::load(&settings).commands[0].clone();
         let next = Script { title: "Check version".into(), ..(*original).clone() };
-        let catalog = change(&settings, Some(&original), Some(next)).unwrap();
+        let catalog = change(&settings, Some(&original), Some(next)).unwrap().catalog;
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(written.contains("# Command catalogue") && written.contains("# command title"));
         assert!(written.contains("title = 'Other'\nexecutable = '/synthetic/other'"));
         assert!(change(&settings, Some(&original), None).unwrap_err().contains("changed on disk"));
-        let remaining = change(&settings, Some(&catalog.commands[0]), None).unwrap();
+        let remaining = change(&settings, Some(&catalog.commands[0]), None).unwrap().catalog;
         assert_eq!(remaining.commands.len(), 1);
+    }
+
+    #[test]
+    fn retains_comments_and_quoting_on_matching_array_entries() {
+        let mut table = r#"
+args = [
+    # A flag already in use.
+    '--summary',
+    # Another occurrence of the same flag.
+    "--summary",
+    '--obsolete',
+]
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let args = ["--summary", "--color", "--summary"].map(str::to_owned);
+        set(&mut *table, "args", argument_array(&args).into());
+        let written = table.to_string();
+        assert!(written.contains("# A flag already in use.\n    '--summary'"));
+        assert!(written.contains("# Another occurrence of the same flag.\n    \"--summary\""));
+        assert!(!written.contains("--obsolete"));
+        let source = format!("[[command]]\ntitle = 'Check'\nexecutable = '/synthetic/tool'\n{written}");
+        assert_eq!(parse_manifest(&source).unwrap().command[0].args, args);
+    }
+
+    #[test]
+    fn preserves_manual_writes_after_the_editor_reads_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("launcher-scripts.toml");
+        for source in [None, Some("# Initial version\n")] {
+            if let Some(source) = source {
+                std::fs::write(&path, source).unwrap();
+            }
+            let manual = "# Saved manually\n";
+            let result = edit(&path, |_, document| {
+                std::fs::write(&path, manual)?;
+                *document = "# Saved in FerroSeek\n".parse().unwrap();
+                Ok(())
+            });
+            assert!(result.unwrap_err().to_string().contains("changed on disk"));
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), manual);
+        }
     }
 
     #[test]
@@ -266,10 +347,10 @@ mod tests {
             parameters: vec!["Project".into()],
             confirm: true,
         };
-        let catalog = change(&settings, None, Some(script.clone())).unwrap();
+        let catalog = change(&settings, None, Some(script.clone())).unwrap().catalog;
         assert!(change(&settings, None, Some(script)).unwrap_err().contains("different title"));
         let updated = Script { confirm: false, ..(*catalog.commands[0]).clone() };
-        let catalog = change(&settings, Some(&catalog.commands[0]), Some(updated)).unwrap();
+        let catalog = change(&settings, Some(&catalog.commands[0]), Some(updated)).unwrap().catalog;
         assert!(!catalog.commands[0].confirm);
         assert!(std::fs::read_to_string(path).unwrap().contains("# local commands"));
     }
@@ -320,11 +401,11 @@ steps = ["Build", "Check"]
         assert!(change_workflow(&settings, Some(original), Some(invalid)).unwrap_err().contains("Missing"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
         let updated = Workflow { steps: vec!["Check".into(), "Build".into()], ..(**original).clone() };
-        let catalog = change_workflow(&settings, Some(original), Some(updated)).unwrap();
+        let catalog = change_workflow(&settings, Some(original), Some(updated)).unwrap().catalog;
         assert_eq!(catalog.workflows[0].steps, ["Check", "Build"]);
         assert!(std::fs::read_to_string(&path).unwrap().contains("# Keep workflow context."));
         assert!(change_workflow(&settings, Some(original), None).unwrap_err().contains("changed on disk"));
-        let catalog = change_workflow(&settings, Some(&catalog.workflows[0]), None).unwrap();
+        let catalog = change_workflow(&settings, Some(&catalog.workflows[0]), None).unwrap().catalog;
         assert!(catalog.workflows.is_empty());
     }
 }

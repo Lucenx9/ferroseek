@@ -443,7 +443,6 @@ pub enum Action {
     OpenLink,
     EditLink,
     CopySnippet,
-    PasteSnippet,
     EditSnippet,
     EditAlias,
     GlobalShortcut,
@@ -475,7 +474,6 @@ impl Action {
             Action::EditWorkflow => "Edit workflow",
             Action::EditLink => "Edit link",
             Action::CopySnippet => "Copy snippet",
-            Action::PasteSnippet => "Paste snippet",
             Action::EditSnippet => "Edit snippet",
             Action::EditAlias => "Edit alias",
             Action::GlobalShortcut => "Global shortcut",
@@ -535,7 +533,6 @@ impl Action {
             | Self::OpenLink
             | Self::EditLink
             | Self::CopySnippet
-            | Self::PasteSnippet
             | Self::ResetRanking
             | Self::RemoveFavorite
             | Self::Desktop(_) => &[],
@@ -554,7 +551,6 @@ impl Action {
             | Action::OpenLink
             | Action::CopyResult
             | Action::CopySnippet => "Enter",
-            Action::PasteSnippet => "Alt+Enter",
             Action::Reveal | Action::UseResult => "Ctrl+Enter",
             Action::CopyPath => "Ctrl+Shift+C",
             Action::BrowseFolder => "Alt+Right",

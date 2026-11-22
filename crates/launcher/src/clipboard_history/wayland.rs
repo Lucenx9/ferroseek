@@ -6,11 +6,14 @@ use std::fs::File;
 use std::io::{self, PipeReader, Read};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::os::unix::fs::FileExt;
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
-use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
-use wayland_client::protocol::{wl_registry, wl_seat};
+use wayland_client::globals::Global;
+use wayland_client::protocol::{wl_callback, wl_registry, wl_seat};
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, event_created_child};
 use wayland_protocols::ext::data_control::v1::client::{
     ext_data_control_device_v1 as ext_device, ext_data_control_manager_v1 as ext_manager,
@@ -21,13 +24,14 @@ use wayland_protocols_wlr::data_control::v1::client::{
     zwlr_data_control_offer_v1 as wlr_offer,
 };
 
-use super::{Mode, Policy, Profile, TEXT_LIMIT};
+use super::{Mode, Policy, Profile, TEXT_LIMIT, copy_time};
 
 const MIME_TYPES: [&str; 4] = ["text/plain;charset=utf-8", "text/plain;charset=UTF-8", "UTF8_STRING", "text/plain"];
 const SENSITIVE: &str = "x-kde-passwordManagerHint";
 const WAIT_MS: i32 = 120;
 const MAX_TRANSFERS: usize = 4;
 const TRANSFER_DEADLINE: Duration = Duration::from_secs(1);
+const SETUP_DEADLINE: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 struct Mime {
@@ -53,6 +57,7 @@ type Offer = Mutex<Mime>;
 struct Transfer {
     pipe: PipeReader,
     policy: Policy,
+    copied_at: Duration,
     deadline: Instant,
     bytes: Vec<u8>,
 }
@@ -77,9 +82,14 @@ struct Capture {
     initial: bool,
     closed: bool,
     pending: VecDeque<Transfer>,
+    last_copy: Duration,
 }
 
 impl Capture {
+    fn new(policy: Policy) -> Self {
+        Self { policy, initial: true, closed: false, pending: VecDeque::new(), last_copy: Duration::ZERO }
+    }
+
     fn selection(&mut self, mime: Option<&'static str>, receive: impl FnOnce(String, BorrowedFd<'_>)) {
         // Ignore the selection already present at startup or after resuming.
         if std::mem::take(&mut self.initial) || self.policy.mode != Mode::Recording {
@@ -92,9 +102,11 @@ impl Capture {
             if self.pending.len() == MAX_TRANSFERS {
                 self.pending.pop_front();
             }
+            self.last_copy = copy_time().max(self.last_copy + Duration::from_nanos(1));
             self.pending.push_back(Transfer {
                 pipe,
                 policy: self.policy,
+                copied_at: self.last_copy,
                 deadline: Instant::now() + TRANSFER_DEADLINE,
                 bytes: Vec::new(),
             });
@@ -102,23 +114,24 @@ impl Capture {
     }
 
     fn drain(&mut self, profile: &Profile) -> io::Result<()> {
-        while let Some(transfer) = self.pending.front_mut() {
-            if Instant::now() >= transfer.deadline {
-                self.pending.pop_front();
-                continue;
-            }
-            if !ready(transfer.pipe.as_fd(), 0)? {
-                break;
-            }
-            match transfer.read_step() {
-                Ok(Some(text)) => {
-                    profile.record(transfer.policy, text)?;
-                    self.pending.pop_front();
+        for _ in 0..self.pending.len() {
+            let Some(mut transfer) = self.pending.pop_front() else { break };
+            loop {
+                if !ready(transfer.pipe.as_fd(), 0)? {
+                    // Expire waiting pipes without discarding data already ready to read.
+                    if Instant::now() < transfer.deadline {
+                        self.pending.push_back(transfer);
+                    }
+                    break;
                 }
-                Ok(None) => {}
-                // A departing producer or oversized offer affects only that item.
-                Err(_) => {
-                    self.pending.pop_front();
+                match transfer.read_step() {
+                    Ok(None) => {}
+                    Ok(Some(text)) => {
+                        profile.record(transfer.policy, text, transfer.copied_at)?;
+                        break;
+                    }
+                    // A departing producer or oversized offer affects only that item.
+                    Err(_) => break,
                 }
             }
         }
@@ -136,15 +149,27 @@ enum Device {
     Wlr(wlr_manager::ZwlrDataControlManagerV1, wlr_device::ZwlrDataControlDeviceV1),
 }
 
+type Globals = Arc<Mutex<Vec<Global>>>;
+type SyncDone = Arc<AtomicBool>;
+
+struct Registry {
+    proxy: wl_registry::WlRegistry,
+    globals: Vec<Global>,
+}
+
 impl Protocol {
-    fn connect<D>() -> io::Result<(GlobalList, EventQueue<D>, Self)>
+    fn connect<D>(state: &mut D, deadline: Instant) -> io::Result<(Connection, Registry, EventQueue<D>, Self)>
     where
-        D: Dispatch<wl_registry::WlRegistry, GlobalListContents> + 'static,
+        D: Dispatch<wl_registry::WlRegistry, Globals> + Dispatch<wl_callback::WlCallback, SyncDone> + 'static,
     {
         let connection = Connection::connect_to_env().map_err(io::Error::other)?;
-        let (globals, queue) = registry_queue_init(&connection).map_err(io::Error::other)?;
-        let listed = globals.contents().clone_list();
-        let supports = |interface| listed.iter().any(|global| global.interface == interface);
+        let mut queue = connection.new_event_queue();
+        let globals = Globals::default();
+        let proxy = connection.display().get_registry(&queue.handle(), Arc::clone(&globals));
+        roundtrip_until(&connection, &mut queue, state, deadline)?;
+        let globals =
+            std::mem::take(&mut *globals.lock().map_err(|_| io::Error::other("Cannot read Wayland globals."))?);
+        let supports = |interface| globals.iter().any(|global| global.interface == interface);
         let protocol = if supports("ext_data_control_manager_v1") {
             Self::Standard
         } else if supports("zwlr_data_control_manager_v1") {
@@ -152,10 +177,10 @@ impl Protocol {
         } else {
             return Err(io::Error::other("This Wayland compositor does not offer clipboard data control."));
         };
-        Ok((globals, queue, protocol))
+        Ok((connection, Registry { proxy, globals }, queue, protocol))
     }
 
-    fn bind<D>(self, globals: &GlobalList, handle: &QueueHandle<D>) -> io::Result<Device>
+    fn bind<D>(self, registry: &Registry, handle: &QueueHandle<D>) -> io::Result<Device>
     where
         D: Dispatch<wl_seat::WlSeat, ()>
             + Dispatch<ext_manager::ExtDataControlManagerV1, ()>
@@ -164,17 +189,15 @@ impl Protocol {
             + Dispatch<wlr_device::ZwlrDataControlDeviceV1, ()>
             + 'static,
     {
-        let seat: wl_seat::WlSeat = globals.bind(handle, 1..=1, ()).map_err(io::Error::other)?;
+        let seat: wl_seat::WlSeat = registry.bind(handle, 1)?;
         match self {
             Self::Standard => {
-                let manager: ext_manager::ExtDataControlManagerV1 =
-                    globals.bind(handle, 1..=1, ()).map_err(io::Error::other)?;
+                let manager: ext_manager::ExtDataControlManagerV1 = registry.bind(handle, 1)?;
                 let device = manager.get_data_device(&seat, handle, ());
                 Ok(Device::Standard(manager, device))
             }
             Self::Wlr => {
-                let manager: wlr_manager::ZwlrDataControlManagerV1 =
-                    globals.bind(handle, 1..=2, ()).map_err(io::Error::other)?;
+                let manager: wlr_manager::ZwlrDataControlManagerV1 = registry.bind(handle, 2)?;
                 let device = manager.get_data_device(&seat, handle, ());
                 Ok(Device::Wlr(manager, device))
             }
@@ -182,41 +205,57 @@ impl Protocol {
     }
 }
 
+impl Registry {
+    fn bind<P, D>(&self, queue: &QueueHandle<D>, version: u32) -> io::Result<P>
+    where
+        P: Proxy + 'static,
+        D: Dispatch<P, ()> + 'static,
+    {
+        let interface = P::interface().name;
+        let global = self
+            .globals
+            .iter()
+            .find(|global| global.interface == interface)
+            .ok_or_else(|| io::Error::other("The Wayland seat or clipboard protocol is unavailable."))?;
+        Ok(self.proxy.bind(global.name, global.version.min(version), queue, ()))
+    }
+}
+
 pub(super) fn probe() -> io::Result<()> {
-    let (globals, mut queue, protocol) = Protocol::connect()?;
+    let deadline = Instant::now() + SETUP_DEADLINE;
+    let mut state = Capture::new(Policy::default());
+    let (connection, globals, mut queue, protocol) = Protocol::connect(&mut state, deadline)?;
     protocol.bind(&globals, &queue.handle())?;
-    let mut state = Capture { policy: Policy::default(), initial: true, closed: false, pending: VecDeque::new() };
-    queue.roundtrip(&mut state).map_err(io::Error::other)?;
+    roundtrip_until(&connection, &mut queue, &mut state, deadline)?;
     if state.closed {
         return Err(io::Error::other("This Wayland seat does not allow clipboard recording."));
     }
     Ok(())
 }
 
-/// Returns true to rebind after a new recording session starts.
-pub(super) fn watch(profile: &Profile, lock: &File) -> io::Result<bool> {
-    let policy = profile.policy()?;
+pub(super) fn watch(profile: &Profile, lock: &File, policy: Policy) -> io::Result<()> {
     if policy.mode != Mode::Recording {
-        return Ok(false);
+        return Ok(());
     }
-    let (globals, mut queue, protocol) = Protocol::connect()?;
+    let deadline = Instant::now() + SETUP_DEADLINE;
+    let mut state = Capture::new(policy);
+    let (connection, globals, mut queue, protocol) = Protocol::connect(&mut state, deadline)?;
     protocol.bind(&globals, &queue.handle())?;
-    let mut state = Capture { policy, initial: true, closed: false, pending: VecDeque::new() };
-    queue.roundtrip(&mut state).map_err(io::Error::other)?;
+    roundtrip_until(&connection, &mut queue, &mut state, deadline)?;
     if state.closed {
-        return Ok(false);
+        return Ok(());
     }
     lock.write_all_at(&policy.revision.to_le_bytes(), 0)?;
     let mut maintenance = Instant::now() + Duration::from_secs(60);
     loop {
+        if state.closed {
+            return Ok(());
+        }
         state.policy = profile.policy()?;
-        if state.closed || state.policy.mode != Mode::Recording {
-            return Ok(false);
+        if state.policy.mode != Mode::Recording || state.policy.revision != policy.revision {
+            return Ok(());
         }
-        if state.policy.revision != policy.revision {
-            return Ok(true);
-        }
-        advance(&mut queue, &mut state)?;
+        advance(&mut queue, &mut state, WAIT_MS)?;
         state.drain(profile)?;
         if Instant::now() >= maintenance {
             profile.snapshot()?;
@@ -225,38 +264,44 @@ pub(super) fn watch(profile: &Profile, lock: &File) -> io::Result<bool> {
     }
 }
 
-fn advance<D: 'static>(queue: &mut EventQueue<D>, state: &mut D) -> io::Result<()> {
-    advance_with_control(queue, state, None)
-}
-
-fn advance_with_control<D: 'static>(
+fn roundtrip_until<D>(
+    connection: &Connection,
     queue: &mut EventQueue<D>,
     state: &mut D,
-    control: Option<BorrowedFd<'_>>,
-) -> io::Result<()> {
-    queue.dispatch_pending(state).map_err(io::Error::other)?;
-    queue.flush().map_err(io::Error::other)?;
-    if let Some(read) = queue.prepare_read() {
-        let mut descriptors = [poll_fd(Some(read.connection_fd())), poll_fd(control)];
-        poll_ready(&mut descriptors, WAIT_MS)?;
-        if descriptors[0].revents != 0 {
-            read.read().map_err(io::Error::other)?;
+    deadline: Instant,
+) -> io::Result<()>
+where
+    D: Dispatch<wl_callback::WlCallback, SyncDone> + 'static,
+{
+    let done = SyncDone::default();
+    connection.display().sync(&queue.handle(), Arc::clone(&done));
+    while !done.load(Ordering::Relaxed) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "The desktop did not respond to clipboard setup."));
         }
+        advance(queue, state, remaining.as_millis().clamp(1, i32::MAX as u128) as i32)?;
+    }
+    Ok(())
+}
+
+fn advance<D: 'static>(queue: &mut EventQueue<D>, state: &mut D, timeout: i32) -> io::Result<()> {
+    let dispatched = queue.dispatch_pending(state).map_err(io::Error::other)?;
+    queue.flush().map_err(io::Error::other)?;
+    if dispatched != 0 {
+        return Ok(());
+    }
+    let Some(read) = queue.prepare_read() else { return Ok(()) };
+    if ready(read.connection_fd(), timeout)? {
+        read.read().map_err(io::Error::other)?;
     }
     Ok(())
 }
 
 fn ready(fd: BorrowedFd<'_>, timeout: i32) -> io::Result<bool> {
-    poll_ready(&mut [poll_fd(Some(fd))], timeout)
-}
-
-fn poll_fd(fd: Option<BorrowedFd<'_>>) -> libc::pollfd {
-    libc::pollfd { fd: fd.map_or(-1, |fd| fd.as_raw_fd()), events: libc::POLLIN, revents: 0 }
-}
-
-fn poll_ready(descriptors: &mut [libc::pollfd], timeout: i32) -> io::Result<bool> {
+    let mut descriptor = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
     // poll borrows the live descriptors for the duration of the call.
-    let result = unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as libc::nfds_t, timeout) };
+    let result = unsafe { libc::poll(&mut descriptor, 1, timeout) };
     if result >= 0 {
         return Ok(result > 0);
     }
@@ -281,9 +326,47 @@ macro_rules! ignore_events {
     };
 }
 
+macro_rules! dispatch_setup {
+    ($state:ty) => {
+        impl Dispatch<wl_registry::WlRegistry, Globals> for $state {
+            fn event(
+                _: &mut Self,
+                _: &wl_registry::WlRegistry,
+                event: wl_registry::Event,
+                globals: &Globals,
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                if let Ok(mut globals) = globals.lock() {
+                    match event {
+                        wl_registry::Event::Global { name, interface, version } => {
+                            globals.push(wayland_client::globals::Global { name, interface, version });
+                        }
+                        wl_registry::Event::GlobalRemove { name } => globals.retain(|global| global.name != name),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        impl Dispatch<wl_callback::WlCallback, SyncDone> for $state {
+            fn event(
+                _: &mut Self,
+                _: &wl_callback::WlCallback,
+                _: wl_callback::Event,
+                done: &SyncDone,
+                _: &Connection,
+                _: &QueueHandle<Self>,
+            ) {
+                done.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    };
+}
+
 pub mod publish;
 
-ignore_events!(Capture, wl_registry::WlRegistry, GlobalListContents);
+dispatch_setup!(Capture);
 ignore_events!(Capture, wl_seat::WlSeat, ());
 
 // Both data-control versions expose the same offer and selection semantics.
@@ -355,6 +438,70 @@ capture_protocol!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn setup_times_out_when_the_compositor_does_not_answer() {
+        let (client, _silent_peer) = UnixStream::pair().unwrap();
+        let connection = Connection::from_socket(client).unwrap();
+        let mut queue = connection.new_event_queue();
+        let mut capture = Capture::new(Policy::default());
+        let deadline = Instant::now() + Duration::from_millis(25);
+        let error = roundtrip_until(&connection, &mut queue, &mut capture, deadline).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn pending_copies_are_recorded_without_waiting_for_an_older_producer() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile(dir.path().join("history"));
+        let policy = Policy { mode: Mode::Recording, ..Policy::default() };
+        super::super::write_atomic(&profile.policy_path(), &policy).unwrap();
+        let mut capture = Capture::new(policy);
+        capture.initial = false;
+
+        let mut older = None;
+        capture.selection(Some("text/plain"), |_, fd| {
+            older = Some(File::from(fd.try_clone_to_owned().unwrap()));
+        });
+        capture.selection(Some("text/plain"), |_, fd| {
+            File::from(fd.try_clone_to_owned().unwrap()).write_all(b"Newer").unwrap();
+        });
+
+        capture.drain(&profile).unwrap();
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), ["Newer"]);
+        older.unwrap().write_all(b"Older").unwrap();
+        capture.drain(&profile).unwrap();
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), ["Newer", "Older"]);
+    }
+
+    #[test]
+    fn completed_copies_are_recorded_even_after_the_waiting_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile(dir.path().join("history"));
+        let policy = Policy { mode: Mode::Recording, ..Policy::default() };
+        super::super::write_atomic(&profile.policy_path(), &policy).unwrap();
+        let mut capture = Capture::new(policy);
+        capture.initial = false;
+
+        let mut held_open = None;
+        capture.selection(Some("text/plain"), |_, fd| held_open = Some(fd.try_clone_to_owned().unwrap()));
+        capture.selection(Some("text/plain"), |_, fd| {
+            File::from(fd.try_clone_to_owned().unwrap()).write_all(b"Ready").unwrap();
+        });
+        for transfer in &mut capture.pending {
+            transfer.deadline = Instant::now();
+        }
+
+        capture.drain(&profile).unwrap();
+        let entries = profile.snapshot().unwrap().entries;
+        assert_eq!(entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), ["Ready"]);
+        assert!(capture.pending.is_empty());
+        drop(held_open);
+    }
 
     #[test]
     fn sensitive_metadata_excludes_a_plain_text_offer() {

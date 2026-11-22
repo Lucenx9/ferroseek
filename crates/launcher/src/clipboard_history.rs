@@ -9,6 +9,7 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -72,6 +73,8 @@ pub struct Entry {
     pub text: String,
     pub copied_at: u64,
     #[serde(default)]
+    copied_at_nanos: u32,
+    #[serde(default)]
     pub pinned: bool,
 }
 
@@ -90,16 +93,20 @@ impl History {
         previous != self.entries.len()
     }
 
-    fn record(&mut self, text: String, retention: Retention, now: u64) {
-        self.expire(retention, now);
+    fn record(&mut self, text: String, copied_at: Duration) {
+        let (seconds, nanos) = (copied_at.as_secs(), copied_at.subsec_nanos());
         let entry = if let Some(index) = self.entries.iter().position(|entry| entry.text == text) {
-            Entry { copied_at: now, ..self.entries.remove(index) }
+            let previous = &self.entries[index];
+            if (previous.copied_at, previous.copied_at_nanos) > (seconds, nanos) {
+                return;
+            }
+            Entry { copied_at: seconds, copied_at_nanos: nanos, ..self.entries.remove(index) }
         } else {
             self.next_id = self.next_id.saturating_add(1);
-            Entry { id: self.next_id, text, copied_at: now, pinned: false }
+            Entry { id: self.next_id, text, copied_at: seconds, copied_at_nanos: nanos, pinned: false }
         };
         self.entries.insert(0, entry);
-        self.entries.sort_by_key(|entry| !entry.pinned);
+        self.sort();
         self.entries.truncate(ENTRY_LIMIT);
     }
 
@@ -117,8 +124,12 @@ impl History {
             return Err(io::Error::other(format!("You can pin up to {PIN_LIMIT} entries. Unpin one to make room.")));
         }
         entry.pinned = pinned;
-        self.entries.sort_by_key(|entry| (!entry.pinned, std::cmp::Reverse(entry.copied_at)));
+        self.sort();
         Ok(())
+    }
+
+    fn sort(&mut self) {
+        self.entries.sort_by_key(|entry| (!entry.pinned, std::cmp::Reverse((entry.copied_at, entry.copied_at_nanos))));
     }
 }
 
@@ -242,8 +253,11 @@ impl Profile {
                 Edit::Delete(id) => Some(Some(id)),
                 Edit::Clear => Some(Some(0)),
             };
-            // A transfer begun before a policy edit can't restore deleted text.
-            policy.revision = policy.revision.wrapping_add(1);
+            // Retention applies when each transfer is saved. Other edits
+            // invalidate pending transfers to protect deleted and private text.
+            if !matches!(edit, Edit::Retain(_)) {
+                policy.revision = policy.revision.wrapping_add(1);
+            }
             write_atomic(&self.policy_path(), &policy)?;
             if let Some(delete) = delete {
                 self.delete_expired_and_selected(policy.retention, delete)?;
@@ -272,7 +286,7 @@ impl Profile {
         write_atomic(&self.0, &history)
     }
 
-    fn record(&self, expected: Policy, text: String) -> io::Result<()> {
+    fn record(&self, expected: Policy, text: String, copied_at: Duration) -> io::Result<()> {
         if !accepts(&text) {
             return Ok(());
         }
@@ -282,7 +296,8 @@ impl Profile {
                 return Ok(());
             }
             let mut history: History = read_private(&self.0, FILE_LIMIT)?;
-            history.record(text, policy.retention, usage::now());
+            history.expire(policy.retention, usage::now());
+            history.record(text, copied_at);
             write_atomic(&self.0, &history)
         })
     }
@@ -344,19 +359,36 @@ impl Profile {
             return Err(io::Error::other("Cannot start the clipboard recorder."));
         };
         match lock.try_lock() {
-            Ok(()) => {
-                loop {
-                    lock.set_len(0)?;
-                    if !wayland::watch(self, &lock)? {
-                        break;
-                    }
-                }
-                Ok(())
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Ok(()),
+            Err(TryLockError::Error(error)) => return Err(error),
+        }
+        loop {
+            lock.set_len(0)?;
+            let policy = self.policy()?;
+            let result = wayland::watch(self, &lock, policy);
+            if self.release_watcher(&lock, policy)? {
+                return result;
             }
-            Err(TryLockError::WouldBlock) => Ok(()),
-            Err(TryLockError::Error(error)) => Err(error),
         }
     }
+
+    /// Keeps the lock when a new recording session needs the same watcher.
+    fn release_watcher(&self, lock: &File, previous: Policy) -> io::Result<bool> {
+        usage::with_lock(&self.0, true, || {
+            let current = self.policy()?;
+            if current.mode == Mode::Recording && current.revision != previous.revision {
+                return Ok(false);
+            }
+            // Resume either keeps this process alive or sees an idle recorder.
+            lock.unlock()?;
+            Ok(true)
+        })
+    }
+}
+
+fn copy_time() -> Duration {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
 }
 
 fn accepts(text: &str) -> bool {
@@ -400,19 +432,23 @@ mod tests {
         policy
     }
 
+    fn copy(profile: &Profile, policy: Policy, text: &str) {
+        profile.record(policy, text.into(), copy_time()).unwrap();
+    }
+
     #[test]
     fn copies_deduplicate_and_deletion_rejects_in_flight_transfers() {
         let dir = tempfile::tempdir().unwrap();
         let profile = Profile(dir.path().join("history"));
         let initial = recording(&profile);
         let payload = "First line\nÉquipe";
-        profile.record(initial, payload.into()).unwrap();
-        profile.record(initial, "Other".into()).unwrap();
-        profile.record(initial, payload.into()).unwrap();
+        copy(&profile, initial, payload);
+        copy(&profile, initial, "Other");
+        copy(&profile, initial, payload);
         let data = profile.snapshot().unwrap();
         assert_eq!(data.entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), [payload, "Other"]);
         profile.edit(Edit::Delete(data.entries[0].id)).unwrap();
-        profile.record(initial, payload.into()).unwrap();
+        copy(&profile, initial, payload);
         let entries = profile.snapshot().unwrap().entries;
         assert_eq!(entries.len(), 1);
         let remaining = entries[0].id;
@@ -434,8 +470,8 @@ mod tests {
         write_atomic(&profile.0, &legacy).unwrap();
         assert!(!profile.snapshot().unwrap().entries[0].pinned);
         profile.edit(Edit::Pin { id: 1, pinned: true }).unwrap();
-        profile.record(initial, "Recent".into()).unwrap();
-        profile.record(initial, "Keep".into()).unwrap();
+        copy(&profile, initial, "Recent");
+        copy(&profile, initial, "Keep");
         let entries = profile.snapshot().unwrap().entries;
         assert_eq!(entries.len(), 2);
         assert_eq!((entries[0].id, entries[0].text.as_str(), entries[0].pinned), (1, "Keep", true));
@@ -455,11 +491,11 @@ mod tests {
     fn history_capacity_preserves_pins_and_room_for_recent_copies() {
         let mut history = History::default();
         for i in 1..=PIN_LIMIT as u64 {
-            history.record(i.to_string(), Retention::Day, i);
+            history.record(i.to_string(), Duration::from_secs(i));
             history.set_pinned(i, true).unwrap();
         }
         for i in (PIN_LIMIT + 1)..=(PIN_LIMIT + ENTRY_LIMIT) {
-            history.record(i.to_string(), Retention::Day, i as u64);
+            history.record(i.to_string(), Duration::from_secs(i as u64));
         }
         assert_eq!(history.entries.len(), ENTRY_LIMIT);
         assert!(history.entries[..PIN_LIMIT].iter().all(|entry| entry.pinned));
@@ -473,21 +509,53 @@ mod tests {
     }
 
     #[test]
+    fn retention_changes_keep_recording_and_apply_to_pending_copies() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile(dir.path().join("history"));
+        let initial = recording(&profile);
+        profile.edit(Edit::Retain(Retention::Day)).unwrap();
+        assert_eq!(profile.policy().unwrap().revision, initial.revision);
+        copy(&profile, initial, "In flight");
+        assert_eq!(profile.snapshot().unwrap().entries[0].text, "In flight");
+    }
+
+    #[test]
     fn retention_and_private_mode_leave_no_path_for_new_unapproved_entries() {
         let dir = tempfile::tempdir().unwrap();
         let profile = Profile(dir.path().join("history"));
         let initial = recording(&profile);
         let mut old = History::default();
-        old.record("Expired".into(), Retention::Week, usage::now().saturating_sub(2 * SECONDS_PER_DAY));
+        let past = usage::now().saturating_sub(2 * SECONDS_PER_DAY);
+        old.record("Expired".into(), Duration::from_secs(past));
         write_atomic(&profile.0, &old).unwrap();
         profile.edit(Edit::Retain(Retention::Day)).unwrap();
         assert!(profile.snapshot().unwrap().entries.is_empty());
         let resumed = profile.policy().unwrap();
         profile.edit(Edit::Private).unwrap();
-        profile.record(resumed, "Private".into()).unwrap();
+        copy(&profile, resumed, "Private");
         assert_eq!(profile.policy().unwrap().mode, Mode::Paused);
         assert!(profile.snapshot().unwrap().entries.is_empty());
-        profile.record(initial, "Stale".into()).unwrap();
+        copy(&profile, initial, "Stale");
         assert!(profile.snapshot().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn watcher_keeps_its_lock_if_recording_resumes_during_exit() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile(dir.path().join("history"));
+        let previous = recording(&profile);
+        let watcher = profile.watcher_lock(true).unwrap().unwrap();
+        watcher.lock().unwrap();
+        profile.edit(Edit::Private).unwrap();
+        let mut resumed = profile.policy().unwrap();
+        resumed.mode = Mode::Recording;
+        resumed.revision = resumed.revision.wrapping_add(1);
+        write_atomic(&profile.policy_path(), &resumed).unwrap();
+
+        assert!(!profile.release_watcher(&watcher, previous).unwrap());
+        assert_eq!(profile.recorder().unwrap(), Recorder::Starting);
+        profile.edit(Edit::Stop).unwrap();
+        assert!(profile.release_watcher(&watcher, resumed).unwrap());
+        assert_eq!(profile.recorder().unwrap(), Recorder::Idle);
     }
 }

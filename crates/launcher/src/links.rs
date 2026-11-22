@@ -134,9 +134,10 @@ impl Destination {
         if !has_keyword {
             return Err("A web search needs a keyword.".into());
         }
-        let in_value = before.split_once('?').is_some_and(|(_, params)| {
-            !params.contains('#') && params.rsplit('&').next().is_some_and(|param| param.contains('='))
-        });
+        let in_value = !before.contains('#')
+            && before
+                .split_once('?')
+                .is_some_and(|(_, params)| params.rsplit('&').next().is_some_and(|param| param.contains('=')));
         if !in_value || after.contains(QUERY) {
             return Err("Use {query} once in a URL query value, such as ?q={query}.".into());
         }
@@ -224,6 +225,7 @@ mod tests {
             "https://user@example.net",
             "https://{query}.example.net",
             "https://example.net/?{query}=ignored",
+            "https://example.net/#route?q={query}",
             "https://example.net/?q={query}&x={query}",
             "https://example.net/\nignored",
             "relative/path",

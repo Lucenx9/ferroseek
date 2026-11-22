@@ -79,11 +79,7 @@ impl State {
     }
 
     pub fn search_status(&self, scope: Scope) -> Status {
-        if scope == Scope::Commands && self.catalog.error.is_some() {
-            Status::Error("Check launcher-scripts.toml".into())
-        } else {
-            Status::Idle
-        }
+        if scope == Scope::Commands && self.catalog.error.is_some() { Status::CatalogError } else { Status::Idle }
     }
 }
 

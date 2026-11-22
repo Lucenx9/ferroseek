@@ -182,7 +182,6 @@ fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> E
         return ExitCode::from(1);
     }
     timing::event("backend_ready");
-    let paste = if private { None } else { window_switcher::PasteCapture::start() };
     let apps = scan.join().unwrap_or_default();
     timing::event("applications_ready");
     let history = if private { usage::Usage::disabled() } else { usage::Usage::load(usage::Usage::default_path()) };
@@ -194,18 +193,7 @@ fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> E
     let config = ferroseek_config::Config::load(&settings_path).unwrap_or_default();
     timing::event("ui_starting");
     match ui::run(
-        ui::Boot {
-            config,
-            activation,
-            opaque,
-            backend,
-            apps,
-            usage: history,
-            favorites,
-            settings_path,
-            private,
-            paste_target: paste.and_then(window_switcher::PasteCapture::finish),
-        },
+        ui::Boot { config, activation, opaque, backend, apps, usage: history, favorites, settings_path, private },
         destination,
         events,
     ) {

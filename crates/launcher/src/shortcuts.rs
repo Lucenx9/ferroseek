@@ -17,7 +17,6 @@ use keyboard::{Key, Modifiers};
 #[derive(Debug, Clone, Copy)]
 pub enum Routing {
     Commands(Preferences),
-    Snippet(Preferences),
     Only(Chord, Action),
     Recording,
     Clipboard,
@@ -31,12 +30,7 @@ impl Routing {
         };
         let chord = parse_press(key, *physical_key, *modifiers);
         match self {
-            Self::Snippet(_) if (*modifiers, key.as_ref()) == (Modifiers::ALT, Key::Named(Named::Enter)) => {
-                Some(Message::PasteSnippet)
-            }
-            Self::Commands(preferences) | Self::Snippet(preferences) => {
-                preferences.action(chord.ok()?).map(command_message)
-            }
+            Self::Commands(preferences) => preferences.action(chord.ok()?).map(command_message),
             Self::Only(binding, action) => (chord == Ok(binding)).then(|| command_message(action)),
             Self::Disabled => None,
             Self::Clipboard => clipboard_shortcut(key, *modifiers),
@@ -52,7 +46,6 @@ fn clipboard_shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     let shortcut = match (modifiers, key.as_ref()) {
         (Modifiers::CTRL, Key::Character("g" | "G")) => Shortcut::PinnedOnly,
         (Modifiers::CTRL, Key::Character("t" | "T")) => Shortcut::Retention,
-        (Modifiers::ALT, Key::Named(Named::Enter)) => Shortcut::Paste,
         (SHIFT_CTRL, Key::Named(Named::Delete)) => Shortcut::Clear,
         (SHIFT_CTRL, Key::Character("p" | "P")) => Shortcut::Pin,
         _ => return None,

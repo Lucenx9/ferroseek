@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 
 use crate::matcher;
 
-pub use edit::{change, change_workflow, format_arguments, parse_arguments};
+pub use edit::{Saved, change, change_workflow, format_arguments, parse_arguments};
 pub use run::{Completion, Job, Report};
 pub use workflow::{Plan, Workflow};
 

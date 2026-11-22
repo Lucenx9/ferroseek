@@ -21,7 +21,7 @@ fn main() -> ExitCode {
 async fn run() -> io::Result<()> {
     let (session, updates) = match Session::start() {
         Ok(session) => session,
-        Err(error) => return publish(Response::Catalog(Update::Unavailable(error.into()))),
+        Err(error) => return publish(Response::Unavailable(error.into())),
     };
     let (send, requests) = mpsc::unbounded();
     std::thread::Builder::new().name("window-requests".into()).spawn(move || receive_requests(send))?;
@@ -42,10 +42,9 @@ fn receive_requests(send: mpsc::UnboundedSender<Request>) {
 
 async fn publish_catalog(mut updates: mpsc::UnboundedReceiver<Update>) -> io::Result<()> {
     while let Some(update) = updates.next().await {
-        let unavailable = matches!(update, Update::Unavailable(_));
-        publish(Response::Catalog(update))?;
-        if unavailable {
-            break;
+        match update {
+            Update::Windows(windows) => ipc::send_windows(&mut io::stdout().lock(), &windows, ipc::RESPONSE_LIMIT)?,
+            Update::Unavailable(error) => return publish(Response::Unavailable(error)),
         }
     }
     Ok(())
@@ -60,5 +59,5 @@ async fn handle_requests(session: Session, mut requests: mpsc::UnboundedReceiver
 }
 
 fn publish(response: Response) -> io::Result<()> {
-    ipc::send(&mut io::stdout().lock(), &response)
+    ipc::send(&mut io::stdout().lock(), &response, ipc::RESPONSE_LIMIT)
 }

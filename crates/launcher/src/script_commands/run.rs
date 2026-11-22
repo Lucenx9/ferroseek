@@ -2,6 +2,7 @@
 //! Own the process group and drain its combined output away from the UI.
 
 use std::io::{self, Read};
+use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
@@ -76,11 +77,23 @@ impl Process {
         if self.cancelled {
             return Ok(Some(Completion::Cancelled));
         }
-        if let Some(child) = &mut self.child
-            && let Some(status) = child.try_wait()?
-        {
-            self.child = None;
-            return Ok(Some(Completion::Exited(status)));
+        if let Some(child) = &self.child {
+            match exited(child) {
+                Ok(true) => {
+                    self.signal();
+                    let status = self.child.take().expect("exited child").wait()?;
+                    return Ok(Some(Completion::Exited(status)));
+                }
+                Ok(false) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    if error.raw_os_error() == Some(libc::ECHILD) {
+                        // The child is no longer waitable, so its group ID may have been reused.
+                        self.child = None;
+                    }
+                    return Err(error);
+                }
+            }
         }
         if Instant::now() >= deadline {
             self.signal();
@@ -88,6 +101,18 @@ impl Process {
         }
         Ok(None)
     }
+}
+
+fn exited(child: &Child) -> io::Result<bool> {
+    // Observe exit without reaping the group leader, keeping its PID reserved during cleanup.
+    let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
+    let result = unsafe {
+        libc::waitid(libc::P_PID, child.id(), info.as_mut_ptr(), libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+    };
+    if result == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
 fn spawn(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Result<UnixStream> {
@@ -104,9 +129,15 @@ fn spawn(script: &Script, inputs: &[String], process: &Mutex<Process>) -> io::Re
         .stdout(Stdio::from(OwnedFd::from(writer)))
         .stderr(Stdio::from(OwnedFd::from(stderr)));
 
-    let mut process = process.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !process.cancelled {
-        process.child = Some(command.spawn()?);
+    if process.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).cancelled {
+        return Ok(output);
+    }
+    // Startup can block while loading the executable. Let Cancel record its intent meanwhile.
+    let child = command.spawn()?;
+    let mut state = process.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    state.child = Some(child);
+    if state.cancelled {
+        state.signal();
     }
     Ok(output)
 }
@@ -299,6 +330,22 @@ mod tests {
         assert_eq!(started, [0, 1]);
         assert_eq!(report.failed_step.as_deref(), Some("Step 2 · Check"));
         assert_eq!(report.output, "[1 · Build]\nBuild complete\n\n[2 · Check]\nCheck failed\n");
+    }
+
+    #[test]
+    fn exiting_leader_stops_other_processes_holding_its_output() {
+        let process = Mutex::new(Process::default());
+        let script = shell("sleep 5 & printf 'finished\n'", &[]);
+        let output = spawn(&script, &[], &process).unwrap();
+        let mut observer = output.try_clone().unwrap();
+        let mut capture = Capture::default();
+        let completion = collect(output, &process, Instant::now() + TIMEOUT, &mut capture).unwrap();
+        assert!(matches!(completion, Completion::Exited(status) if status.success()));
+        assert_eq!(capture.bytes, b"finished\n");
+        // Retaining the reader lets us distinguish an exited leader from a closed group.
+        observer.set_nonblocking(false).unwrap();
+        observer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        assert_eq!(observer.read(&mut [0]).unwrap(), 0);
     }
 
     #[test]

@@ -191,8 +191,6 @@ Local command and workflow aliases identify the runnable definition. If it
 changes or is removed, keep the alias available for editing or removal.
 Snippets show their keyword and line count. Copy is an explicit action.
 The text field preserves multiline editing and uses Ctrl+S for save.
-Use the same destination check and recovery for pasting snippets and history
-entries. Show the destination in the action list when pasting a snippet.
 Clipboard history has its own filter and result list. Show recording status,
 retention, copy and deletion controls in the view. Mark pinned entries in their
 rows and provide a pinned-only filter that keeps the query. Ask for confirmation
@@ -200,14 +198,12 @@ before clearing all entries, including pins. Preserve the selected entry during
 live refreshes. Keep copied text available after leaving the launcher when the
 desktop supports a standalone clipboard source. Otherwise keep the surface
 available to serve the current selection.
-Offer Paste as an explicit action alongside Copy when the desktop can report
-the original window and accept keyboard input. Show the captured destination.
-Check focus and clipboard ownership before sending the paste shortcut. If the
-check fails, preserve the search and offer manual paste or a fresh copy.
 Switch windows filters the live window list by title and application. Use the
 application name and window state as context. Keep the selected window
 through updates and require a new selection if it closes. Back restores the
-parent search. Explain when the desktop cannot provide window switching.
+parent search. Close the launcher after the desktop confirms the switch.
+If activation is unconfirmed, restore launcher input and keep the query and
+selection. Explain when the desktop cannot provide window switching.
 Window actions identify the selected window, offer the inverse of its current
 state, and confirm a change after the desktop reports it.
 
