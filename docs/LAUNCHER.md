@@ -1176,8 +1176,8 @@ private session bus whose activation directory is empty (so neither the
 real daemon nor desktop portals can be started). It saves one screenshot per
 query and checks that a second invocation closes the first. It skips when
 `kwin_wayland` or `spectacle` is missing in screenshot-only mode. Interaction
-mode treats missing graphical prerequisites or non-OpenGL compositing as
-inconclusive and exits with status 77.
+mode exits with status 77 when its graphical tools are missing. The material
+checks also require OpenGL compositing.
 
 For real keyboard input and focus checks in the disposable compositor:
 
@@ -1228,7 +1228,7 @@ For the three baseline profiles, KWin's support information must report one
 at the requested scale. Native PNG dimensions are checked too: 1280×800 at 1×,
 1920×1200 at 1.5×. Ordinary typing and the unshifted Digit1 symbol (`1` or `&`)
 verify that the requested keyboard layout actually applies. Expected and observed
-probe text are retained in `keyboard-preflight.json` and the schema 2 report.
+probe text are retained in `keyboard-preflight.json` and the schema 3 latency report.
 
 Measured opens wait for the first redraw and actual Wayland keyboard Enter
 before typing, without clicking or an arbitrary delay. They verify editing after
@@ -1303,6 +1303,49 @@ native), with synthetic data and the nonfirst selected file retained. See the
 The background input probe remains visible outside the launcher.
 
 Other compositors, physical keyboards and IMEs remain unverified.
+
+### Replay opening and immediate typing
+
+Build `ferroseek-launcher` and `ferroseekd` in each revision’s checkout with
+`cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon`.
+Keep the two build directories and supply the commit that produced each pair.
+From the checkout containing the proof harness, run
+
+```sh
+scripts/prove-launcher \
+  --base "$BASE_REV" "$BASE_CHECKOUT/target/release" \
+  --head "$HEAD_REV" "$HEAD_CHECKOUT/target/release" \
+  --out /tmp/ferroseek-opening-proof
+```
+
+Use a new output directory for each replay. Both runs use the same harness,
+`us-1x`, tiny-skia, synthetic index and keyboard preflight, each on a fresh
+private bus and virtual KWin session. A control launch with `--query report`
+checks that the binary reports keyboard focus and the expected file results.
+The test then opens an empty launcher and sends `report` in one key burst as
+soon as KWin grants it keyboard focus. It requires a generation-six query
+redraw with 15 indexed files. This covers input after compositor focus.
+Physical shortcut delivery, pre-focus typing and presentation latency need
+separate evidence.
+
+`comparison.json` records the supplied revisions, resolved commits, SHA-256
+of both executables and the shared harness files, commands, working directory,
+profile, per-run statuses and evidence paths. The caller supplies the association between revision and
+build. Each side retains its harness log, KWin support information, keyboard
+preflight, control trace and `input-burst-software.jsonl` when it reaches those
+steps. Spectacle saves a PNG when the virtual compositor supports capture.
+The input assertion also runs under QPainter.
+
+| Base | Head | Interpretation | Exit |
+|---|---|---|---|
+| Pass | Pass | No regression proved | 0 |
+| Assertion failed | Pass | The failure reproduced on base and passed on head | 0 |
+| Pass | Assertion failed | Regression in this scenario | 1 |
+| Assertion failed | Assertion failed | The failure persists on head | 1 |
+| Inconclusive | Any | Inspect the base log for a setup, control or harness failure | 77 |
+| Any | Inconclusive | Inspect the head log for a setup, control or harness failure | 77 |
+
+Different outcomes from byte-identical binary pairs are inconclusive (77).
 
 ### Desktop validation
 
