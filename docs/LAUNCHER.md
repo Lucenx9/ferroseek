@@ -1,10 +1,10 @@
 # FerroSeek launcher (`ferroseek-launcher`)
 
 FerroSeek's main user interface is a keyboard-first Linux launcher for
-applications, files and calculations on Wayland. It draws a layer-shell overlay, asks the running
+applications, files, built-in commands and calculations on Wayland. It draws a layer-shell overlay, asks the running
 `ferroseekd` for file results and launches applications from their
-freedesktop desktop entries. It is a separate process: it never opens or
-writes the index and adds no background service.
+freedesktop desktop entries. The launcher is separate from the index.
+The global shortcut listener and clipboard recorder are optional.
 
 **Status:** experimental. Automated graphical checks run in nested virtual KWin
 5.27.11 on Ubuntu 24.04. Other desktop sessions remain unverified; see the
@@ -22,19 +22,23 @@ dependency of the layer-shell backend probes at build time.
 ferroseek-launcher            # opens; run it again to close it
 ```
 
-Bind the command to a key yourself, e.g. in KDE System Settings → Keyboard →
-Shortcuts → *Add New* → *Command or Script*. The launcher never registers
-global shortcuts or changes desktop settings. Running it while it is open
-closes the open instance (single instance via the session-bus name
+Bind the command in KDE System Settings → Keyboard → Shortcuts → *Add New* →
+*Command or Script*, or use the [global shortcut listener](#desktop-portal-shortcuts).
+Running it while it is open
+without a command ID closes the open instance (single instance via the session-bus name
 `io.github.ferroseek.Launcher`). It also closes when another window takes keyboard
 focus, for example after a click outside it, except while an open is in progress,
-while the folder or appearance settings screen is shown, or after a copy in this session: the
-launcher serves the copied value, so it stays until Esc or the toggle closes it.
+while Search folders, Appearance or Shortcuts is shown, or while the launcher
+is serving the clipboard. See [Clipboard history](#clipboard-history) for
+copying text that remains available after the launcher closes.
 
 | Option | Effect |
 |---|---|
 | `--query TEXT` | start with `TEXT` already typed |
-| `--private` | do not record anything opened in this session |
+| `--command ID` | open a built-in command or review a local command or workflow |
+| `--list-commands` | print built-in command IDs and titles |
+| `--global-shortcuts` | listen for global shortcuts assigned through the desktop portal |
+| `--private` | skip launch history, hide clipboard history and pause clipboard recording |
 | `--opaque` | use a solid surface without background blur |
 | `--forget-history` | delete the launch history and exit |
 
@@ -43,17 +47,307 @@ unless `--enable` is supplied. Review indexing roots before enabling it.
 `./scripts/uninstall.sh --launcher` removes only the launcher and retains
 the engine and integrations. See [installation](INSTALLATION.md).
 
+## Settings
+
+Open **Settings** in the search header or press Ctrl+Shift+S. Use Up/Down or
+Tab/Shift+Tab to select a page and Enter to open it, or click its row. Launcher
+settings group **Appearance**, **Shortcuts**, and **Global shortcuts**. File search
+groups **Search folders** and **Search status**. Back or Esc returns to Settings
+with the same page selected.
+Esc from Settings returns to the current search. Each page also has a direct
+shortcut shown next to its name when one is available.
+
+![Settings grouped by launcher and file search](assets/launcher-settings.png)
+
+Settings and the README search screenshot were captured at 1× in isolated
+Labwc with tiny-skia. Search status was captured at 1× in isolated virtual
+KWin 5.27.11.
+
+## Shortcuts
+
+![Shortcut settings with a changed Actions binding ready to save](assets/launcher-shortcuts.png)
+
+Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
+Open **Settings → Shortcuts** or search for **Shortcuts**. Select a row and
+press Enter or click it, then press the new combination. Choose Ctrl+Shift
+with a letter or comma. Ctrl+Shift+C is reserved for copying a path. The
+original Ctrl+K, Ctrl+I and Ctrl+Comma bindings are also available. A
+combination already assigned to another action is reported in the editor.
+
+Press Ctrl+S or **Save** to apply the draft. **Restore defaults** stages the
+original bindings for saving. Esc cancels recording. When leaving a changed
+draft, Ctrl+D discards it and Esc keeps editing. If unrelated configuration
+changes on disk, **Reload** can update the saved version while keeping the
+draft. When bindings themselves changed on disk, discard and reopen the page
+to edit the latest version.
+
+The bindings apply inside the launcher window. Set the global shortcut for
+launching FerroSeek through your [desktop configuration](#build-and-run).
+To bind a built-in command, use its ID from `ferroseek-launcher --list-commands`.
+For example, bind the following command to open **Clipboard history** directly.
+
+```sh
+ferroseek-launcher --command clipboard-history
+```
+
+If search is already open, the launcher opens the command in the existing
+window and Back returns to the previous search. Return to search first if
+another view is open. If folder setup is required, the command opens after
+setup is applied. Add `--private` to require a private session. Close an
+existing regular window first.
+
+For a local command or workflow, choose **Actions → Global shortcut** and
+**Copy launch command** (Ctrl+Shift+C). Assign that command to a key in your
+desktop settings. The shortcut opens a review with any required inputs. Use
+**Run** (Ctrl+Enter) to execute it. If the runnable definition changes, copy
+and assign a new launch command. If you edit `launcher-scripts.toml` outside
+the launcher, reopen FerroSeek before copying the new launch command.
+
+### Desktop portal shortcuts
+
+![Desktop-assigned keys for clipboard history and opening FerroSeek](assets/launcher-global-shortcuts.png)
+
+Captured at 1× in isolated Labwc with tiny-skia and a simulated shortcut backend.
+
+On a desktop that supports the XDG GlobalShortcuts portal, the optional
+listener registers **Open FerroSeek** and the built-in commands for
+assignment by the desktop. Open **Settings → Global shortcuts**, or search
+for **Global shortcuts**. Choose **Start** (Enter) to run the listener for the
+current session. The desktop handles assignment. KDE's version 1 shortcuts
+portal restores saved assignments when it creates the session. If it restores
+FerroSeek shortcuts, the listener reuses them without reopening System Settings.
+The page shows the key labels reported by the desktop and updates them when
+assignments change.
+
+From a built-in command result, use **Actions → Global shortcut** to see its
+binding. **Configure** opens the desktop's shortcut settings when supported.
+To assign the key manually, choose **Copy launch command** or press
+Ctrl+Shift+C. Esc returns to the command you were viewing.
+
+Choose **Configure** (Enter) to reopen assignment on a portal that supports
+it. Older portals use the desktop's own settings. Choose **Stop** (Ctrl+Enter)
+to stop the current listener. Escape returns to the previous view and Ctrl+R
+refreshes the listener status. Closing the launcher leaves the listener active.
+
+For terminal use, run `ferroseek-launcher --global-shortcuts` after installing
+the launcher. Ctrl+C stops a listener that was started in the terminal.
+
+To keep the listener active across graphical logins on a desktop that uses
+`graphical-session.target`, explicitly enable its installed user service.
+
+```sh
+systemctl --user enable --now app-io.github.ferroseek.Launcher.service
+```
+
+Use `systemctl --user disable --now app-io.github.ferroseek.Launcher.service`
+to stop it and remove autostart. **Start** from settings uses the installed
+service when available. Older portals that identify apps by their systemd unit
+require that service. Desktop support for assigning keys varies by portal
+backend. Desktop-configured command shortcuts remain available where portal
+assignment is unavailable.
+
+In virtual KWin 5.27, XDG Desktop Portal 1.22 passed the installed FerroSeek
+identity to the KDE backend. With simulated backends, the same portal forwarded
+an activation to Clipboard history. In nested Labwc, it also forwarded a
+configuration request and returned updated key labels to the settings page.
+Physical key assignment through the portal remains to be verified.
+
+## Saved links
+
+![Creating a saved web search with fallback enabled](assets/launcher-edit-link.png)
+
+Captured at 1× in isolated Labwc with tiny-skia.
+
+Search for **Create link** in **All** or **Commands**. Give the link a name
+and enter an HTTPS or HTTP address, an absolute indexed path, or a path starting
+with `~/`. Tab and Shift+Tab move between fields. Press Enter or Ctrl+S to
+save. The launcher opens **Commands** with the saved link selected. Escape
+returns to the previous search. If the form contains unsaved changes, Ctrl+D
+discards them and Escape keeps editing.
+
+An optional keyword gives a shorter way to find a link. For a web search,
+enter a destination such as `https://example.net/find?q={query}` and a keyword
+such as `find`. Type `find ferro seek` in the launcher and press Enter to
+submit the encoded search terms to the default web handler. A web search uses
+one `{query}` in a query parameter value. Selecting a web search with empty
+terms fills its keyword so you can type the terms. The launcher sends the
+destination to the desktop only when you explicitly open it.
+
+In a web search editor, click **Fallback off** or press Ctrl+Enter to enable
+the fallback, then save. When a search in **All** completes with no local
+results, enabled links appear as **Search with …** and show their destination
+host. Enter or double-click sends the current query as the search terms.
+To remove the suggestion, open **Edit link**, turn the fallback off and save.
+
+![A saved web search offered after a completed local search](assets/launcher-search-fallback.png)
+
+Captured at 1× in isolated Labwc with a synthetic query and destination.
+
+Saved links appear alongside built-in commands. Use **Actions → Edit link**
+to change one. In the editor, **Delete** or Ctrl+D opens a confirmation.
+Confirm with Ctrl+D or the **Delete** button. Escape keeps the saved link.
+Opening an indexed path asks the search service to resolve and open it. The
+same indexing and access rules apply as for a file search result.
+
+The launcher stores the explicitly saved links beside its main configuration
+as `launcher-links` with owner-only permissions. Private mode can use and edit
+these links, and opening a link adds no launch history. The launcher keeps up
+to 128 links, with unique names and keywords.
+Before downgrading to a version without search fallbacks, turn them off and save
+each affected link so the older launcher can read the saved entries file.
+
+## Aliases
+
+Select an application, built-in command, local command or workflow and choose **Edit alias** from
+**Actions**. Enter a word using a–z, digits, hyphens, or underscores and press
+Enter or Ctrl+S. Type the exact alias, in either case, to bring its original
+result to the top of the search. An application alias works in **All** and
+**Applications**. A command alias works in **All** and **Commands**.
+
+![The rpt alias selects Project Reports in search](assets/launcher-alias-search.png)
+
+Captured in isolated virtual KWin 5.27 at 1× with the tiny-skia renderer and
+synthetic application entries.
+
+An alias belongs to one target and shares its keyword namespace with saved
+links and snippets. The editor keeps your draft when a word is already assigned. Use
+**Remove** or Ctrl+D to open the removal confirmation, then press Ctrl+D
+to confirm. Escape keeps editing at the confirmation. If an application is
+unavailable, searching for its alias still lets you edit or remove it. An alias
+for a local command or workflow identifies the runnable definition. If you edit
+the executable, arguments or workflow steps, find and remove the old alias,
+then set it on the updated result.
+
+Aliases are stored beside the main configuration in the owner-only
+`launcher-links` file. They remain available in private sessions and are
+independent of launch history. The launcher supports up to 128 aliases.
+
+## Snippets
+
+![Editing a multiline snippet with a reusable keyword](assets/launcher-snippet-editor.png)
+
+Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+
+Search for **Create snippet**. Enter a name, the text to save and an optional
+keyword. Tab and Shift+Tab move between fields. In the text field, Enter adds
+a line break and the arrow keys move the caret. Press Ctrl+S or click **Save**.
+The launcher selects the saved snippet in **Commands**.
+
+Find snippets by name or keyword in **All** or **Commands**. Use Enter or
+**Copy snippet** to put the full text on the clipboard. The launcher stays open
+to serve the clipboard while you paste into the destination application. The
+result displays the keyword and line count. Open **Actions → Edit snippet**
+to read or change the full text. To delete, press Ctrl+D in the editor and
+confirm with Ctrl+D. Escape at the confirmation keeps editing.
+
+FerroSeek keeps up to 128 snippets with unique names and up to 8 KiB of text
+each. Keywords share the same namespace as saved links and aliases. Snippets
+are saved only when you explicitly save them, including in private sessions.
+They use the owner-only `launcher-links` file beside the main configuration.
+
+## Clipboard history
+
+![Clipboard history with a selected pin and its copy and preview controls](assets/launcher-clipboard-history.png)
+
+The history view was captured in nested Labwc and the
+[full text preview](assets/launcher-clipboard-preview.png) in virtual KWin
+5.27.11, both at 1× with tiny-skia and synthetic clipboard text.
+
+Search for **Clipboard history**. Choose **Start recording** or press Ctrl+S
+to opt in. FerroSeek saves new plain-text copies from the Wayland clipboard,
+including while the launcher is closed. It skips the selection already present
+when recording starts, the primary selection and offers marked sensitive with
+the KDE password hint. It accepts UTF-8 text up to 8 KiB per entry.
+
+Filter with the search field. Use **Preview** or Ctrl+Enter to read the full
+text. Esc returns to the same filter and selection. Press Enter, use a
+numbered shortcut, or double-click to copy the selected text again. With one
+input seat and clipboard data control, the copied text stays available when
+you close the launcher. You can return to the previous app and press its paste
+shortcut, even with recording stopped. Otherwise keep the launcher open while
+you paste.
+
+Use **Pin** or Ctrl+Shift+P to keep the selected entry. Pinned entries appear
+first. **Pinned** or Ctrl+G narrows the current search to pins. **Show all** or
+the same shortcut restores all entries.
+
+Ctrl+D deletes the selected entry, including a pinned one. **Clear history**
+or Ctrl+Shift+Delete opens a confirmation to remove all entries. Ctrl+D
+confirms and Esc keeps the entries. Clearing history leaves the current desktop
+clipboard available.
+
+FerroSeek keeps up to 100 distinct entries. **Keep … days** or Ctrl+T cycles
+through 1, 7 and 30 days. Up to 20 entries can be pinned within that limit.
+Pins survive age-based expiration and new copies. Unpinning an entry that
+exceeds the current retention removes it immediately. The recorder and the
+history view remove expired entries while they are active.
+**Stop recording** retains existing entries. A private launcher pauses the
+recorder and hides its history. Open a regular launcher and choose **Resume
+recording** when you are ready to start capturing again.
+
+The recorder exits when the compositor disconnects. Launching FerroSeek again
+restarts a recorder you left enabled. Use **Refresh** or Ctrl+R to retry a
+recorder for the current session. The history and policy live in owner-only
+files under `$XDG_STATE_HOME/ferroseek`, or `~/.local/state/ferroseek` by
+default.
+
+Clipboard recording requires a compositor exposing
+[ext-data-control](https://github.com/wayland-mirror/wayland-protocols/blob/main/staging/ext-data-control/ext-data-control-v1.xml)
+or [wlr-data-control](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-data-control-unstable-v1.xml).
+
+## Switch windows
+
+![Window results with application names, minimized state and numbered shortcuts](assets/launcher-window-switcher.png)
+
+Search for **Switch windows** in **All** or **Commands**. Filter by window
+title or application name. Results show the application and indicate minimized
+or maximized windows. Use Up/Down or Tab to select. Press Enter, use a visible numbered
+shortcut, or double-click a row to switch to its window. Esc or **Back**
+restores the previous search.
+
+Use **Actions** (Ctrl+K by default), Shift+F10, the Menu key or right-click
+on a row to manage that window. Choose **Maximize** or **Restore size**, or
+choose **Minimize** or **Unminimize**. Use the pointer, Up/Down and Enter,
+or the numbered shortcuts. The inverse action appears after the desktop
+reports the change. Esc returns to the same window filter and selection.
+
+![Window actions after the selected window was maximized](assets/launcher-window-actions.png)
+
+Captured at 1× in isolated Labwc with tiny-skia and a synthetic window.
+
+The list updates while the command is open. If the selected window closes or
+stops matching after a title change, choose another window. FerroSeek keeps
+window titles in memory while the command is open.
+
+Switching requires a Wayland session with a single input seat and either
+[wlr foreign toplevel management](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-foreign-toplevel-management-unstable-v1.xml)
+or [Plasma window management](https://github.com/KDE/plasma-wayland-protocols/blob/master/src/protocols/plasma-window-management.xml).
+FerroSeek uses the interfaces the compositor advertises. The launcher installer
+registers a small helper for **Switch windows** on Plasma. On KWin 5.27, which
+restricts window management, the helper receives that permission through its own
+desktop entry. The command starts the helper when opened and closes it when
+you leave.
+
+The compositor manages focus and window state and may decline a request.
+FerroSeek closes when the compositor confirms the switch. If confirmation
+is unavailable, the launcher keeps the filter and selection so you can retry.
+Keyboard, pointer and live updates were tested at 1× on virtual Labwc 0.7.1
+and KWin 6.8.3 with tiny-skia and synthetic application windows. An isolated
+KWin 5.27.11 installation also verified keyboard switching, maximize and restore,
+live title changes and focus in the selected window after switching.
+
 ## Appearance
 
 ![Appearance settings in light mode](assets/launcher-appearance-light.png)
 
 [Dark appearance](assets/launcher-appearance-dark.png). Native presentation
 captures from isolated virtual KWin 6.3.6 at 1×, using Compact, Iron and Solid
-with the tiny-skia renderer and synthetic data. The refreshed search, folder
-browser, application chooser and text-preview images use the same setup. These captures do not extend
+with the tiny-skia renderer and synthetic data. The folder browser and
+text-preview images use the same setup. These captures do not extend
 the desktop, fractional-scale or blur validation matrix below.
 
-Choose **Appearance** in the search header, or press **Ctrl+Shift+Comma**.
+Choose **Settings → Appearance**, or press **Ctrl+Shift+Comma**.
 **System**, **Light** and **Dark** control the color mode. Choose an independent
 **Iron**, **Slate** or **Forest** theme for light and dark mode; the miniatures
 show search, selection and secondary text with the same semantic colors as the
@@ -64,7 +358,7 @@ group related choices; the footer explains live preview and saving unless
 unsaved changes need attention. Up/Down or Tab/Shift+Tab move
 between choices, and Enter selects one.
 Lower choices scroll into view. **Colors** and **Layout** are tabs; Ctrl+Tab
-or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to search. Unsaved
+or Ctrl+Shift+Tab switches between them. Ctrl+S saves; Esc returns to the previous view. Unsaved
 changes require explicit discard (Ctrl+D); Esc keeps editing at that prompt.
 Ctrl+R reloads saved preferences when there are no unsaved edits. Search state
 and in-flight results are retained while editing.
@@ -88,17 +382,20 @@ position = "upper"   # upper, centered
 
 ![Compact layout settings](assets/launcher-layout.png)
 
-[Centered layout](assets/launcher-layout-centered.png). Native Compact layout
-captures from the same isolated KWin setup: upper and centered on 1280×800,
-both at an observed 1× scale.
+The upper Compact layout was captured at 1× in isolated virtual KWin 5.27.11
+with tiny-skia. The [centered layout](assets/launcher-layout-centered.png) was
+captured at 1× on a 1280×800 virtual output in KWin 6.3.6.
 
 **Layout** offers Compact (640), Standard (720) and Wide (880) widths and upper
 or centered placement. The default remains Standard and Upper. The side preview
 adds 260 logical pixels when space permits. Width is capped to the entered
-output minus 16 pixels on each side; short outputs show fewer result/action rows
-and the header uses a third row below 512 pixels. The search field has its own
-full-width row and the same focus outline as the other editable fields. Upper
-placement stays stable as results expand; centering follows the current surface height. **Restore default layout**
+output minus 16 pixels on each side. Short outputs show fewer result and action
+rows. At startup, the launcher fits the visible suggestions when the query is
+empty. The surface expands for Actions or a typed search and returns to the
+suggestions height when you close Actions or clear the query. Typing and file
+replies keep the results viewport steady. The search field has its own full-width
+row and the same focus outline as the other editable fields. Upper placement
+stays steady as results expand. Centering follows the current surface height. **Restore default layout**
 previews Standard and Upper without changing themes or material. Save keeps the
 reset; Back and discard restore the last saved settings.
 
@@ -143,18 +440,23 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 
 ## Keys
 
+These are the default bindings. The bindings for Actions, Settings, Appearance,
+Search folders and Search status are configurable in [Shortcuts](#shortcuts).
+
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab, Ctrl+N/Ctrl+P | move the selection |
 | Ctrl+Up/Ctrl+Down | first row of the previous/next result group; no wrap |
 | Page Up/Page Down, Ctrl+Home/Ctrl+End | move by a page, to the first/last row |
-| Enter | launch the application, open the file, copy a calculator result |
-| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
+| Enter | launch an app, open a file or command, or copy a calculator result |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications, Files and Commands |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | show the file in its folder, or reuse a calculator result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
 | Ctrl+K | open/close the searchable action panel for the selected row |
+| Ctrl+Shift+S | open/close Settings |
 | Ctrl+I | open/close file search status |
+| Ctrl+Comma | search folder preferences |
 | Ctrl+Shift+Comma | appearance preferences |
 | Ctrl+R | refresh while file search status is open |
 | Shift+F10, Menu key | open actions for the selected row |
@@ -164,12 +466,13 @@ These captures use a fine-striped backdrop in an isolated KWin session.
 **Copy path** and Ctrl+Shift+C copy a lossless file URL when the selected file
 or folder's path contains non-UTF-8 bytes. Other paths are copied as plain text.
 
-Choose **All**, **Applications** or **Files** below the search field to narrow
-results without rewriting the query. An accent underline marks the active filter.
-Use Ctrl+Tab to cycle forward and Ctrl+Shift+Tab to cycle backward. The choice
-lasts for this launcher session. Applications mode makes no file-search
-requests. Files shows indexed files and recent file
-suggestions. Calculator expressions without `=` appear only in All; an explicit
+Choose **All**, **Applications**, **Files** or **Commands** below the search
+field to narrow results without rewriting the query. **Applications** appears
+as **Apps** on narrow windows. An accent underline marks the active filter.
+Ctrl+Tab cycles forward
+and Ctrl+Shift+Tab cycles backward. The choice lasts for this launcher session.
+Applications and Commands search locally. Files shows indexed files and recent
+file suggestions. Calculator expressions without `=` appear only in All; an explicit
 `=` query works in every mode. Switching modes closes actions and resets the
 selection; replies from earlier searches are ignored.
 
@@ -191,19 +494,24 @@ The panel shows up to eight actions at a time, with fewer on short outputs to
 leave room for its target, search field and return hint. The filter and return
 hint stay in place as matches change. Up/Down and the mouse wheel move
 the selection; Page Up/Page Down move by a page, and Ctrl+Home/Ctrl+End reach
-the first/last action. A range indicator appears for longer menus. Numbers
+the first/last action. A range indicator appears for longer menus when there
+is room beside the footer controls. Numbers
 always refer to the currently visible actions.
 Scrolling over the action panel affects only its actions, including while a
 text preview is open. Horizontal scrolling leaves the selection unchanged.
-The target name above the filter uses primary text. Pointer hover highlights a
-command without moving the keyboard selection. The footer shows Enter to run
-the selected matching action alongside the current Escape step. With no matches,
-it suggests another action name and omits the Enter hint.
+Above the filter, the target name and its context identify the selected result.
+For a file, the second line shows its parent path. Pointer hover highlights a
+command without moving the keyboard selection. Click **Run** or press Enter
+to run the selected action. Click **Clear filter** or **Close actions** in the
+panel footer to take the current Escape step. With no matches, the panel
+suggests another action name and omits **Run**.
 
-![Searchable actions for a synthetic application](assets/launcher-actions.png)
+On narrow windows, the search footer gives the status room to wrap and shows
+action buttons without their keycaps. The keyboard bindings still work.
 
-Native capture at 1× using Compact, Iron and Solid with tiny-skia in an isolated
-KWin 6.3.6 session nested in Xvfb.
+![Searchable actions showing the selected file's parent folder](assets/launcher-actions.png)
+
+Captured at 1× in isolated Labwc with tiny-skia.
 
 Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
 applies the command and focuses the current field before delivering later input
@@ -215,11 +523,12 @@ applied before the first input field is built.
 This applies to input received by the launcher. Before the compositor gives it
 keyboard focus, keystrokes still belong to the previously focused application.
 
-Click a result once to select it; double-click or press Enter to open it.
+Click a result once to select it. Double-click, press Enter or click the
+selected result's primary action in the footer to run it.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**
-in the footer. Click **Close actions** in the same place to return to search.
+in the footer. Click **Close actions** in the footer to return to search.
 A click on a result that disappears while results update is
 ignored rather than opening a different row. Action clicks also keep the target
 and action they were drawn for; changing a filter cannot redirect a queued click
@@ -233,8 +542,9 @@ The action panel uses the same numbering treatment and an accent bar for its
 highlighted command. Footer shortcuts keep their keycaps. The Enter action uses
 stronger text in the result and application-chooser footers. All shows result
 types as secondary labels. Applications and Files omit the redundant Application
-and File labels. Folder and Calculator remain visible where applicable. Beside
-the preview, names and paths use the space reserved for type labels. Paths and
+and File labels. Folder retains its label in Files. Calculator rows give that
+space to the answer and its unit. Beside the preview, names and paths use the
+space reserved for type labels. Paths and
 numbered shortcuts remain visible in both layouts.
 Names and paths shorten to fit the available column, including beside the text
 preview. Action labels and target titles also shorten to keep shortcuts visible.
@@ -264,6 +574,21 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   command are shown; actions requiring D-Bus activation without an `Exec`
   fallback are not supported. These commands use argument vectors, the app's
   terminal preference and working directory, and the normal launch scope.
+- **Commands** open built-in launcher views. Search for **Settings**,
+  **Appearance**, **Layout**, **Search folders**, **Search status**,
+  **Shortcuts**, **Global shortcuts**, **Create link**, **Create snippet**, **Create local command**, **Create workflow**,
+  **Clipboard history**, or **Switch windows**. Strong
+  matches appear near the top in **All**. Choose **Commands** to browse the
+  complete list or match shorter and less exact queries. Enter, double-click,
+  the displayed number and the action menu all open the selected command.
+  Back returns to the same search. Applying new search folders refreshes the
+  results. [Saved links](#saved-links), [snippets](#snippets) and
+  [local commands](#local-commands) also appear here.
+
+  ![Built-in commands with keyboard access](assets/launcher-commands.png)
+
+  Captured at 1× in isolated Labwc with tiny-skia.
+
 - **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
   method; opening and revealing go through its `Open` method, which only
   opens indexed paths. Calling the daemon's bus name D-Bus-activates it.
@@ -275,10 +600,34 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
   retain full precision; copied answers use the displayed precision.
   A fixed grammar is evaluated in process; nothing is passed to a shell or
   interpreter.
+
+  Convert compatible units with `in` or `to`. The amount can be an expression,
+  as in `(2 + 3) mi to km`, and the space before the source unit is optional
+  (`10ft in m`). The result includes the destination unit when copied.
+  **Use result** takes the unrounded numeric value back to the search field
+  for further arithmetic.
+
+  ![Speed conversion in the launcher at 320 logical pixels](assets/launcher-calculator-conversion.png)
+
+  Captured at 1× in isolated Labwc with tiny-skia.
+
+  | Quantity | Examples |
+  |---|---|
+  | Length and area | `12 in in cm`, `10 ft² in m²` |
+  | Mass and volume | `2 lb in kg`, `1 US gal in L` |
+  | Time and speed | `90 min in h`, `60 mph in km/h` |
+  | Temperature | `32 °F in °C`, `0 °C in K` |
+  | Data size | `1 MiB in MB`, `1 MB in Mb` |
+
+  `gal` and `fl oz` refer to US measures. Use `imperial gallon` for the UK
+  measure. Data symbols distinguish uppercase `B` for bytes from lowercase
+  `b` for bits.
+
 - **Empty query:** the most often opened applications and files that still
   exist, followed by available applications to fill the suggestions. Removed
   items do not use up a suggestion slot.
-- **No matches:** the query remains visible with a suggestion to refine it;
+- **No matches:** the query remains visible. **All** offers any enabled
+  [saved web searches](#saved-links) once the local search has finished.
   Esc clears the search.
 
 Applications start without a shell, from the parsed `Exec` argument vector,
@@ -344,14 +693,11 @@ records file usage and closes the launcher.
 
 ## File search status
 
-Click **Search status** to the right of the search filters, or press Ctrl+I, to check the
-search service without leaving the launcher. Empty file searches and search
-errors also offer **Check search status**. Esc or **Back to search** returns
-to the same query, filter and selected result.
+Choose **Settings → Search status**, or press Ctrl+I, to check the search
+service. Empty file searches and search errors also offer **Check search status**.
+Esc or **Back** returns to the previous view and preserves the search context.
 
 ![File search status with synthetic indexed folders](assets/launcher-index-status.png)
-
-Screenshot from a nested test session with sample files.
 
 The view distinguishes starting, indexing, watching for changes, paused and
 stopping states. It shows indexed file/folder counts, queued folders and indexed
@@ -386,7 +732,7 @@ folders disables file indexing. Esc closes an unsaved first-run screen without
 creating a configuration or starting the service. CLI and explicitly enabled
 services retain their existing configuration/default behavior.
 
-Later, open **Search folders** in the search header or press Ctrl+,. Empty file results
+Later, choose **Settings → Search folders** or press Ctrl+,. Empty file results
 also offer **Choose folders**. Type an absolute path or `~/Documents` and press
 Enter to add it; use Up/Down to select a folder and Ctrl+D or **Remove** to remove
 it. New folders must exist, be readable directories and not be symbolic links;
@@ -419,7 +765,7 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 ![Indexed folder contents](assets/launcher-folder-browser.png)
 
-Rendered in a private virtual KWin session with a synthetic indexed tree.
+Folder captures use a synthetic indexed tree at 1× in isolated Labwc with tiny-skia.
 
 Select a folder result and press **Alt+Right**, or choose **Browse folder** from
 Actions (Ctrl+K; `within` and `search in folder` remain aliases). The header shows
@@ -459,7 +805,7 @@ current launcher session. Late replies from previous lists or searches cannot
 replace the current context.
 
 Folder contexts contain no global suggestions, apps or calculator results.
-The All/Applications/Files filter is unavailable until returning to global search.
+The search filters become available again when you return to global search.
 Open with, File details and the opt-in preview remain available for regular files.
 Browsing does not enable preview or read file contents; an already enabled preview
 follows the selected regular file. Ctrl+I opens index status; Ctrl+comma opens
@@ -471,12 +817,10 @@ launcher and daemon versions are required.
 
 ![Application chooser](assets/launcher-open-with.png)
 
-Native Compact capture in a private virtual KWin 6.3.6 session at 1× with
+Native Compact capture in a private virtual KWin 5.27.11 session at 1× with
 synthetic document handlers and the tiny-skia renderer. Names, desktop IDs and
 the target path shorten to their actual available width, leaving room for
-numbered shortcuts. Hover over the target path to see its absolute location.
-This presentation check does not extend the desktop
-validation matrix below.
+numbered shortcuts. Hover over the filename or parent path to see the full location.
 
 For a file result, open **Actions** (Ctrl+K), search for **Open with…** and press
 Enter. Choose an application with Up/Down and Enter, a displayed Ctrl+number,
@@ -485,11 +829,14 @@ its name helps distinguish similarly named apps. Page Up/Down, Ctrl+Home/End
 and the mouse wheel navigate longer lists.
 Use **Refresh** or Ctrl+R to rescan the available applications.
 The footer shows the application count, the visible range for longer lists, or
-the current loading/opening/error status on the left, with Enter and the contextual Esc action on the right.
+the current loading/opening/error status on the left. **Open** in the footer
+opens the file with the selected application. The captured filename appears
+above its parent path and the application filter.
 
 The chooser stays bound to the original file while results finish loading.
-Esc clears a nonempty application filter; Esc again returns to the same search
-query, scope and file selection when that file is still present. Ctrl+R reloads
+**Back** returns to the same search query, scope and file selection when that
+file is still present. Esc clears a nonempty application filter; pressing Esc
+again returns to search. Ctrl+R reloads
 the application list, retaining the selected application if it is still present,
 including after a failed read and retry. Editing or clearing the filter resets
 the selection even while a reload is pending. Loading, empty and error states
@@ -518,7 +865,8 @@ matching launcher and daemon versions for this interface.
 
 ![File details](assets/launcher-file-details.png)
 
-Rendered in a private virtual KWin session with a synthetic file.
+Native Compact capture in a private virtual KWin 5.27.11 session at 1× with a
+synthetic file and the tiny-skia renderer.
 
 For an indexed regular file, open **Actions** (Ctrl+K), search for **File details**
 or `properties`, and press Enter. The view shows the full name and location,
@@ -528,7 +876,7 @@ an exact byte count. An unknown type is shown explicitly.
 The daemon reads filesystem attributes on request, including while indexing is
 paused; it does not read file contents. Ctrl+R refreshes the details. Loading and
 errors have distinct states, and failed reads can be retried. Late replies cannot
-replace a newer view or change the captured file. Esc returns to the original
+replace a newer view or change the captured file. **Back** or Esc returns to the original
 query, scope and selected file if it remains in the results. Up/Down, Page Up/Down
 and Ctrl+Home/End scroll long details.
 
@@ -542,7 +890,7 @@ daemon versions are required.
 
 ![Text preview](assets/launcher-text-preview.png)
 
-Rendered in a private virtual KWin session with a synthetic file.
+Captured at 1× in isolated Labwc with tiny-skia and a synthetic file.
 
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
 `preview` or `contents`), or press Enter in **File details**. It enables a sidebar
@@ -560,7 +908,7 @@ results were reordered.
 **Hide** or Esc closes the sidebar before clearing the search; it preserves the
 current query, filter and selection and stops reads on subsequent navigation.
 Preview stays enabled only for the current launcher session. Modal screens such as
-index status, folder and appearance settings, File details and Open with hide the sidebar and
+Settings, index status, folder and appearance settings, File details and Open with hide the sidebar and
 pause new preview reads. Returning resumes it for the current selected file.
 Opening, refreshing or copying a preview does not record launch history.
 
@@ -601,19 +949,132 @@ shows a timeout after three seconds; underlying filesystem work may still finish
 in the daemon. Matching launcher and daemon versions are required. File text is
 neither indexed nor persisted by this feature.
 
+## Local commands
+
+Search for **Create local command** to register an executable. Enter a title and
+absolute executable path. Add a description and a list of fixed arguments if
+needed, for example `["--summary"]`. In **Ask for values at run time**, enter up
+to three quoted field names, such as `["Project name", "Branch"]`. Tab moves
+between fields.
+**Confirmation on** asks before running. Click it or use Ctrl+Enter to change it.
+Ctrl+S or **Save** returns to Commands with the saved entry selected.
+
+Select a registered command and choose **Actions → Edit command** to change it.
+Use **Delete** or Ctrl+D in the editor, then **Delete** or Ctrl+Enter to confirm.
+Escape returns to the captured search and asks before discarding a changed draft.
+The Commands filter lists the registered commands. Strong title and description
+matches also appear in All.
+
+The launcher saves commands in `launcher-scripts.toml` beside its main
+configuration file. Edits preserve comments on retained fields and entries.
+You can also edit the file directly and reopen FerroSeek to load your changes.
+If the file is a symbolic link, edit its target directly.
+
+```toml
+[[command]]
+title = "Release check"
+description = "Print a local release summary"
+executable = "/home/you/bin/release-check"
+args = ["--summary"]
+parameters = ["Project name", "Branch"]
+confirm = true
+```
+
+Use an absolute path to an executable. The launcher passes each argument as
+written, starts in the executable's parent directory and closes standard input.
+The executable runs with your account's permissions. Discovery reads the
+registration file. Run starts the executable, and `confirm = true`
+adds a confirmation showing the executable and arguments. Click **Run** or
+press Ctrl+Enter to confirm.
+
+Commands with named fields always open a form. Every field requires a value.
+Click **Run** or press Ctrl+Enter to pass each value as one literal argument,
+after the fixed arguments and in the listed order. The values apply to that
+invocation. Esc closes the form and returns to the selected command.
+
+The command view shows the outcome and the first 64 KiB of combined standard
+output and standard error as plain text. After the process exits, choose
+**Copy output** or press Enter. Choose **Run again** or press Ctrl+R to run the
+command again. Confirmation and argument fields apply as on the first run.
+Fields start empty. Esc from this form returns to the previous output.
+Esc from the output returns to the captured search. During
+execution, Esc or **Cancel** stops the process group and returns to search.
+The launcher stops remaining processes in the group when the command exits
+or reaches its 30-second timeout. Changes the command already made remain
+in effect.
+
+Titles must be unique within the file. The configuration accepts up to 128
+commands and workflows in total. If the Commands footer says **Check launcher-scripts.toml**, correct
+the file and reopen FerroSeek. Other results remain available. Open a local
+command or workflow from a desktop shortcut using the
+[copied launch command](#shortcuts).
+
+### Workflows
+
+Search for **Create workflow** and enter a title. Switch from **Details** to
+**Steps** with Ctrl+Tab. Choose **Add step** or press Ctrl+Enter to search
+registered commands, then click a result or press Enter to add it. A workflow
+runs two to eight steps in order.
+
+Use the arrow keys to select a step, Ctrl+Up or Ctrl+Down to move it, and
+Ctrl+Shift+D to remove it from the draft. The Steps view also offers buttons
+for each operation. Ctrl+S or **Save** selects the saved workflow in Commands.
+Choose **Actions → Edit workflow** to edit an existing workflow. Press Ctrl+D
+in the editor, then Ctrl+Enter to confirm deletion. Escape returns to the
+captured search and asks before discarding a changed draft.
+
+The launcher writes the workflow to the same TOML file. You can also add or
+edit it there and reopen FerroSeek to load the changes.
+
+```toml
+[[workflow]]
+title = "Prepare release"
+description = "Build and check the release"
+steps = ["Build release", "Check release"]
+```
+
+Find the workflow in **Commands** and review the ordered steps before choosing
+**Run**. FerroSeek resolves every command before starting the first step.
+Steps share one value when their argument names match regardless of case.
+For steps with confirmation enabled, the review includes their executable
+and fixed arguments.
+The running view identifies the current step. A failed command or a timeout
+stops the workflow and identifies the step that stopped it. The timeout is
+30 seconds per step and the first 64 KiB of output are shared across the
+workflow. **Run again** opens confirmation for the whole workflow, starting
+at the first step. Esc cancels the running process group and returns to search.
+
+Update workflow steps before renaming or deleting a command used by a workflow.
+
 ## Favorites
 
-Use **Add to favorites** or **Remove from favorites** in an app or file's action
-panel (search for `pin` or `unpin`). A star marks favorite rows. With an empty
-query, favorites appear before recent items, in the order they were added;
-the Applications and Files filters still apply. Missing apps or files do not
-consume a suggestion slot; their preference is retained if they return.
-Favorites do not change the ranking of a typed query.
+Use **Add to favorites** or **Remove from favorites** in the action panel for
+an app, file, built-in command, local command, workflow, saved link or snippet.
+Search the action list for `pin` or `unpin`.
+A star marks favorite rows. With an empty query, **All** shows favorites before recent items
+in saved order. **Move favorite up** and **Move favorite down** swap the selected
+favorite with the previous or next favorite shown in that scope. The moved
+favorite stays selected. Open Actions again and use the opposite move to undo.
+**Applications** and **Files** show favorites of
+their own type. **Commands** lists favorite commands, links and snippets first,
+then recently used commands and the rest of the catalog. Renaming a
+link or snippet keeps its favorite.
+A link or snippet recreated after deletion has its own identity.
+Unavailable favorites use no suggestion slots. Favorites do not change the
+ranking of a typed query.
+
+For local commands and workflows, a favorite matches the runnable definition
+you pinned, including the configured arguments and workflow steps. Use
+**Add to favorites** again after changing that definition.
 
 Favorites are stored separately in
 `$XDG_STATE_HOME/ferroseek/launcher-favorites`, with owner-only permissions and
-locked, atomic updates. Up to 400 favorites are retained. **Reset ranking** and `--forget-history` leave them
-intact. `--private` reads and writes neither saved history nor saved favorites;
+locked, atomic updates. Up to 400 favorites are retained. **Reset ranking**
+and `--forget-history` leave them intact. The launcher reads older saved links and
+snippets and records stable identifiers when new entries are saved or a legacy
+entry is renamed. Reading saved entries with identifiers requires a build
+that supports this format. `--private` reads and writes neither saved history
+nor saved favorites;
 any favorites added there last only until that launcher closes. File opening
 continues through the daemon, which still requires an indexed path.
 
@@ -630,12 +1091,21 @@ every 14 days. It is used only to order results:
 - Updates are a locked read-modify-write, so several instances and
   `--forget-history` do not overwrite each other.
 
-Use **Reset ranking** in an application or file's action panel to remove that
-item's overall and query-specific history. Other items keep their history, and
-the results update immediately. The application or file remains searchable;
-opening it again starts a new history. In a `--private` session, reset changes
-only the session's in-memory history. A failed reset is shown in the launcher;
-if another instance is updating history, retry after it finishes.
+Opening a built-in command from search or a desktop shortcut counts toward
+the suggestions in an empty **All** or **Commands** search. This history stores
+the command ID, a usage weight and the time of last use. Typed search uses
+the usual match order.
+
+Successful local commands and workflows also appear in those suggestions.
+History keeps a usage weight, the time of last use and a fingerprint of the
+configured executable, arguments and workflow steps. A suggestion remains
+eligible while its runnable definition matches the recorded fingerprint.
+
+Use **Reset ranking** in an application, file or command's action panel to
+remove its history. The launcher updates results immediately and keeps the
+item searchable. Opening it again starts a new history. In a `--private`
+session, reset changes only the session's in-memory history. If another
+instance is updating history, retry after it finishes.
 
 ## Design
 
@@ -676,7 +1146,8 @@ ferroseek-launcher
 
 - Focus depends on the receiving application and compositor; activation context
   may be unavailable or declined. Application entries still need a usable `Exec`;
-  D-Bus-only entries and explicit application-window switching are unsupported.
+  D-Bus-only entries are unsupported. See [Switch windows](#switch-windows) for
+  supported window switching sessions.
 - Closing on outside clicks needs the compositor to move keyboard focus away from
   an exclusive overlay. Virtual KWin does; compositors that keep it stay open until Esc.
 - The default width is 720 logical px, or 980 with the preview sidebar.
@@ -832,6 +1303,7 @@ Other compositors, physical keyboards and IMEs remain unverified.
 | Virtual KWin 5.27.11, Ubuntu 24.04; US 1×, AZERTY 1×, US 1.5× | One observed logical output per profile; ordinary typing, numbered shortcuts with focused inputs, keyboard/pointer activation, synthetic app/document target input | Physical displays, real associations/file managers and other toolkits |
 | Virtual KWin 5.27.11, Ubuntu 24.04; `us-multi` | Two disjoint outputs at (0,0), 1280×800 at 1×, and (1280,0), 853×533 logical at 1.5×; opening and focus return on each, 1.5×↔2× scaling with query/selection preserved, preview, output disable/re-enable and clean reopening; auto/opaque/software renderers | Physical cable hotplug, hardware GPUs, suspend/resume, IMEs and multiple seats |
 | Physical Plasma 5/6 sessions | No launcher desktop validation recorded | Monitor selection, scaling, layouts, activation and presentation |
+| Virtual Labwc 0.7.1, Ubuntu 24.04, US 1× | Window switching at 720 and 320 logical px. Search, actions, indexed folder navigation, preview and calculator at Compact width. Clipboard recording, pinning and copying from history | Physical outputs, other keyboard layouts and multiple seats |
 | Other layer-shell compositors | No launcher runs recorded | Session compatibility and focus behavior |
 
 [Recorded matrix and diagnostic samples](BENCHMARKS.md#13-launcher-desktop-profiles)
@@ -921,4 +1393,7 @@ Diagnostics can affect the timing they observe. See
 - Graphical smoke tests use nested `kwin_wayland --virtual`, temp HOME/XDG and
   a private bus with an EMPTY activation dir to exclude user daemons and portals.
 - Launch activation shares iced's Wayland connection; preserve input
-  context, bounded waits and cancellation. See the application activation section above.
+  context, bounded waits and cancellation. Iced reads this connection and the
+  activation worker only dispatches events already routed to its queue, so it
+  cannot drain the socket during surface setup. See the application activation
+  section above.

@@ -1,13 +1,235 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Secondary-view transitions and replies; input routing stays in the parent UI.
+//! Launcher navigation and secondary views.
 
-use super::{Launcher, Message, SearchStatusPanel, search_id, update};
-use crate::backend::SearchStatus;
-use crate::model::ClickTracker;
+use super::{
+    Launcher, Message, NARROW_SEARCH_WIDTH, SearchStatusPanel, Shortcut, Status, actions_id, hint, page_header,
+    palette, search_id, search_status_view, settings, status_button_style, tab_style, update,
+};
+use crate::Destination;
+use crate::backend::{CommandRequest, FileHit, SearchStatus};
+use crate::commands::{Builtin, DirectCommand, Invocation};
+use crate::model::{ClickTracker, Item, Scope, Section, Target};
+use crate::shortcuts::Routing;
+use crate::usage;
 use crate::{appearance, details, folders, open_with, preview, timing};
-use iced::Task;
+use iced::alignment::Vertical;
+use iced::widget::{button, column, container, responsive, row, space, text};
+use iced::{Background, Border, Element, Length, Task, Theme};
+
+pub(super) fn search_navigation(launcher: &Launcher) -> Element<'static, Message> {
+    let compact = launcher.window_width < NARROW_SEARCH_WIDTH;
+    let scopes = Scope::ALL.into_iter().fold(row![].spacing(if compact { 1 } else { 4 }), |choices, scope| {
+        let selected = launcher.scope == scope;
+        let label = if compact && scope == Scope::Applications { "Apps".into() } else { scope.to_string() };
+        choices.push(
+            button(
+                column![
+                    text(label).size(12).wrapping(text::Wrapping::None),
+                    container(space().width(14)).height(2).style(move |theme| container::Style {
+                        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
+                        border: Border { radius: 1.0.into(), ..Default::default() },
+                        ..Default::default()
+                    })
+                ]
+                .spacing(2),
+            )
+            .on_press(Message::Scope(scope))
+            .padding([3, if compact { 3 } else { 5 }])
+            .style(move |theme, status| tab_style(theme, status, selected, None)),
+        )
+    });
+    row![scopes, space::horizontal(), settings::header_button(launcher.shortcuts.bindings, compact)]
+        .align_y(Vertical::Center)
+        .into()
+}
+
+pub(super) fn result_tag(launcher: &Launcher, item: &Item) -> Option<Element<'static, Message>> {
+    if launcher.preview_visible() || launcher.scope.implies_result_type(&item.target) {
+        return None;
+    }
+    if matches!(item.section, Section::Calculator | Section::Fallback) {
+        return None;
+    }
+    let folder = matches!(item.target, Target::File(FileHit { is_dir: true, .. }));
+    (launcher.window_width >= NARROW_SEARCH_WIDTH || folder).then(|| {
+        text(item.tag).size(11).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }).into()
+    })
+}
+
+pub(crate) fn back_refresh_header<'a, M: Clone + 'a>(
+    title: &'static str,
+    back: M,
+    refresh: Option<M>,
+) -> Element<'a, M> {
+    page_header(responsive(move |size| {
+        let compact = size.width < 320.0;
+        let back = button(text("Back").size(12)).on_press(back.clone()).padding([6, 8]).style(status_button_style);
+        let label = if compact { text("Refresh").size(12).into() } else { hint("Ctrl+R", "Refresh") };
+        let refresh = button(label).on_press_maybe(refresh.clone()).padding([6, 8]).style(status_button_style);
+        let heading = row![back, text(title).size(20).width(Length::Fill), refresh]
+            .spacing(if compact { 6 } else { 12 })
+            .align_y(Vertical::Center);
+        container(heading).center_y(Length::Fill).into()
+    }))
+    .into()
+}
 
 impl Launcher {
+    pub(super) fn command_view_open(&self) -> bool {
+        self.clipboard_history.panel.is_some() || self.window_switcher.panel.is_some() || self.scripts.is_open()
+    }
+
+    pub(super) fn input_focus(&self) -> Option<iced::widget::Id> {
+        if let Some(panel) = &self.window_switcher.panel {
+            return Some(panel.input());
+        }
+        if let Some(panel) = &self.clipboard_history.panel {
+            return panel.focus();
+        }
+        if self.search_suspended() {
+            return self.secondary_focus();
+        }
+        Some(if self.panel.is_some() { actions_id() } else { search_id() })
+    }
+
+    fn secondary_focus(&self) -> Option<iced::widget::Id> {
+        self.alias_editor
+            .as_ref()
+            .and_then(super::alias_editor::Editor::focus_target)
+            .or_else(|| self.saved_editor.as_ref().and_then(super::saved_editor::Editor::focus_target))
+            .or_else(|| self.scripts.focus_target())
+            .or_else(|| self.folder_settings.is_some().then(folders::input_id))
+            .or_else(|| self.application_picker.is_some().then(open_with::input_id))
+    }
+
+    pub(super) fn dialog_height(&self) -> Option<u32> {
+        if self.window_switcher.panel.is_some() {
+            Some(super::windows::HEIGHT)
+        } else if let Some(panel) = &self.clipboard_history.panel {
+            Some(panel.height())
+        } else if self.alias_editor.is_some() {
+            Some(super::alias_editor::HEIGHT)
+        } else if self.shortcuts.panel.is_some() || self.global_shortcuts.panel.is_some() {
+            Some(settings::SHORTCUTS_HEIGHT)
+        } else if self.settings_menu_open() {
+            Some(settings::HEIGHT)
+        } else {
+            self.saved_editor.as_ref().and_then(super::saved_editor::Editor::dialog_height)
+        }
+    }
+
+    pub(super) fn shortcut_routing(&self) -> Routing {
+        if self.clipboard_history.panel.is_some() {
+            return Routing::Clipboard;
+        }
+        if let Some(panel) = &self.shortcuts.panel {
+            return if panel.recording() { Routing::Recording } else { Routing::Disabled };
+        }
+        if self.overrides_launcher_shortcuts() {
+            return Routing::Disabled;
+        }
+        let shortcut = if self.folder_settings.is_some() {
+            Some(Shortcut::SearchFolders)
+        } else if self.appearance.is_some() {
+            Some(Shortcut::Appearance)
+        } else if self.window_switcher.panel.is_some() {
+            Some(Shortcut::Actions)
+        } else {
+            None
+        };
+        shortcut.map_or_else(
+            || Routing::Commands(self.shortcuts.bindings),
+            |action| Routing::Only(self.shortcuts.bindings.get(action), action),
+        )
+    }
+
+    fn overrides_launcher_shortcuts(&self) -> bool {
+        self.application_picker.is_some()
+            || self.global_shortcuts.panel.is_some()
+            || self.saved_editor_open()
+            || self.scripts.is_open()
+    }
+
+    pub(super) fn input_context(&self) -> Option<iced::widget::Id> {
+        self.window_switcher
+            .panel
+            .as_ref()
+            .map(super::windows::Panel::input)
+            .or_else(|| self.clipboard_history.panel.as_ref().map(super::clipboard_view::Panel::context))
+            .or_else(|| self.alias_editor.as_ref().map(super::alias_editor::Editor::context))
+            .or_else(|| self.saved_editor.as_ref().map(super::saved_editor::Editor::context))
+            .or_else(|| self.scripts.input_context())
+            .or_else(|| self.appearance.as_ref().map(appearance::Panel::content_id))
+    }
+
+    pub(super) fn form_focus_cycle(&self) -> Option<crate::input::FocusCycle> {
+        self.saved_editor
+            .as_ref()
+            .and_then(super::saved_editor::Editor::focus_cycle)
+            .or_else(|| self.scripts.focus_cycle())
+    }
+
+    fn editor_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.window_switcher.panel {
+            let key = self.shortcuts.bindings.get(Shortcut::Actions).to_string();
+            return Some(panel.view(self.window_switcher.generation, key));
+        }
+        if let Some(panel) = &self.clipboard_history.panel {
+            return Some(self.clipboard_view(panel));
+        }
+        if let Some(panel) = &self.shortcuts.panel {
+            return Some(self.shortcut_settings_view(panel));
+        }
+        if let Some(panel) = &self.global_shortcuts.panel {
+            return Some(self.global_shortcut_view(panel));
+        }
+        if let Some(editor) = &self.alias_editor {
+            return Some(editor.view());
+        }
+        if let Some(editor) = &self.saved_editor {
+            return Some(self.saved_editor_view(editor));
+        }
+        self.scripts.editor.as_ref().map(super::script_editor::Editor::view).or_else(|| self.scripts.editor_view())
+    }
+
+    pub(super) fn secondary_view(&self) -> Option<Element<'_, Message>> {
+        if let Some(panel) = &self.scripts.panel {
+            return Some(panel.view(self.scripts.generation));
+        }
+        if let Some(editor) = self.editor_view() {
+            return Some(editor);
+        }
+        if let Some(panel) = &self.appearance {
+            let generation = self.appearance_generation;
+            return Some(
+                panel
+                    .view(self.system_dark, self.opaque, self.glass)
+                    .map(move |event| Message::Appearance { generation, event }),
+            );
+        }
+        if let Some(panel) = &self.file_details {
+            let generation = self.details_generation;
+            return Some(panel.view().map(move |event| Message::Details { generation, event }));
+        }
+        if let Some(panel) = &self.application_picker {
+            return Some(self.open_with_view(panel));
+        }
+        if let Some(panel) = &self.folder_settings {
+            let generation = self.folder_generation;
+            return Some(panel.view().map(move |event| Message::Folder { generation, event }));
+        }
+        if let Some(status) = &self.search_status {
+            return Some(search_status_view(status));
+        }
+        self.settings.map(|entry| settings::view(entry, self.shortcuts.bindings))
+    }
+
+    pub(super) fn open_with_view<'a>(&self, panel: &'a open_with::Panel) -> Element<'a, Message> {
+        let generation = self.application_generation;
+        let view = panel.view(self.opening.is_some(), self.unconfirmed_open);
+        crate::shortcuts::capture_numbered(view.map(move |event| Message::OpenWith { generation, event }))
+    }
+
     pub(super) fn preview_loaded(
         &mut self,
         generation: u64,
@@ -79,7 +301,7 @@ impl Launcher {
         if generation != self.application_generation {
             return Task::none();
         }
-        if self.opening.is_some() && !matches!(event, open_with::Event::Back) {
+        if self.opening.is_some() && !matches!(event, open_with::Event::Back | open_with::Event::ReturnToSearch) {
             return Task::none();
         }
         let Some(panel) = &mut self.application_picker else { return Task::none() };
@@ -125,13 +347,14 @@ impl Launcher {
         }
         self.clicks = ClickTracker::default();
         self.panel = None;
+        self.settings = self.settings.map(|_| settings::Entry::SearchStatus);
         let load = self.refresh_search_status();
         Task::batch([load, self.resize()])
     }
 
     pub(super) fn close_search_status(&mut self) -> Task<Message> {
         self.search_status = None;
-        Task::batch([self.resize(), crate::input::focus(search_id())])
+        self.return_to_parent()
     }
 
     pub(super) fn search_status_loaded(
@@ -148,13 +371,88 @@ impl Launcher {
         Task::none()
     }
 
-    pub(super) fn show_appearance(&mut self) -> Task<Message> {
+    pub(super) fn open_builtin(&mut self, command: Builtin) -> Task<Message> {
+        if self.opening.is_some() || self.search_suspended() {
+            return Task::none();
+        }
+        let open = match command {
+            Builtin::Settings => self.toggle_settings(),
+            Builtin::Appearance => self.show_appearance(appearance::Tab::Colors),
+            Builtin::Layout => self.show_appearance(appearance::Tab::Layout),
+            Builtin::SearchFolders => self.show_folders(false),
+            Builtin::SearchStatus => self.toggle_search_status(),
+            Builtin::CreateLink => self.open_saved_editor(super::saved_editor::Kind::Link, None),
+            Builtin::CreateSnippet => self.open_saved_editor(super::saved_editor::Kind::Snippet, None),
+            Builtin::CreateScript => self.open_script_editor(None),
+            Builtin::CreateWorkflow => self.open_workflow_editor(None),
+            Builtin::Shortcuts => self.show_shortcuts(),
+            Builtin::GlobalShortcuts => self.show_global_shortcuts(),
+            Builtin::ClipboardHistory => self.show_clipboard_history(),
+            Builtin::SwitchWindows => self.show_windows(),
+        };
+        self.usage.record(usage::Kind::Command, command.id(), "", usage::now());
+        if self.query.trim().is_empty() && self.search_folder.is_none() {
+            self.rebuild(true);
+        }
+        open
+    }
+
+    pub(super) fn deliver_command(&mut self, request: CommandRequest) -> Task<Message> {
+        let Some(reply) = request.take_reply() else { return Task::none() };
+        if self.opening.is_some() || self.search_suspended() {
+            let _ = reply.send(Err("Return to the launcher search before opening another command."));
+            return Task::none();
+        }
+        let result = request.command.map(|command| self.open_direct_command(command));
+        let _ = reply.send(result.as_ref().map(|_| ()).map_err(|&error| error));
+        self.destination_task(result)
+    }
+
+    pub(super) fn open_startup_destination(&mut self, destination: Destination) -> Task<Message> {
+        let result = self.open_destination(destination);
+        self.destination_task(result)
+    }
+
+    pub(super) fn open_setup_destination(&mut self, destination: Destination) -> Task<Message> {
+        let result = self.open_destination(destination);
+        if result.is_ok() {
+            self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
+        }
+        self.destination_task(result)
+    }
+
+    fn open_destination(&mut self, destination: Destination) -> Result<Task<Message>, &'static str> {
+        let command = match destination {
+            Destination::Search(query) => return Ok(update(self, Message::Query(query))),
+            Destination::Command(DirectCommand::Builtin(command)) => Invocation::Builtin(command),
+            Destination::Command(DirectCommand::Local(key)) => Invocation::local(&self.scripts.catalog, key)?,
+        };
+        Ok(self.open_direct_command(command))
+    }
+
+    fn destination_task(&mut self, result: Result<Task<Message>, &'static str>) -> Task<Message> {
+        result.unwrap_or_else(|error| {
+            self.status = Status::Error(error.into());
+            Task::none()
+        })
+    }
+
+    fn open_direct_command(&mut self, command: Invocation) -> Task<Message> {
+        timing::event("direct_command_opened");
+        match command {
+            Invocation::Builtin(command) => self.open_builtin(command),
+            Invocation::Local { key, plan } => self.show_plan(plan, Some(key)),
+        }
+    }
+
+    pub(super) fn show_appearance(&mut self, tab: appearance::Tab) -> Task<Message> {
+        self.settings = self.settings.map(|_| settings::Entry::Appearance);
         self.panel = None;
         self.search_status = None;
         self.clicks = ClickTracker::default();
         self.appearance_generation += 1;
         let generation = self.appearance_generation;
-        let panel = appearance::Panel::new(self.settings_path.clone(), self.preferences);
+        let panel = appearance::Panel::new(self.settings_path.clone(), self.preferences, tab);
         let load = panel.load().map(move |event| Message::Appearance { generation, event });
         self.appearance = Some(panel);
         timing::event("appearance_opened");

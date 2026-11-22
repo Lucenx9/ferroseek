@@ -18,8 +18,9 @@ published release or verified compatibility with every Linux desktop.
   the engine and CLI; guided setup recommends the launcher on Wayland.
 - [ ] Validate real desktop sessions and publish an explicit compositor support
   matrix, including multiple monitors, display scaling and keyboard layouts.
-  Current graphical evidence is nested virtual KWin only: US 1×, AZERTY 1×,
-  US 1.5× and two disjoint outputs with live mixed-scale changes. See the [validation matrix](LAUNCHER.md#desktop-validation).
+  Isolated KWin checks cover US 1×, AZERTY 1×, US 1.5× and two disjoint
+  outputs with live mixed-scale changes. Labwc covers targeted launcher
+  flows at 1×. See the [validation matrix](LAUNCHER.md#desktop-validation).
 - [ ] Make focus and application activation reliable, including XDG activation
   tokens where supported.
   Application results/actions, file opens, selected handlers and reveal now request
@@ -47,8 +48,19 @@ published release or verified compatibility with every Linux desktop.
 - [x] Verify mixed-scale virtual multimonitor placement, query/selection
   preservation, focus return and output disable/re-enable; physical hardware
   validation remains open.
-- [ ] Add configurable keyboard shortcuts. Keep focus,
-  navigation and feedback consistent across views.
+- [x] Configurable in-window shortcuts for Actions and settings pages, with
+  conflict feedback, restore defaults and recovery controls.
+- [x] Direct built-in command entry points for desktop-assigned shortcuts,
+  preserving the running search and protecting open edits.
+- [x] Desktop-assigned shortcuts for local commands and workflows that open
+  review for the bound runnable definition.
+- [x] Optional GlobalShortcuts portal listener with a managed desktop
+  identity and user service for activation while the launcher is closed.
+- [x] Start, inspect, configure and stop desktop shortcuts in launcher settings.
+- [ ] Validate physical key assignment on supported desktops.
+  In virtual KWin 5.27, XDG Desktop Portal 1.22 passed
+  FerroSeek's desktop identity to KDE and forwarded an activation from a
+  simulated backend to the launcher.
 - [x] Initial folder selection, folder editing with save/apply, file-search status,
   indexed locations, service errors and explicit refresh/retry in the launcher.
 - [ ] Measure startup and typing-to-results latency with the UI and daemon
@@ -60,9 +72,11 @@ published release or verified compatibility with every Linux desktop.
   [recorded profiles](BENCHMARKS.md#13-launcher-desktop-profiles).
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
-Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then quicklinks and keyword commands. Each interaction change needs keyboard, pointer, long-label and
-asynchronous/error checks, plus inspection of rendered UI.
+Validate focus, activation and shortcut assignment on physical desktops.
+Measure startup and typing-to-results latency, then validate packaging before
+publishing a scoped launcher beta. For interaction changes, check keyboard and
+pointer behavior, long labels, asynchronous updates and error states. Inspect
+the rendered UI.
 
 See [launcher setup and current limits](LAUNCHER.md).
 
@@ -100,15 +114,39 @@ See [architecture](ARCHITECTURE.md), [installation](INSTALLATION.md), [MCP](MCP.
 
 ## Daily commands and later extensions
 
-These are planned capabilities, not available launcher features. Complete the
-file/application workflow and desktop validation before expanding the platform.
+Complete desktop validation before expanding the platform.
 
-- [ ] Add user-defined aliases, quicklinks to URLs/folders and keyword-based web
-  searches, with editable targets and predictable argument handling.
-- [ ] Add searchable clipboard history and reusable text snippets as opt-in
-  features, with clear retention/deletion controls and explicit desktop support.
-- [ ] Evaluate user-defined script commands before designing workflows or a
-  general extension API; keep execution explicit and separate from search.
+- [x] Search and browse built-in launcher commands, with the same navigation,
+  action menu and return flow as application and file results.
+- [x] Pin built-in commands, links and snippets alongside app and file favorites
+  for quick access from an empty search.
+- [x] Offline calculator unit conversions with copy and numeric continuation.
+- [x] Save and edit links to websites and indexed paths. Open saved links by
+  name or keyword, and use query values for keyword-based web searches.
+- [x] Let saved web searches appear as explicit actions when All has no matches.
+- [x] Assign and remove aliases for applications, built-in commands, local
+  commands and workflows.
+- [x] Save searchable text snippets with explicit creation, edit, copy and
+  delete actions.
+- [x] Opt-in Wayland text clipboard history with search, copy, pinning, retention,
+  individual deletion, clear confirmation and a private-session pause.
+- [x] Search and switch open windows on compositors exposing wlr foreign
+  toplevel management, with live updates and a return to the parent search.
+- [x] Maximize, restore and minimize selected windows with compositor feedback.
+- [x] Switch and manage windows on Plasma sessions that expose its window
+  management interface, verified on virtual KWin 6.8.3.
+- [x] Register a dedicated window-management helper for restricted Plasma
+  sessions, with the installed command verified on virtual KWin 5.27.11.
+- [x] Run registered local commands from search, with optional confirmation,
+  bounded output and a cancellable command view.
+- [x] Create, edit and delete local commands in the launcher, with explicit save,
+  discard, and delete confirmation.
+- [x] Prompt for named positional arguments at run time and pass them literally.
+- [x] Run named command sequences with shared inputs, step progress and
+  stop-on-failure behavior.
+- [x] Create, edit and remove workflows in the launcher with a searchable
+  command picker and keyboard step ordering.
+- [ ] Evaluate a general extension API after desktop validation.
 
 ## Optional AI agent integration
 
@@ -130,7 +168,8 @@ See [comparisons](COMPARISONS.md), [source-level Baloo research](RESEARCH.md) an
 ## Non-goals
 
 - Replacing KDE Plasma or silently disabling other search engines.
-- Expanding into a general plugin platform or clipboard manager before the
-  application/file launcher is reliable for daily use.
+- Expanding into a general plugin platform before the application and file
+  launcher is reliable for daily use.
+- Clipboard management beyond opt-in text history.
 - Mandatory agent tooling, embeddings, remote indexing services or telemetry.
 - Claiming feature parity or universal platform support before verification.

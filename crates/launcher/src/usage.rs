@@ -30,6 +30,7 @@ pub const MAX_BOOST: u32 = 120;
 pub enum Kind {
     App,
     File,
+    Command,
 }
 
 impl Kind {
@@ -37,6 +38,7 @@ impl Kind {
         match self {
             Kind::App => ("app", "qapp"),
             Kind::File => ("file", "qfile"),
+            Kind::Command => ("command", "qcommand"),
         }
     }
 }
@@ -132,14 +134,14 @@ impl Usage {
     /// Records one open of `key` from `query`. With a backing file, the
     /// update is a locked read-modify-write of the file, so several
     /// launchers (or a concurrent `--forget-history`) never overwrite each
-    /// other's changes. Keys are single-line (desktop IDs and
-    /// percent-encoded file URLs); others are ignored. A busy history is
+    /// other's changes. Keys are single-line (desktop IDs, percent-encoded
+    /// file URLs or built-in command IDs). A busy history is
     /// left unchanged so recording after a successful launch cannot block the UI.
     pub fn record(&mut self, kind: Kind, key: &str, query: &str, now: u64) {
         if key.is_empty() || key.contains(['\n', '\r', '\t']) {
             return;
         }
-        let query = normalize_query(query);
+        let query = if kind == Kind::Command { None } else { normalize_query(query) };
         let Some(path) = self.path.clone() else {
             add_use(&mut self.entries, kind, key, query.as_deref(), now);
             return;
@@ -228,7 +230,7 @@ fn add_use(entries: &mut Records, kind: Kind, key: &str, query: Option<&str>, no
     }
 }
 
-/// Lines: `app|file <weight> <last> <key>` for overall use and
+/// Lines: `app|file|command <weight> <last> <key>` for overall use and
 /// `qapp|qfile <weight> <last> <query> <key>` per query, tab-separated.
 /// Unknown or malformed lines are skipped.
 fn read_entries(path: &Path) -> Records {
@@ -250,6 +252,7 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
         let (kind, with_query) = match tag {
             "app" => (Kind::App, false),
             "file" => (Kind::File, false),
+            "command" => (Kind::Command, false),
             "qapp" => (Kind::App, true),
             "qfile" => (Kind::File, true),
             _ => continue,
@@ -277,7 +280,7 @@ fn try_read_entries(path: &Path) -> std::io::Result<Records> {
 
 /// State is read on the UI thread, including during locked updates. Open
 /// without waiting for FIFO writers and validate the descriptor before reading.
-pub(crate) fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
+pub fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY).open(path)?;
     if !file.metadata()?.is_file() {
@@ -289,7 +292,7 @@ pub(crate) fn read_state_file(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 /// Owner-only file creation: the history names files the user opened.
-pub(crate) fn private_options() -> std::fs::OpenOptions {
+pub fn private_options() -> std::fs::OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
     let mut o = std::fs::OpenOptions::new();
     o.mode(0o600);
@@ -298,7 +301,7 @@ pub(crate) fn private_options() -> std::fs::OpenOptions {
 
 /// Runs `f` holding an exclusive lock on `<path>.lock`, creating the
 /// directory owner-only if needed. Without `wait`, contention returns an error.
-pub(crate) fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+pub fn with_lock<T>(path: &Path, wait: bool, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
     use std::os::unix::fs::DirBuilderExt;
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
@@ -356,7 +359,7 @@ mod tests {
         std::os::unix::fs::symlink(&path, &link).unwrap();
         assert_eq!(Usage::load(Some(link.clone())).recent(100, 1), [(Kind::App, "app.desktop".into())]);
         std::fs::write(&path, "app\tapp.desktop\n").unwrap();
-        assert!(crate::favorites::Favorites::load(Some(link)).contains(Kind::App, "app.desktop"));
+        assert!(crate::favorites::Favorites::load(Some(link)).contains(crate::favorites::Kind::App, "app.desktop"));
         for device in ["/dev/null", "/dev/zero"] {
             assert_eq!(read_state_file(Path::new(device)).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
         }
@@ -380,7 +383,7 @@ mod tests {
                 }
                 "favorites-set" => {
                     let mut favorites = crate::favorites::Favorites::load(Some(path));
-                    assert!(favorites.set(Kind::App, "app.desktop", true).is_err());
+                    assert!(favorites.set(crate::favorites::Kind::App, "app.desktop", true).is_err());
                 }
                 _ => unreachable!(),
             }

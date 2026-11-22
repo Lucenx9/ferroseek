@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Capture numbered commands before iced's focused text input inserts their text.
+//! Route launcher shortcuts before they reach native text input.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -7,8 +7,78 @@ use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, mouse, overlay};
 use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector, keyboard};
 
-use crate::model;
+use ferroseek_config::shortcuts::{Action, Chord, Preferences};
+
+use crate::model::{self, Command};
 use crate::ui::Message;
+use keyboard::key::{Code, Named, Physical};
+use keyboard::{Key, Modifiers};
+
+#[derive(Debug, Clone, Copy)]
+pub enum Routing {
+    Commands(Preferences),
+    Only(Chord, Action),
+    Recording,
+    Clipboard,
+    Disabled,
+}
+
+impl Routing {
+    pub fn message(self, event: &Event) -> Option<Message> {
+        let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else {
+            return None;
+        };
+        let chord = parse_press(key, *physical_key, *modifiers);
+        match self {
+            Self::Commands(preferences) => preferences.action(chord.ok()?).map(command_message),
+            Self::Only(binding, action) => (chord == Ok(binding)).then(|| command_message(action)),
+            Self::Disabled => None,
+            Self::Clipboard => clipboard_shortcut(key, *modifiers),
+            Self::Recording if idle_recording_key(key) => None,
+            Self::Recording => Some(Message::ShortcutRecorded(chord)),
+        }
+    }
+}
+
+fn clipboard_shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
+    use crate::ui::clipboard_view::Shortcut;
+    const SHIFT_CTRL: Modifiers = Modifiers::CTRL.union(Modifiers::SHIFT);
+    let shortcut = match (modifiers, key.as_ref()) {
+        (Modifiers::CTRL, Key::Character("g" | "G")) => Shortcut::PinnedOnly,
+        (Modifiers::CTRL, Key::Character("t" | "T")) => Shortcut::Retention,
+        (SHIFT_CTRL, Key::Named(Named::Delete)) => Shortcut::Clear,
+        (SHIFT_CTRL, Key::Character("p" | "P")) => Shortcut::Pin,
+        _ => return None,
+    };
+    Some(Message::ClipboardShortcut(shortcut))
+}
+
+fn idle_recording_key(key: &Key) -> bool {
+    matches!(key, Key::Named(Named::Control | Named::Shift | Named::Alt | Named::Super | Named::Escape))
+}
+
+fn parse_press(key: &Key, physical: Physical, mods: Modifiers) -> Result<Chord, &'static str> {
+    let shift = match mods {
+        Modifiers::CTRL => false,
+        _ if mods == (Modifiers::CTRL | Modifiers::SHIFT) => true,
+        _ => return Err("Hold Ctrl and Shift, then press a letter or comma."),
+    };
+    let letter = match (key.as_ref(), physical, shift) {
+        (Key::Character(","), _, _) | (_, Physical::Code(Code::Comma), true) => ',',
+        _ => key.to_latin(physical).ok_or("Choose a letter or comma.")?,
+    };
+    Chord::new(letter, shift)
+}
+
+fn command_message(action: Action) -> Message {
+    match action {
+        Action::Actions => Message::Cmd(Command::ToggleActions),
+        Action::Settings => Message::ShowSettings,
+        Action::Appearance => Message::ShowAppearance,
+        Action::SearchFolders => Message::ShowFolders,
+        Action::SearchStatus => Message::ShowSearchStatus,
+    }
+}
 
 pub fn capture_numbered<'a, R: iced::advanced::Renderer + 'a>(
     content: Element<'a, Message, Theme, R>,
@@ -114,8 +184,6 @@ mod tests {
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Key, Location, Modifiers};
     use iced::widget::text_input;
-
-    use crate::model::Command;
 
     #[test]
     fn focused_fields_receive_typing_but_never_numbered_shortcut_text() {

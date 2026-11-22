@@ -45,7 +45,9 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         payload = next(extract.iterdir())
         metadata = json.loads((payload / 'package.json').read_text())
         assert (payload / 'bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
-        assert (payload / 'bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
+        has_launcher = component in ['launcher', 'full']
+        assert (payload / 'bin/ferroseek-launcher').exists() == has_launcher
+        assert (payload / 'bin/ferroseek-plasma-windows').exists() == has_launcher
         assert not (payload / 'integrations').exists()
         assert not (payload / 'data/ferroseek-krunner.desktop').exists()
         for name, expected in metadata['sha256'].items():
@@ -63,7 +65,13 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         r = subprocess.run([str(script), '--' + component], env=isolated, capture_output=True, text=True)
         assert r.returncode == 0, (r.stdout, r.stderr)
         assert (home / '.local/bin/ferroseek').exists()
-        assert (home / '.local/bin/ferroseek-launcher').exists() == (component in ['launcher', 'full'])
+        assert (home / '.local/bin/ferroseek-launcher').exists() == has_launcher
+        plasma_helper = home / '.local/bin/ferroseek-plasma-windows'
+        plasma_desktop = home / '.local/share/applications/io.github.ferroseek.PlasmaWindows.desktop'
+        assert plasma_helper.exists() == plasma_desktop.exists() == has_launcher
+        desktop = home / '.local/share/applications/io.github.ferroseek.Launcher.desktop'
+        shortcut_unit = home / '.config/systemd/user/app-io.github.ferroseek.Launcher.service'
+        assert desktop.exists() == shortcut_unit.exists() == has_launcher
         assert (home / '.local/bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         if component == 'core':
             assert subprocess.run([str(script), '--launcher'], env=isolated, capture_output=True).returncode != 0
@@ -83,4 +91,6 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert r.returncode == 0, r.stderr
         assert not (home / '.local/bin/ferroseek').exists()
         assert not (home / '.local/bin/ferroseek-launcher').exists()
+        assert not desktop.exists() and not shortcut_unit.exists()
+        assert not plasma_helper.exists() and not plasma_desktop.exists()
 print('PASS: four native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')

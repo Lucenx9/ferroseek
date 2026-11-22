@@ -52,9 +52,14 @@ For CLI/service-only use, choose roots with `ferroseek config` before starting.
 when no configuration exists; subsequent installs never replace it or an index.
 
 Installation does not start or restart the daemon. The standalone launcher
-D-Bus-activates it on its first file query. Bind
-`ferroseek-launcher` to a shortcut in your desktop settings; the installer does
-not register shortcuts or launch the UI. To opt into background indexing now:
+D-Bus-activates it on its first file query. Bind `ferroseek-launcher` in
+desktop settings or enable the optional
+[global shortcut listener](LAUNCHER.md#desktop-portal-shortcuts). Launcher
+installation supplies the listener's user service and desktop identity.
+It also installs a small helper with its own desktop entry for
+[Switch windows on Plasma](LAUNCHER.md#switch-windows). The entry grants
+only the Plasma window-management interface to the helper.
+To opt into background indexing now:
 
 ```sh
 ./scripts/install.sh --core --enable
@@ -175,10 +180,10 @@ close their configuration editors during registration.
 ```
 
 Core cannot be removed while retained integrations require it. Active/enabled
-systemd installations require `--stop`; the installer never guesses permission
-to stop them. A daemon owning the current session bus outside this systemd unit
-must be stopped manually; uninstall refuses removal even with `--stop` in that
-case. The ownership check does not activate a daemon. Missing files are harmless and repeat removal is safe. Modified
+systemd installations require `--stop` to stop and disable their services.
+A daemon or global shortcut listener owning the current session bus outside its
+managed unit must be stopped manually. The ownership check leaves stopped
+services inactive. Missing files are harmless and repeat removal is safe. Modified
 managed files cause a refusal, and unowned files are never deleted.
 Configuration, indexes and agent registrations are retained. Remove agent
 entries separately with `claude mcp remove --scope user ferroseek` and

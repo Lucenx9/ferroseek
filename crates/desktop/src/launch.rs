@@ -10,6 +10,8 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::apps::{App, ExecError, executable_exists};
 
@@ -77,7 +79,7 @@ pub fn launch(app: &App) -> io::Result<()> {
 
 pub fn launch_with_token(app: &App, token: Option<&str>) -> io::Result<()> {
     let argv = command_line(app, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token).map(drop)
+    spawn(app.working_dir.as_deref(), argv, token).map(drop)
 }
 
 pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
@@ -87,17 +89,52 @@ pub fn launch_action(app: &App, index: usize) -> io::Result<()> {
 pub fn launch_action_with_token(app: &App, index: usize, token: Option<&str>) -> io::Result<()> {
     let argv = app.action_argv(index).map_err(exec_error)?;
     let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token).map(drop)
+    spawn(app.working_dir.as_deref(), argv, token).map(drop)
 }
 
 /// Launch a selected document handler; the caller owns reaping the child.
 pub fn launch_file(app: &App, path: &Path, uri: &str, token: Option<&str>) -> io::Result<std::process::Child> {
     let argv = app.file_argv(path, uri).map_err(exec_error)?;
     let argv = wrap_command(app, argv, systemd_run_available(), terminal_command().as_deref())?;
-    spawn(app, argv, token)
+    spawn(app.working_dir.as_deref(), argv, token)
 }
 
-fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::Result<std::process::Child> {
+/// Submit an already validated HTTP(S) destination to the user's default handler.
+pub fn open_web(url: &str, token: Option<&str>) -> io::Result<()> {
+    let url = url.to_owned();
+    let token = token.map(str::to_owned);
+    let (send, status) = mpsc::channel();
+    std::thread::Builder::new().name("xdg-open".into()).spawn(move || {
+        let mut child = match spawn(None, vec!["xdg-open", &url], token.as_deref()) {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = send.send(Err(error));
+                return;
+            }
+        };
+        let _ = send.send(Ok(()));
+        let result = child.wait().and_then(|status| {
+            if status.success() { Ok(()) } else { Err(io::Error::other(format!("xdg-open failed ({status})"))) }
+        });
+        let _ = send.send(result);
+    })?;
+
+    let disconnected = || io::Error::other("Could not read xdg-open's status");
+    status.recv().map_err(|_| disconnected())??;
+    // Some handlers keep xdg-open alive while the browser is running.
+    // Report immediate rejections and leave a long-running child to the waiter.
+    match status.recv_timeout(Duration::from_millis(500)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Ok(()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(disconnected()),
+    }
+}
+
+fn spawn<S: AsRef<OsStr>>(
+    working_dir: Option<&Path>,
+    argv: Vec<S>,
+    token: Option<&str>,
+) -> io::Result<std::process::Child> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // Startup context is single-use; only this operation's context may escape.
@@ -108,11 +145,9 @@ fn spawn<S: AsRef<OsStr>>(app: &App, argv: Vec<S>, token: Option<&str>) -> io::R
     // Its own process group: a signal to the launcher's group (e.g. ^C in
     // the terminal it was started from) must not reach the application.
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    if let Some(dir) = app.working_dir.as_deref() {
+    if let Some(dir) = working_dir {
         cmd.current_dir(dir);
     }
-    // The launcher exits right after; the child is reparented, not reaped
-    // here.
     cmd.spawn()
 }
 
@@ -171,7 +206,7 @@ mod tests {
             [(temp.path().join("missing"), io::ErrorKind::NotFound), (file, io::ErrorKind::NotADirectory)]
         {
             let app = app(&format!("Path={}\n", path.display()));
-            match spawn(&app, vec!["/bin/true"], None) {
+            match spawn(app.working_dir.as_deref(), vec!["/bin/true"], None) {
                 Err(error) => assert_eq!(error.kind(), expected),
                 Ok(mut child) => {
                     child.wait().unwrap();
@@ -179,6 +214,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn web_open_reports_a_prompt_handler_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CASE: &str = "FERROSEEK_TEST_WEB_OPEN_FAILURE";
+        if std::env::var_os(CASE).is_some() {
+            let error = open_web("https://example.test", None).unwrap_err();
+            assert!(error.to_string().contains("exit status: 4"));
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let opener = temp.path().join("xdg-open");
+        std::fs::write(&opener, "#!/bin/sh\nexit 4\n").unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "launch::tests::web_open_reports_a_prompt_handler_failure"])
+            .env(CASE, "1")
+            .env("PATH", temp.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
     }
 
     #[test]

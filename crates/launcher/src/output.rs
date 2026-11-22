@@ -206,7 +206,11 @@ impl State {
             .iter()
             .filter_map(|member| member.bounds)
             .reduce(|(w, h), (next_w, next_h)| (w.min(next_w), h.min(next_h)));
-        self.notify(bounds);
+        // Leave can arrive before the replacement Enter and its logical size.
+        // Keep the last fit until then so the surface does not grow in the gap.
+        if let Some(bounds) = bounds {
+            self.notify(Some(bounds));
+        }
     }
     fn notify(&mut self, bounds: Option<(u32, u32)>) {
         if self.known != bounds {
@@ -278,3 +282,19 @@ wayland_client::delegate_noop!(Worker:ignore wl_shm::WlShm);
 wayland_client::delegate_noop!(Worker:ignore wl_shm_pool::WlShmPool);
 wayland_client::delegate_noop!(Worker:ignore wl_buffer::WlBuffer);
 wayland_client::delegate_noop!(Worker:ignore zxdg_output_manager_v1::ZxdgOutputManagerV1);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_output_gap_keeps_the_last_known_bounds() {
+        let (observer, _events) = Observer::new((320, 300));
+        let mut state = observer.0.as_ref().unwrap().lock().unwrap();
+        state.known = Some((352, 332));
+
+        state.update_bounds();
+
+        assert_eq!(state.known, Some((352, 332)));
+    }
+}

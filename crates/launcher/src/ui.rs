@@ -1,7 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher window: an iced program on a wlr-layer-shell overlay.
 
+mod alias_editor;
+pub(crate) mod clipboard_view;
+mod favorites;
+mod global_shortcut_settings;
+mod saved_editor;
+mod saved_results;
+mod script_editor;
+mod script_prompt;
+mod scripts;
+mod settings;
+mod shortcut_settings;
 mod views;
+mod windows;
+mod workflow_editor;
 
 use std::sync::Mutex;
 
@@ -19,6 +32,7 @@ use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
 
+use crate::Destination;
 use crate::activation::Activation;
 use crate::appearance;
 use crate::apps::App;
@@ -34,12 +48,16 @@ use crate::model::{self, Action, ClickTracker, Command, Cursor, Item, Scope, Tar
 use crate::open_with;
 use crate::output;
 use crate::preview;
+use crate::saved;
 use crate::timing;
 use crate::usage::{self, Kind, Usage};
 use ferroseek_config::appearance::Preferences;
+use ferroseek_config::shortcuts::{Action as Shortcut, Chord};
+pub(crate) use views::back_refresh_header;
 
 #[cfg(test)]
 pub const WIDTH: u32 = 720;
+const NARROW_SEARCH_WIDTH: u32 = 336;
 #[cfg(test)]
 const PREVIEW_WIDTH: u32 = 980;
 const VISIBLE_ROWS: usize = model::NUMBERED_SLOTS;
@@ -50,12 +68,10 @@ const ACTION_ROW_HEIGHT: f32 = 34.0;
 const ACTION_ROW_GAP: f32 = 2.0;
 /// Below this, file search is not run (the daemon needs two characters).
 const MIN_FILE_QUERY: usize = 2;
-const UNCONFIRMED_OPEN: &str = "Open not confirmed. Check the desktop; close and reopen FerroSeek before trying again.";
+const UNCONFIRMED_OPEN: &str = "Open unconfirmed. Check the desktop, then reopen FerroSeek.";
 
 #[cfg(test)]
-fn compact_height() -> u32 {
-    (PAD * 2.0 + INPUT_HEIGHT + 1.0 + FOOTER_HEIGHT) as u32
-}
+use crate::layout::compact_height;
 
 #[cfg(test)]
 fn full_height() -> u32 {
@@ -66,19 +82,19 @@ pub(crate) use crate::appearance::palette;
 
 static UI_EVENTS: Mutex<Option<UnboundedReceiver<UiEvent>>> = Mutex::new(None);
 static OUTPUT_EVENTS: Mutex<Option<UnboundedReceiver<output::Event>>> = Mutex::new(None);
-static BOOT: Mutex<Option<(Boot, Material, output::Observer)>> = Mutex::new(None);
+static BOOT: Mutex<Option<(Launcher, Task<Message>)>> = Mutex::new(None);
 static MATERIAL_EVENTS: Mutex<Option<UnboundedReceiver<bool>>> = Mutex::new(None);
 
 /// What the launcher starts with.
 pub struct Boot {
-    pub appearance: Preferences,
+    pub config: ferroseek_config::Config,
     pub opaque: bool,
+    pub private: bool,
     pub activation: Activation,
     pub backend: Backend,
     pub apps: Vec<App>,
     pub usage: Usage,
     pub favorites: Favorites,
-    pub initial_query: String,
     pub settings_path: std::path::PathBuf,
 }
 
@@ -87,6 +103,7 @@ enum Status {
     Idle,
     Searching,
     Error(String),
+    CatalogError,
     Notice(String),
 }
 
@@ -99,6 +116,7 @@ enum SearchStatusPanel {
 
 struct Panel {
     title: String,
+    context: String,
     actions: Vec<Action>,
     desktop_labels: Vec<String>,
     query: String,
@@ -109,11 +127,21 @@ impl Panel {
     fn new(item: &Item, favorite: bool) -> Self {
         Self {
             title: item.title.clone(),
+            context: item.subtitle.clone(),
             actions: model::actions_for(&item.target, favorite),
             desktop_labels: Vec::new(),
             query: String::new(),
             cursor: Cursor::new(VISIBLE_ROWS),
         }
+    }
+
+    fn visible_rows(&self, window_height: u32, result_rows: usize) -> usize {
+        // Reserve space for the title, filter and footer controls before
+        // fitting the list within the launcher surface.
+        let chrome = if self.context.is_empty() { 212 } else { 230 };
+        let row = (ACTION_ROW_HEIGHT + ACTION_ROW_GAP) as u32;
+        let rows = (window_height.saturating_sub(chrome) / row).clamp(1, model::NUMBERED_SLOTS as u32);
+        (rows as usize).min(result_rows)
     }
 
     fn label(&self, action: Action) -> &str {
@@ -176,6 +204,7 @@ struct FolderSearchFrame {
     folder: Option<FileHit>,
     more: bool,
     files: Vec<FileHit>,
+    file_search_succeeded: bool,
     cursor: Cursor,
     selected: Option<Target>,
 }
@@ -184,10 +213,16 @@ pub struct Launcher {
     output: output::Observer,
     output_bounds: Option<(u32, u32)>,
     placement: Option<layout::Geometry>,
+    surface_ready: bool,
     window_height: u32,
     preferences: Preferences,
     system_dark: Option<bool>,
     opaque: bool,
+    settings: Option<settings::Entry>,
+    shortcuts: shortcut_settings::State,
+    global_shortcuts: global_shortcut_settings::State,
+    clipboard_history: clipboard_view::State,
+    window_switcher: windows::State,
     appearance: Option<appearance::Panel>,
     appearance_generation: u64,
     input_epoch: u64,
@@ -198,6 +233,11 @@ pub struct Launcher {
     apps: Vec<App>,
     usage: Usage,
     favorites: Favorites,
+    saved: saved::Store,
+    scripts: scripts::State,
+    alias_editor: Option<alias_editor::Editor>,
+    saved_editor: Option<saved_editor::Editor>,
+    edit_generation: u64,
     /// The file being opened by the daemon. While set, further opens are
     /// ignored; its use is recorded once the daemon confirms.
     opening: Option<(String, String)>,
@@ -217,6 +257,7 @@ pub struct Launcher {
     app_hits: Vec<(usize, u32)>,
     /// Original daemon order; history is applied to a copy when rebuilding.
     files: Vec<FileHit>,
+    file_search_succeeded: bool,
     items: Vec<Item>,
     /// Resolved icon per item, filled when the list is rebuilt.
     item_icons: Vec<Option<Icon>>,
@@ -236,7 +277,7 @@ pub struct Launcher {
     folder_settings: Option<folders::Panel>,
     folder_generation: u64,
     settings_path: std::path::PathBuf,
-    deferred_query: Option<String>,
+    deferred_destination: Option<Destination>,
     status_generation: u64,
     generation: u64,
     status: Status,
@@ -252,6 +293,13 @@ pub enum Message {
     SurfaceResized((u32, u32)),
     Output(output::Event),
     ApplicationOpened { id: String, result: Result<(), String> },
+    LinkOpened(Result<(), RunError>),
+    Script { generation: u64, event: scripts::Event },
+    ScriptEdit { generation: u64, event: script_editor::Event },
+    WorkflowEdit { generation: u64, event: workflow_editor::Event },
+    WorkflowRemoveStep,
+    SavedEditor { generation: u64, event: saved_editor::Event },
+    AliasEditor { generation: u64, event: alias_editor::Event },
     TimingFrame(std::time::Instant),
     Query(String),
     ContextQuery { generation: u64, query: String },
@@ -264,9 +312,17 @@ pub enum Message {
     Details { generation: u64, event: details::Event },
     ApplicationsLoaded { generation: u64, result: Result<Vec<crate::backend::ApplicationChoice>, String> },
     OpenWith { generation: u64, event: open_with::Event },
+    ShowSettings,
+    SettingsSelected(settings::Entry),
     ShowSearchStatus,
     ShowFolders,
     ShowAppearance,
+    ShortcutSettings { generation: u64, event: shortcut_settings::Event },
+    GlobalShortcuts { generation: u64, event: global_shortcut_settings::Event },
+    ShortcutRecorded(Result<Chord, &'static str>),
+    Clipboard { generation: u64, event: clipboard_view::Event },
+    ClipboardShortcut(clipboard_view::Shortcut),
+    Windows { generation: u64, event: windows::Event },
     Appearance { generation: u64, event: appearance::Event },
     FolderShortcut(folders::Shortcut),
     Folder { generation: u64, event: folders::Event },
@@ -280,10 +336,13 @@ pub enum Message {
     ResultsWheel(f32),
     Selected(Target),
     Clicked(Target),
+    ResultPrimary(Target),
     ContextMenu(Target),
+    PanelBack { target: Target, filtering: bool },
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
     InputClipboard(Option<Box<Message>>),
+    FocusGained,
     FocusLost,
     Ui(UiEvent),
 }
@@ -300,20 +359,29 @@ fn status_scroll_id() -> Id {
     Id::new("search-status-scroll")
 }
 
-pub fn run(boot_data: Boot, events: UnboundedReceiver<UiEvent>) -> Result<(), iced_layershell::Error> {
+pub fn run(
+    boot_data: Boot,
+    destination: Destination,
+    events: UnboundedReceiver<UiEvent>,
+) -> Result<(), iced_layershell::Error> {
     let activation = boot_data.activation.clone();
-    let initial = layout::calculate(boot_data.appearance, None, true, false);
-    let (output, output_events) = output::Observer::new((initial.width, initial.height));
+    let provisional = layout::calculate(boot_data.config.appearance, None, Some(0), false);
+    let (output, output_events) = output::Observer::new((provisional.width, provisional.height));
     let shared_output = output.clone();
     *OUTPUT_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(output_events);
     let (material, material_events) = Material::new(
-        !boot_data.opaque && boot_data.appearance.material == ferroseek_config::appearance::Material::Glass,
-        (initial.width, initial.height),
+        !boot_data.opaque && boot_data.config.appearance.material == ferroseek_config::appearance::Material::Glass,
+        (provisional.width, provisional.height),
     );
     let shared_material = material.clone();
     *MATERIAL_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(material_events);
     *UI_EVENTS.lock().unwrap_or_else(|e| e.into_inner()) = Some(events);
-    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((boot_data, material, output));
+    let (mut state, startup) =
+        boot_from(boot_data, material, output, Icons::new(ICON_SIZE as u16)).start_destination(destination);
+    let initial = state.placement.expect("startup computes the first surface geometry");
+    shared_material.resize((initial.width, initial.height));
+    state.surface_ready = true;
+    *BOOT.lock().unwrap_or_else(|e| e.into_inner()) = Some((state, startup));
     iced_layershell::application(boot, namespace, update, view)
         .style(|_, theme| iced::theme::Style {
             background_color: Color::TRANSPARENT,
@@ -349,43 +417,39 @@ fn namespace() -> String {
 }
 
 fn boot() -> (Launcher, Task<Message>) {
-    let (data, material, output) =
-        BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()");
-    boot_from(data, material, output, Icons::new(ICON_SIZE as u16))
+    BOOT.lock().unwrap_or_else(|e| e.into_inner()).take().expect("boot data set once by run()")
 }
 
-fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> (Launcher, Task<Message>) {
-    let Boot {
-        activation,
-        backend,
-        apps,
-        usage,
-        favorites,
-        initial_query,
-        settings_path,
-        appearance: preferences,
-        opaque,
-    } = data;
-    let first_run = !settings_path.exists();
-    let initial = layout::calculate(preferences, None, true, false);
-    let mut state = Launcher {
+fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Icons) -> Launcher {
+    Launcher {
         output,
         output_bounds: None,
         placement: None,
-        window_height: initial.height,
-        preferences,
+        surface_ready: false,
+        window_height: layout::compact_height(),
+        preferences: data.config.appearance,
         system_dark: None,
-        opaque,
+        opaque: data.opaque,
+        settings: None,
+        shortcuts: shortcut_settings::State::new(data.config.shortcuts),
+        global_shortcuts: global_shortcut_settings::State::default(),
+        clipboard_history: clipboard_view::State::new(data.private),
+        window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
         material,
         glass: false,
-        activation,
-        backend,
-        apps,
-        usage,
-        favorites,
+        activation: data.activation,
+        backend: data.backend,
+        apps: data.apps,
+        usage: data.usage,
+        favorites: data.favorites,
+        saved: saved::Store::load(&saved::Store::path(&data.settings_path)),
+        scripts: scripts::State::load(&data.settings_path),
+        alias_editor: None,
+        saved_editor: None,
+        edit_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -399,6 +463,7 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         scope_generation: 0,
         app_hits: Vec::new(),
         files: Vec::new(),
+        file_search_succeeded: false,
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
@@ -410,29 +475,19 @@ fn boot_from(data: Boot, material: Material, output: output::Observer, icons: Ic
         file_details: None,
         details_generation: 0,
         preview_enabled: false,
-        window_width: initial.width,
+        window_width: data.config.appearance.width.pixels(),
         text_preview: None,
         preview_generation: 0,
         preview_request: None,
         folder_settings: None,
         folder_generation: 0,
-        settings_path,
-        deferred_query: first_run.then(|| initial_query.clone()),
+        settings_path: data.settings_path,
+        deferred_destination: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
         compact: true,
-    };
-    state.rebuild(false); // recently opened items for the empty query
-    let prefill = if first_run {
-        state.show_folders(true)
-    } else if initial_query.is_empty() {
-        Task::none()
-    } else {
-        update(&mut state, Message::Query(initial_query))
-    };
-    let size = state.resize();
-    (state, Task::batch([size, prefill]))
+    }
 }
 
 fn subscription(_: &Launcher) -> Subscription<Message> {
@@ -453,6 +508,7 @@ fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> 
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
             Some(Message::TimingFrame(at))
         }
+        Event::Window(iced::window::Event::Focused) => Some(Message::FocusGained),
         Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
         _ => None,
     }
@@ -470,11 +526,6 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
         return (dy != 0.0).then_some(Message::Wheel(dy));
     }
     let Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. }) = event else { return None };
-    if *modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
-        && *physical_key == keyboard::key::Physical::Code(keyboard::key::Code::Comma)
-    {
-        return Some(Message::ShowAppearance);
-    }
     let command = key_message(key, *modifiers);
     if status == event::Status::Captured
         && modifiers.command()
@@ -487,15 +538,13 @@ pub(super) fn input_event(event: &Event, status: event::Status) -> Option<Messag
 }
 
 fn key_message(key: &Key, mods: Modifiers) -> Option<Message> {
-    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && key.as_ref() == Key::Character(",") {
-        return Some(Message::ShowAppearance);
+    if mods == (Modifiers::CTRL | Modifiers::SHIFT) && matches!(key.as_ref(), Key::Character("d" | "D")) {
+        return Some(Message::WorkflowRemoveStep);
     }
     if mods == Modifiers::CTRL {
         match key.as_ref() {
-            Key::Character(",") => return Some(Message::ShowFolders),
             Key::Character("s" | "S") => return Some(Message::FolderShortcut(folders::Shortcut::Save)),
             Key::Character("d" | "D") => return Some(Message::FolderShortcut(folders::Shortcut::Remove)),
-            Key::Character("i" | "I") => return Some(Message::ShowSearchStatus),
             Key::Character("r" | "R") => return Some(Message::RefreshSearchStatus),
             _ => {}
         }
@@ -524,6 +573,26 @@ fn ui_events() -> BoxStream<'static, Message> {
 }
 
 impl Launcher {
+    fn start_destination(mut self, destination: Destination) -> (Self, Task<Message>) {
+        self.rebuild(false);
+        let prefill = if !self.settings_path.exists() {
+            self.deferred_destination = Some(destination);
+            self.show_folders(true)
+        } else if matches!(&destination, Destination::Search(query) if query.is_empty()) {
+            Task::none()
+        } else {
+            self.open_startup_destination(destination)
+        };
+        let startup = Task::batch([self.resize(), prefill]);
+        (self, startup)
+    }
+
+    fn resume_query(&mut self, query: String) -> Task<Message> {
+        self.panel = None;
+        let change = update(self, Message::Query(query));
+        Task::batch([change, crate::input::focus(search_id()), widget::operation::move_cursor_to_end(search_id())])
+    }
+
     fn appearance_theme(&self, glass: bool) -> Theme {
         appearance::theme(self.preferences, self.system_dark, glass)
     }
@@ -551,10 +620,22 @@ impl Launcher {
             self.appearance = None;
             timing::event("appearance_closed");
             self.appearance_generation += 1;
-            Task::batch([task, self.resize(), crate::input::focus(search_id())])
+            Task::batch([task, self.return_to_parent()])
         } else {
             Task::batch([task, self.resize()])
         }
+    }
+
+    fn home_results(&self) -> Vec<Item> {
+        let catalog = model::Catalog { apps: &self.apps, saved: &self.saved, scripts: &self.scripts.catalog };
+        let limit = if self.scope == Scope::Commands { usize::MAX } else { VISIBLE_ROWS };
+        model::home_items(
+            catalog,
+            &self.usage.recent(usage::now(), usize::MAX),
+            self.favorites.items(),
+            self.scope,
+            limit,
+        )
     }
 
     /// Recomputes the rows. With `keep_selection` (more results for the
@@ -571,13 +652,7 @@ impl Launcher {
             }
             model::build_items(&[], &[], &files)
         } else if self.query.trim().is_empty() {
-            model::home_items(
-                &self.apps,
-                &self.usage.recent(usage::now(), usize::MAX),
-                self.favorites.items(),
-                self.scope,
-                VISIBLE_ROWS,
-            )
+            self.home_results()
         } else {
             let mut items: Vec<Item> = if self.scope.shows_calculator(&self.query) {
                 model::calc_item(&self.query).into_iter().collect()
@@ -585,6 +660,7 @@ impl Launcher {
                 Vec::new()
             };
             if !calc::is_explicit(&self.query) {
+                items.extend(model::command_items(self.scope, &self.query));
                 let mut files = self.files.clone();
                 let now = usage::now();
                 model::order_files(&mut files, |f| self.usage.boost(Kind::File, &f.id, &self.query, now));
@@ -592,6 +668,21 @@ impl Launcher {
             }
             items
         };
+        self.merge_saved_entries();
+        self.merge_alias();
+        self.append_search_fallbacks();
+        self.sync_result_icons();
+        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
+        match kept {
+            Some(j) => self.cursor.select(j, self.items.len()),
+            None => {
+                self.cursor.reset();
+                self.panel = None;
+            }
+        }
+    }
+
+    fn sync_result_icons(&mut self) {
         let icons = &mut self.icons;
         self.item_icons = self
             .items
@@ -607,52 +698,62 @@ impl Launcher {
                     Target::File(ref f) if f.is_dir => &["folder"],
                     Target::File(_) => &file_fallbacks,
                     Target::Calc(_) => &["accessories-calculator", "calc"],
+                    Target::Command(_) => &["preferences-system", "applications-system"],
+                    Target::Script(_) => &["utilities-terminal", "application-x-executable"],
+                    Target::Workflow(_) => &["system-run", "application-x-executable"],
+                    Target::Link(..) => &["insert-link"],
+                    Target::Snippet(_) => &["text-x-generic"],
+                    Target::UnavailableAlias(_) => &["dialog-information"],
                 };
                 icons.get(&item.icon, fallbacks)
             })
             .collect();
-        let kept = previous.and_then(|t| self.items.iter().position(|i| i.target.same_identity(&t)));
-        match kept {
-            Some(j) => self.cursor.select(j, self.items.len()),
-            None => {
-                self.cursor.reset();
-                self.panel = None;
-            }
-        }
+    }
+
+    fn home_rows(&self) -> Option<usize> {
+        // Keep a stable viewport while typing or showing a secondary view.
+        let home = self.search_folder.is_none()
+            && self.query.trim().is_empty()
+            && !self.search_suspended()
+            && !self.preview_enabled
+            && self.panel.is_none();
+        let needs_room = matches!(self.status, Status::Searching)
+            || (self.items.is_empty()
+                && matches!(self.status, Status::Error(_) | Status::CatalogError | Status::Notice(_)));
+        (home && !needs_room).then_some(self.items.len())
     }
 
     fn resize(&mut self) -> Task<Message> {
-        // Not while searching: rows would collapse and reappear per key.
-        let compact = self.search_folder.is_none()
-            && self.query.trim().is_empty()
-            && self.items.is_empty()
-            && self.search_status.is_none()
-            && self.folder_settings.is_none()
-            && self.appearance.is_none()
-            && self.application_picker.is_none()
-            && self.file_details.is_none()
-            && !self.preview_enabled
-            && !matches!(self.status, Status::Error(_) | Status::Notice(_) | Status::Searching);
-        let geometry = layout::calculate(self.preferences, self.output_bounds, compact, self.preview_visible());
-        self.cursor.visible = geometry.rows;
+        let mut geometry =
+            layout::calculate(self.preferences, self.output_bounds, self.home_rows(), self.preview_visible());
+        if let Some(height) = self.dialog_height() {
+            geometry = geometry.with_content_height(height, self.output_bounds);
+        }
+        self.resize_clipboard(geometry.height);
+        self.window_switcher.resize(geometry.height);
+        self.cursor.visible = geometry.rows.max(1);
         self.cursor.move_by(0, self.items.len());
         if let Some(panel) = &mut self.panel {
-            panel.cursor.visible = action_rows(geometry.height).min(geometry.rows);
+            panel.cursor.visible = panel.visible_rows(geometry.height, geometry.rows);
             let actions = panel.filtered_actions().len();
             panel.cursor.move_by(0, actions);
         }
         if let Some(panel) = &mut self.application_picker {
             panel.resize(geometry.height, self.opening.is_some());
         }
-        if self.placement == Some(geometry) && compact == self.compact {
+        if self.placement == Some(geometry) {
             return Task::none();
         }
-        self.compact = compact;
+        self.compact = geometry.rows == 0;
         self.window_width = geometry.width;
         self.window_height = geometry.height;
         self.placement = Some(geometry);
         self.output.resize((geometry.width, geometry.height));
         timing::layout(geometry);
+        if !self.surface_ready {
+            // Startup passes the computed size directly to the layer surface.
+            return Task::none();
+        }
         let anchor = if geometry.centered { Anchor::empty() } else { Anchor::Top };
         let size = Task::done(Message::AnchorSizeChange(anchor, (geometry.width, geometry.height)));
         let margin = Task::done(Message::MarginChange((geometry.top as i32, 0, 0, 0)));
@@ -678,46 +779,21 @@ impl Launcher {
             return self.resize();
         }
         match (action, &item.target) {
-            (Action::Launch | Action::Desktop(_), Target::App(i)) => {
-                let app = self.apps[*i].clone();
-                let valid = match action {
-                    Action::Desktop(index) => app.action_argv(index),
-                    _ => app.argv(),
-                };
-                if let Err(error) = valid {
-                    self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
-                    return self.resize();
-                }
-                let id = app.id.clone();
-                let activation = self.activation.clone();
-                self.opening = Some((id.clone(), self.query.clone()));
-                self.status = Status::Notice("Opening application…".into());
-                let (task, handle) = Task::perform(
-                    async move {
-                        let app_id =
-                            if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
-                        let token = activation.token(app_id).await;
-                        let result = match action {
-                            Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
-                            _ => crate::launch::launch(&app, token.as_deref()),
-                        };
-                        result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
-                    },
-                    move |result| Message::ApplicationOpened { id: id.clone(), result },
-                )
-                .abortable();
-                self.launch_task = Some(handle.abort_on_drop());
-                task
+            (Action::EditAlias, _) => self.open_alias_editor(&item),
+            (Action::GlobalShortcut, _) => self.show_command_shortcut(&item),
+            (Action::OpenCommand | Action::RunScript | Action::EditScript | Action::EditWorkflow, _) => {
+                self.activate_command(&item.target, action)
             }
-            (Action::Open | Action::Reveal, Target::File(f)) => {
-                let act = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
-                self.opening = Some((f.id.clone(), self.query.clone()));
-                self.status = Status::Notice("Opening…".into());
-                let (task, handle) =
-                    Task::perform(self.backend.clone().run(f.id.clone(), act), Message::Opened).abortable();
-                self.launch_task = Some(handle.abort_on_drop());
-                task
+            (Action::OpenLink, Target::Link(link, terms)) => self.open_saved_link(link, terms),
+            (Action::EditLink, Target::Link(link, _)) => {
+                self.open_saved_editor(saved_editor::Kind::Link, Some(saved_editor::Entry::Link(link.clone())))
             }
+            (Action::AddFavorite | Action::RemoveFavorite | Action::MoveFavoriteUp | Action::MoveFavoriteDown, _) => {
+                self.favorite_action(&item.target, action)
+            }
+            (_, Target::Snippet(snippet)) => self.snippet_action(action, snippet),
+            (Action::Launch | Action::Desktop(_), Target::App(i)) => self.open_application(*i, action),
+            (Action::Open | Action::Reveal, Target::File(file)) => self.open_indexed_file(file, action),
             (Action::BrowseFolder, Target::File(folder)) if folder.is_dir && folder.path.is_some() => {
                 self.enter_folder_search(folder.clone())
             }
@@ -747,30 +823,52 @@ impl Launcher {
             (Action::CopyResult, Target::Calc(v)) => self.copy(v.clone(), "result"),
             (Action::UseResult, Target::Calc(_)) => {
                 let Some(query) = calc::continuation(&self.query) else { return Task::none() };
-                self.panel = None;
-                // Update before moving the cursor: the continued value can
-                // be longer than the original expression.
-                let change = update(self, Message::Query(query));
-                Task::batch([
-                    change,
-                    crate::input::focus(search_id()),
-                    widget::operation::move_cursor_to_end(search_id()),
-                ])
-            }
-            (Action::AddFavorite | Action::RemoveFavorite, _) => {
-                self.set_favorite(&item.target, action == Action::AddFavorite)
+                self.resume_query(query)
             }
             (Action::ResetRanking, _) => self.reset_ranking(&item.target),
             _ => Task::none(),
         }
     }
 
-    fn is_favorite(&self, target: &Target) -> bool {
-        match target {
-            Target::App(i) => self.apps.get(*i).is_some_and(|app| self.favorites.contains(Kind::App, &app.id)),
-            Target::File(file) => self.favorites.contains(Kind::File, &file.id),
-            Target::Calc(_) => false,
+    fn open_indexed_file(&mut self, file: &FileHit, action: Action) -> Task<Message> {
+        let operation = if action == Action::Reveal { ACTION_OPEN_PARENT } else { "" };
+        self.opening = Some((file.id.clone(), self.query.clone()));
+        self.status = Status::Notice("Opening…".into());
+        let (task, handle) =
+            Task::perform(self.backend.clone().run(file.id.clone(), operation), Message::Opened).abortable();
+        self.launch_task = Some(handle.abort_on_drop());
+        task
+    }
+
+    fn open_application(&mut self, index: usize, action: Action) -> Task<Message> {
+        let app = self.apps[index].clone();
+        let valid = match action {
+            Action::Desktop(index) => app.action_argv(index),
+            _ => app.argv(),
+        };
+        if let Err(error) = valid {
+            self.status = Status::Error(format!("Cannot launch {}: {error}", app.name));
+            return self.resize();
         }
+        let id = app.id.clone();
+        let activation = self.activation.clone();
+        self.opening = Some((id.clone(), self.query.clone()));
+        self.status = Status::Notice("Opening application…".into());
+        let (task, handle) = Task::perform(
+            async move {
+                let app_id = if app.terminal { String::new() } else { app.id.trim_end_matches(".desktop").to_string() };
+                let token = activation.token(app_id).await;
+                let result = match action {
+                    Action::Desktop(index) => crate::launch::launch_action(&app, index, token.as_deref()),
+                    _ => crate::launch::launch(&app, token.as_deref()),
+                };
+                result.map_err(|error| format!("Cannot launch {}: {error}", app.name))
+            },
+            move |result| Message::ApplicationOpened { id: id.clone(), result },
+        )
+        .abortable();
+        self.launch_task = Some(handle.abort_on_drop());
+        task
     }
 
     fn actions_for(&self, target: &Target) -> Vec<Action> {
@@ -778,56 +876,36 @@ impl Launcher {
     }
 
     fn panel_for(&self, item: &Item) -> Panel {
-        let mut panel = Panel::new(item, self.is_favorite(&item.target));
-        panel.cursor.visible = action_rows(self.window_height).min(self.cursor.visible);
+        let favorite = self.is_favorite(&item.target);
+        let mut panel = Panel::new(item, favorite);
+        panel.cursor.visible = panel.visible_rows(self.window_height, self.cursor.visible);
         if let Target::App(i) = item.target
             && let Some(app) = self.apps.get(i)
         {
             panel.actions.extend((0..app.actions.len()).map(Action::Desktop));
             panel.desktop_labels = app.actions.iter().map(|action| action.name.clone()).collect();
         }
+        if matches!(item.target, Target::App(_)) {
+            panel.actions.push(Action::EditAlias);
+        }
+        let runnable_local = self.scripts.history_key(&item.target).is_some();
+        if runnable_local {
+            panel.actions.push(Action::ResetRanking);
+            panel.actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
+        }
+        self.add_favorite_move_actions(&item.target, &mut panel.actions);
+        panel.actions.extend([Action::EditAlias, Action::GlobalShortcut].into_iter().filter(|_| runnable_local));
         panel
     }
 
-    fn set_favorite(&mut self, target: &Target, enabled: bool) -> Task<Message> {
-        let (kind, key) = match target {
-            Target::App(i) => {
-                let Some(app) = self.apps.get(*i) else { return Task::none() };
-                (Kind::App, app.id.clone())
-            }
-            Target::File(file) if file.path.is_some() => (Kind::File, file.id.clone()),
-            _ => return Task::none(),
-        };
-        self.status = match self.favorites.set(kind, &key, enabled) {
-            Ok(()) => {
-                self.panel = None;
-                self.rebuild(true);
-                let message = if enabled {
-                    if self.favorites.is_persistent() {
-                        "Added to favorites"
-                    } else {
-                        "Added to favorites for this session"
-                    }
-                } else {
-                    "Removed from favorites"
-                };
-                Status::Notice(message.into())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                Status::Error("Favorites are busy. Try again.".into())
-            }
-            Err(e) => Status::Error(format!("Cannot update favorites: {e}")),
-        };
-        let focus = if self.panel.is_some() { actions_id() } else { search_id() };
-        Task::batch([self.resize(), crate::input::focus(focus)])
-    }
-
     fn reset_ranking(&mut self, target: &Target) -> Task<Message> {
-        let (kind, key) = match target {
-            Target::App(i) => (Kind::App, self.apps[*i].id.as_str()),
-            Target::File(f) => (Kind::File, f.id.as_str()),
-            Target::Calc(_) => return Task::none(),
+        let history = match target {
+            Target::App(i) => Some((Kind::App, self.apps[*i].id.as_str())),
+            Target::File(f) => Some((Kind::File, f.id.as_str())),
+            Target::Command(command) => Some((Kind::Command, command.id())),
+            _ => self.scripts.history_key(target).map(|key| (Kind::Command, key)),
         };
+        let Some((kind, key)) = history else { return Task::none() };
         self.panel = None;
         self.status = match self.usage.reset(kind, key) {
             Ok(()) => {
@@ -923,6 +1001,7 @@ impl Launcher {
             folder: self.search_folder.take(),
             more: self.folder_more,
             files: self.files.clone(),
+            file_search_succeeded: self.file_search_succeeded,
             cursor: self.cursor,
             selected: self.selected().map(|item| item.target.clone()),
         });
@@ -933,12 +1012,20 @@ impl Launcher {
         Task::batch([query, crate::input::focus(search_id())])
     }
 
+    fn leave_folder_search(&mut self) {
+        if self.search_folder.take().is_some() {
+            self.folder_search_history.clear();
+            self.scope_generation += 1;
+        }
+    }
+
     fn restore_folder_search(&mut self, frame: FolderSearchFrame) {
         self.query = frame.query;
         self.scope = frame.scope;
         self.search_folder = frame.folder;
         self.folder_more = frame.more;
         self.files = frame.files;
+        self.file_search_succeeded = frame.file_search_succeeded;
         self.generation += 1;
         self.scope_generation += 1;
         self.panel = None;
@@ -975,13 +1062,29 @@ impl Launcher {
         ])
     }
 
+    fn search_suspended(&self) -> bool {
+        self.file_details.is_some()
+            || self.application_picker.is_some()
+            || self.search_status.is_some()
+            || self.settings.is_some()
+            || self.settings_form_open()
+            || self.saved_editor_open()
+            || self.command_view_open()
+    }
+
+    fn settings_form_open(&self) -> bool {
+        self.folder_settings.is_some()
+            || self.appearance.is_some()
+            || self.shortcuts.panel.is_some()
+            || self.global_shortcuts.panel.is_some()
+    }
+
+    fn saved_editor_open(&self) -> bool {
+        self.saved_editor.is_some() || self.alias_editor.is_some()
+    }
+
     fn preview_visible(&self) -> bool {
-        self.preview_enabled
-            && self.file_details.is_none()
-            && self.application_picker.is_none()
-            && self.folder_settings.is_none()
-            && self.appearance.is_none()
-            && self.search_status.is_none()
+        self.preview_enabled && !self.search_suspended()
     }
 
     fn preview_context(&self) -> (Option<Target>, bool) {
@@ -1169,6 +1272,7 @@ impl Launcher {
     }
 
     fn show_folders(&mut self, first_run: bool) -> Task<Message> {
+        self.settings = self.settings.map(|_| settings::Entry::SearchFolders);
         self.folder_generation += 1;
         let generation = self.folder_generation;
         self.panel = None;
@@ -1191,34 +1295,47 @@ impl Launcher {
             folders::Effect::Close { refresh } => {
                 self.folder_settings = None;
                 self.folder_generation += 1;
-                let refresh = if refresh { update(self, Message::Query(self.query.clone())) } else { Task::none() };
-                Task::batch([task, refresh, self.resize(), crate::input::focus(search_id())])
+                let refresh = if refresh { query_changed(self, self.query.clone()) } else { Task::none() };
+                Task::batch([task, refresh, self.return_to_parent()])
             }
             folders::Effect::Applied => {
+                self.settings = None;
                 self.folder_settings = None;
                 self.folder_generation += 1;
                 let root = self.folder_search_history.drain(..).next();
                 if let Some(root) = root {
                     self.restore_folder_search(root);
                 }
-                let query = self.deferred_query.take().unwrap_or_else(|| self.query.clone());
-                let search = update(self, Message::Query(query));
-                self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
-                Task::batch([task, search, self.resize(), crate::input::focus(search_id())])
+                let destination =
+                    self.deferred_destination.take().unwrap_or_else(|| Destination::Search(self.query.clone()));
+                let open = self.open_setup_destination(destination);
+                let focus = self.input_focus().map_or_else(Task::none, crate::input::focus);
+                Task::batch([task, open, self.resize(), focus])
             }
         }
     }
 }
 
 fn update(s: &mut Launcher, message: Message) -> Task<Message> {
-    let previous = s.preview_context();
+    let (previous_preview, previous_home) = (s.preview_context(), s.home_rows());
     let query_boundary = matches!(&message, Message::Query(_));
-    let task = update_inner(s, message);
-    if previous.1 && !s.preview_visible() && s.preview_enabled {
+    let task = match message {
+        Message::Ui(UiEvent::OpenCommand(request)) => s.deliver_command(request),
+        Message::FolderListed { generation, result } if generation == s.generation => {
+            let result = result.map(|(files, more)| {
+                s.folder_more = more;
+                Some(files)
+            });
+            files_loaded(s, generation, result)
+        }
+        Message::FolderListed { .. } => Task::none(),
+        message => update_inner(s, message),
+    };
+    if previous_preview.1 && !s.preview_visible() && s.preview_enabled {
         let loading = s.preview_request.is_some();
         s.cancel_preview(loading);
     }
-    if previous != s.preview_context() || query_boundary {
+    if (previous_preview, previous_home) != (s.preview_context(), s.home_rows()) || query_boundary {
         let preview = s.sync_preview();
         Task::batch([task, preview, s.resize()])
     } else {
@@ -1264,16 +1381,41 @@ fn update_inner(s: &mut Launcher, message: Message) -> Task<Message> {
     }
     if let Message::TimingFrame(at) = message {
         timing::appearance_frame(at);
-        let visible = s.panel.is_none()
-            && s.file_details.is_none()
-            && s.application_picker.is_none()
-            && s.folder_settings.is_none()
-            && s.appearance.is_none()
-            && s.search_status.is_none();
+        let visible = s.panel.is_none() && !s.search_suspended();
         timing::frame(at, s.generation, visible);
         return Task::none();
     }
-    if s.appearance.is_some() { update_appearance(s, message) } else { update_content(s, message) }
+    update_active_view(s, message)
+}
+
+fn update_active_view(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.scripts.is_open() {
+        s.update_scripts(message)
+    } else if s.window_switcher.panel.is_some() {
+        s.update_windows(message)
+    } else if s.clipboard_history.panel.is_some() {
+        s.update_clipboard_history(message)
+    } else if s.alias_editor.is_some() {
+        s.update_alias_editor(message)
+    } else if s.saved_editor.is_some() {
+        s.update_saved_editor(message)
+    } else if s.settings_form_open() {
+        update_settings_form(s, message)
+    } else {
+        update_content(s, message)
+    }
+}
+
+fn update_settings_form(s: &mut Launcher, message: Message) -> Task<Message> {
+    if s.appearance.is_some() {
+        update_appearance(s, message)
+    } else if s.shortcuts.panel.is_some() {
+        s.update_shortcut_settings(message)
+    } else if s.global_shortcuts.panel.is_some() {
+        s.update_global_shortcuts(message)
+    } else {
+        update_content(s, message)
+    }
 }
 
 fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
@@ -1305,12 +1447,14 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
                 && s.file_details.is_none()
                 && s.application_picker.is_none() =>
         {
-            s.show_appearance()
+            s.show_appearance(appearance::Tab::Colors)
         }
         Message::Ui(UiEvent::DesktopAppearance(dark)) => {
             s.system_dark = dark;
             Task::none()
         }
+        Message::ShowSettings => s.toggle_settings(),
+        Message::SettingsSelected(entry) => s.choose_setting(entry),
         Message::ShowFolders => s.toggle_folders(),
         Message::FolderShortcut(shortcut) => s.folder_shortcut(shortcut),
         Message::Folder { generation, event } => s.folder_event(generation, event),
@@ -1344,31 +1488,9 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             }
             Task::none()
         }
-        Message::FolderListed { generation, result } => {
-            if generation != s.generation {
-                return Task::none();
-            }
-            let result = result.map(|(files, more)| {
-                s.folder_more = more;
-                Some(files)
-            });
-            update(s, Message::Files { generation, result })
-        }
         Message::Files { generation, result } => files_loaded(s, generation, result),
         Message::Cmd(cmd) => command(s, cmd),
-        Message::Wheel(dy) => {
-            s.clicks = ClickTracker::default();
-            if let Some(panel) = &mut s.application_picker {
-                if s.opening.is_none() {
-                    panel.wheel(if dy > 0.0 { -1 } else { 1 });
-                }
-                return Task::none();
-            }
-            if s.search_status.is_some() || s.folder_settings.is_some() {
-                return Task::none(); // the status scrollable handles its own wheel events
-            }
-            move_results(s, dy)
-        }
+        Message::Wheel(dy) => wheel(s, dy),
         Message::Selected(target) => {
             if s.panel.is_some() {
                 s.clicks = ClickTracker::default();
@@ -1400,19 +1522,12 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             s.panel = s.selected().map(|item| s.panel_for(item));
             crate::input::focus(actions_id())
         }
-        Message::PanelClicked { target, action } => {
-            // A filter or a late result can change rows after they were drawn.
-            // Resolve the action and target identities, never an old row number.
-            let a = s
-                .selected()
-                .filter(|item| item.target.same_identity(&target))
-                .and(s.panel.as_ref())
-                .filter(|p| p.filtered_actions().contains(&action))
-                .map(|_| action);
-            a.map_or_else(Task::none, |a| s.perform(a))
+        Message::ResultPrimary(_) | Message::PanelBack { .. } | Message::PanelClicked { .. } => {
+            update_action_click(s, message)
         }
         Message::ApplicationOpened { id, result } => application_opened(s, id, result),
-        Message::Opened(result) => file_opened(s, result),
+        Message::Opened(result) => finish_open(s, result, Some(Kind::File)),
+        Message::LinkOpened(result) => finish_open(s, result, None),
         Message::Ui(UiEvent::Toggle) => {
             s.launch_task = None;
             iced::exit()
@@ -1424,14 +1539,37 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
         // An open in flight finishes and exits on its own (or shows its error);
         // folder settings may hold unsaved edits or be saving; a copy is pasted
         // from the launcher after the click into the destination window.
-        Message::FocusLost
-            if s.opening.is_none() && s.folder_settings.is_none() && s.appearance.is_none() && !s.clipboard_owner =>
-        {
+        Message::FocusLost if s.opening.is_none() && !s.settings_form_open() && !s.clipboard_owner => {
             s.launch_task = None;
             iced::exit()
         }
         // Layer-shell requests generated by `to_layer_message` are handled
         // by the runtime before they reach here.
+        _ => Task::none(),
+    }
+}
+
+fn update_action_click(s: &mut Launcher, message: Message) -> Task<Message> {
+    let target = match &message {
+        Message::ResultPrimary(target) | Message::PanelBack { target, .. } | Message::PanelClicked { target, .. } => {
+            target
+        }
+        _ => return Task::none(),
+    };
+    // A filter or a late result can change rows after they were drawn.
+    // Resolve the displayed identities instead of using the current row number.
+    if !s.selected().is_some_and(|item| item.target.same_identity(target)) {
+        return Task::none();
+    }
+    let panel = s.panel.as_ref();
+    match message {
+        Message::ResultPrimary(_) if panel.is_none() => command(s, Command::Activate),
+        Message::PanelBack { filtering, .. } if panel.is_some_and(|p| p.query.is_empty() != filtering) => {
+            command(s, Command::Back)
+        }
+        Message::PanelClicked { action, .. } if panel.is_some_and(|p| p.filtered_actions().contains(&action)) => {
+            s.perform(action)
+        }
         _ => Task::none(),
     }
 }
@@ -1459,8 +1597,9 @@ fn query_changed(s: &mut Launcher, q: String) -> Task<Message> {
     // Results of the previous query must not stay actionable while
     // this one is searched.
     s.files.clear();
+    s.file_search_succeeded = false;
     s.folder_more = false;
-    s.status = if file_query { Status::Searching } else { Status::Idle };
+    s.status = if file_query { Status::Searching } else { s.scripts.search_status(s.scope) };
     s.rebuild(false);
     if !file_query {
         timing::ready(s.generation, s.items.len(), s.files.len(), true);
@@ -1477,6 +1616,7 @@ fn files_loaded(s: &mut Launcher, generation: u64, result: Result<Option<Vec<Fil
     match result {
         Ok(Some(files)) => {
             s.files = files;
+            s.file_search_succeeded = true;
             if matches!(s.status, Status::Searching | Status::Idle) {
                 s.status = Status::Idle;
             }
@@ -1484,6 +1624,7 @@ fn files_loaded(s: &mut Launcher, generation: u64, result: Result<Option<Vec<Fil
         Ok(None) => return Task::none(),
         Err(e) => {
             s.files.clear();
+            s.file_search_succeeded = false;
             s.status =
                 Status::Error(if s.search_folder.is_some() { e } else { format!("File search unavailable: {e}") });
         }
@@ -1513,12 +1654,14 @@ fn application_opened(s: &mut Launcher, id: String, result: Result<(), String>) 
     }
 }
 
-fn file_opened(s: &mut Launcher, result: Result<(), RunError>) -> Task<Message> {
+fn finish_open(s: &mut Launcher, result: Result<(), RunError>, history: Option<Kind>) -> Task<Message> {
     match result {
         Ok(()) => {
             if let Some((id, query)) = s.opening.take() {
                 s.launch_task = None;
-                s.usage.record(Kind::File, &id, &query, usage::now());
+                if let Some(kind) = history {
+                    s.usage.record(kind, &id, &query, usage::now());
+                }
                 return iced::exit();
             }
             Task::none()
@@ -1559,7 +1702,6 @@ fn update_appearance(s: &mut Launcher, message: Message) -> Task<Message> {
         Message::Ui(_)
         | Message::FocusLost
         | Message::Files { .. }
-        | Message::FolderListed { .. }
         | Message::PreviewLoaded { .. }
         | Message::DetailsLoaded { .. }
         | Message::ApplicationsLoaded { .. }
@@ -1582,8 +1724,10 @@ fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
         | Message::FolderBack { .. }
         | Message::Selected(_)
         | Message::Clicked(_)
+        | Message::ResultPrimary(_)
         | Message::ContextMenu(_)
-        | Message::PanelClicked { .. } => file_panel || s.folder_settings.is_some() || s.search_status.is_some(),
+        | Message::PanelBack { .. }
+        | Message::PanelClicked { .. } => s.search_suspended(),
         Message::ShowSearchStatus => file_panel || s.folder_settings.is_some(),
         Message::ShowFolders | Message::ResultsWheel(_) => file_panel,
         _ => false,
@@ -1591,13 +1735,7 @@ fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
 }
 
 fn refresh_current_view(s: &mut Launcher) -> Task<Message> {
-    if s.search_folder.is_some()
-        && s.file_details.is_none()
-        && s.application_picker.is_none()
-        && s.folder_settings.is_none()
-        && s.appearance.is_none()
-        && s.search_status.is_none()
-    {
+    if s.search_folder.is_some() && !s.search_suspended() {
         return s.refresh_folder();
     }
     if s.preview_visible() && s.text_preview.is_some() {
@@ -1619,6 +1757,20 @@ fn refresh_current_view(s: &mut Launcher) -> Task<Message> {
         return s.refresh_search_status();
     }
     Task::none()
+}
+
+fn wheel(s: &mut Launcher, dy: f32) -> Task<Message> {
+    s.clicks = ClickTracker::default();
+    if let Some(panel) = &mut s.application_picker {
+        if s.opening.is_none() {
+            panel.wheel(if dy > 0.0 { -1 } else { 1 });
+        }
+        return Task::none();
+    }
+    if s.search_suspended() {
+        return Task::none(); // modal scrollables handle their own wheel events
+    }
+    move_results(s, dy)
 }
 
 fn move_results(s: &mut Launcher, dy: f32) -> Task<Message> {
@@ -1678,6 +1830,9 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
             Command::Last => widget::operation::snap_to(status_scroll_id(), RelativeOffset::END),
             _ => Task::none(),
         };
+    }
+    if let Some(selected) = s.settings {
+        return s.settings_command(selected, cmd);
     }
     match cmd {
         Command::ScrollPreview(_) => {
@@ -1792,59 +1947,36 @@ fn command_inner(s: &mut Launcher, cmd: Command) -> Task<Message> {
 // ---------------------------------------------------------------- view
 
 fn view(s: &Launcher) -> Element<'_, Message> {
-    let focus = if s.file_details.is_some() || s.search_status.is_some() || s.appearance.is_some() {
-        None
-    } else if s.folder_settings.is_some() {
-        Some(folders::input_id())
-    } else if s.application_picker.is_some() {
-        Some(open_with::input_id())
-    } else if s.panel.is_some() {
-        Some(actions_id())
-    } else {
-        Some(search_id())
-    };
     crate::input::capture(
         crate::material::renderer::opaque_fallback(view_content(s), s.appearance_theme(false)),
         s.input_epoch,
-        focus,
-        s.appearance.as_ref().map(appearance::Panel::content_id),
+        s.input_focus(),
+        s.input_context(),
+        s.form_focus_cycle(),
+        s.shortcut_routing(),
     )
 }
 
-fn view_content(s: &Launcher) -> Element<'_, Message> {
-    if let Some(panel) = &s.appearance {
-        let generation = s.appearance_generation;
-        return panel
-            .view(s.system_dark, s.opaque, s.glass)
-            .map(move |event| Message::Appearance { generation, event });
+fn search_placeholder(s: &Launcher) -> &'static str {
+    if s.search_folder.is_some() {
+        return "Search this folder and subfolders…";
     }
+    match (s.scope, s.window_width < NARROW_SEARCH_WIDTH) {
+        (Scope::All, true) => "Search…",
+        (Scope::Applications, true) => "Search apps…",
+        (Scope::Files, true) => "Search files…",
+        (Scope::All, false) => "Search apps, files and commands…",
+        (Scope::Applications, false) => "Search applications…",
+        (Scope::Files, false) => "Search indexed files…",
+        (Scope::Commands, _) => "Search commands…",
+    }
+}
 
-    if let Some(panel) = &s.file_details {
-        let generation = s.details_generation;
-        return panel.view().map(move |event| Message::Details { generation, event });
+fn view_content(s: &Launcher) -> Element<'_, Message> {
+    if let Some(secondary) = s.secondary_view() {
+        return secondary;
     }
-    if let Some(panel) = &s.application_picker {
-        let generation = s.application_generation;
-        return crate::shortcuts::capture_numbered(
-            panel.view(s.opening.is_some()).map(move |event| Message::OpenWith { generation, event }),
-        );
-    }
-    if let Some(panel) = &s.folder_settings {
-        let generation = s.folder_generation;
-        return panel.view().map(move |event| Message::Folder { generation, event });
-    }
-    if let Some(status) = &s.search_status {
-        return search_status_view(status);
-    }
-    let placeholder = if s.search_folder.is_some() {
-        "Search this folder and subfolders…"
-    } else {
-        match s.scope {
-            Scope::All => "Search applications and files…",
-            Scope::Applications => "Search applications…",
-            Scope::Files => "Search indexed files…",
-        }
-    };
+    let placeholder = search_placeholder(s);
     let scope_generation = s.scope_generation;
     let input = text_input(placeholder, &s.query)
         .id(search_id())
@@ -1863,41 +1995,6 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
     let input =
         stack![input, container(search_icon).height(Length::Fill).align_y(Vertical::Center).padding(padding::left(10))]
             .clip(true);
-    let scopes = Scope::ALL.into_iter().fold(row![].spacing(4), |choices, scope| {
-        let selected = s.scope == scope;
-        choices.push(
-            button(
-                column![
-                    text(scope.to_string()).size(12),
-                    container(space().width(14)).height(2).style(move |theme| container::Style {
-                        background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
-                        border: Border { radius: 1.0.into(), ..Default::default() },
-                        ..Default::default()
-                    })
-                ]
-                .spacing(2),
-            )
-            .on_press(Message::Scope(scope))
-            .padding([3, 8])
-            .style(move |theme, status| tab_style(theme, status, selected, None)),
-        )
-    });
-    let index_status = button(text("Search status").size(12))
-        .on_press(Message::ShowSearchStatus)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let folders = button(text("Search folders").size(12))
-        .on_press(Message::ShowFolders)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let appearance = button(text("Appearance").size(12))
-        .on_press(Message::ShowAppearance)
-        .padding([4, 8])
-        .height(24)
-        .style(status_button_style);
-    let header_extra = s.placement.map_or(0, |geometry| geometry.header_extra);
     let header: Element<'_, Message> = if let Some(folder) = &s.search_folder {
         let generation = s.scope_generation;
         let path = folder.path.as_deref().and_then(|path| path.to_str());
@@ -1932,14 +2029,9 @@ fn view_content(s: &Launcher) -> Element<'_, Message> {
         .spacing(4)
         .into()
     } else {
-        let navigation = row![index_status, folders, appearance].spacing(4).align_y(Vertical::Center);
-        if header_extra > 0 {
-            column![input, row![scopes, space::horizontal()], row![space::horizontal(), navigation]].spacing(8).into()
-        } else {
-            column![input, row![scopes, space::horizontal(), navigation].align_y(Vertical::Center)].spacing(8).into()
-        }
+        column![input, views::search_navigation(s)].spacing(8).into()
     };
-    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT + header_extra as f32).align_y(Vertical::Center);
+    let header = container(header).padding([0, 8]).height(INPUT_HEIGHT).align_y(Vertical::Center);
 
     let mut body = column![header, divider()];
     if !s.compact {
@@ -2010,8 +2102,8 @@ pub(crate) fn surface_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub(crate) fn page_header<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
-    container(content).height(INPUT_HEIGHT).padding(padding::left(16).right(8)).align_y(Vertical::Center).into()
+pub(crate) fn page_header<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> container::Container<'a, M> {
+    container(content).height(INPUT_HEIGHT).padding(padding::left(16).right(8)).align_y(Vertical::Center)
 }
 
 pub(crate) fn divider<'a, M: 'a>() -> Element<'a, M> {
@@ -2185,14 +2277,10 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
     let detail = scrollable(content).id(status_scroll_id()).height(Length::Fill);
     let footer = container(
         row![
-            text("Snapshot · Refresh to check for changes").size(12).style(move |theme: &iced::Theme| {
+            text("Refresh to check for changes").size(12).width(Length::Fill).style(move |theme: &iced::Theme| {
                 iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
             }),
-            space::horizontal(),
-            button(hint("Esc", "Back to search"))
-                .on_press(Message::CloseSearchStatus)
-                .padding([4, 8])
-                .style(status_button_style),
+            button(hint("Esc", "Back")).on_press(Message::CloseSearchStatus).padding([4, 8]).style(status_button_style),
         ]
         .align_y(Vertical::Center),
     )
@@ -2208,38 +2296,51 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
         .into()
 }
 
+fn empty_folder_text(status: &Status, query: &str) -> (&'static str, &'static str) {
+    match status {
+        Status::Searching if query.is_empty() => ("Loading folder…", ""),
+        Status::Searching => ("Searching…", ""),
+        Status::Error(_) => ("Folder unavailable", "Refresh to retry, or return to your previous search."),
+        _ if query.is_empty() => {
+            ("No indexed items in this folder", "Refresh, or type at least 2 characters to search subfolders.")
+        }
+        _ if query.chars().count() < MIN_FILE_QUERY => {
+            ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
+        }
+        _ => ("No matching indexed files", "Try another name or return to your previous search."),
+    }
+}
+
+fn empty_results_text(s: &Launcher) -> (&'static str, &'static str) {
+    let query = s.query.trim();
+    if s.search_folder.is_some() {
+        return empty_folder_text(&s.status, query);
+    }
+    let short = query.chars().count() < MIN_FILE_QUERY;
+    match &s.status {
+        Status::Searching => ("Searching…", ""),
+        Status::CatalogError => ("Command catalog unavailable", "Check launcher-scripts.toml and reopen FerroSeek."),
+        Status::Error(_) if s.scope == Scope::Files => {
+            ("File search unavailable", "Switch to Applications to search installed apps.")
+        }
+        Status::Error(_) => {
+            ("File search unavailable", "You can still search applications and commands, or calculate a result.")
+        }
+        _ if calc::is_explicit(query) => ("Calculator", "Try = (2 + 3) * 4 or = 10 ft in m."),
+        _ if s.scope == Scope::Files && short => {
+            ("Search indexed files", "Type at least 2 characters to search files.")
+        }
+        _ if s.scope == Scope::Applications => ("No matching applications", "Try a different application name."),
+        _ if s.scope == Scope::Commands => ("No matching commands", "Try another command name or clear the search."),
+        _ if query.is_empty() => ("Start typing to search", "Find an application, file or command."),
+        _ if short => ("No matching applications", "Type at least 2 characters to search files."),
+        _ => ("No results", "Try a shorter name or a different keyword."),
+    }
+}
+
 fn results(s: &Launcher) -> Element<'_, Message> {
     if s.items.is_empty() {
-        let (msg, help) = match &s.status {
-            Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => ("Loading folder…", ""),
-            Status::Searching => ("Searching…", ""),
-            Status::Error(_) if s.search_folder.is_some() => {
-                ("Folder unavailable", "Refresh to retry, or return to your previous search.")
-            }
-            _ if s.search_folder.is_some() && s.query.trim().is_empty() => {
-                ("No indexed items in this folder", "Refresh, or type at least 2 characters to search subfolders.")
-            }
-            _ if s.search_folder.is_some() && s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("Search this folder and subfolders", "Type at least 2 characters to search indexed files here.")
-            }
-            _ if s.search_folder.is_some() => {
-                ("No matching indexed files", "Try another name or return to your previous search.")
-            }
-            Status::Error(_) if s.scope == Scope::Files => {
-                ("File search unavailable", "Switch to Applications to search installed apps.")
-            }
-            Status::Error(_) => ("File search unavailable", "You can still search applications or calculate a result."),
-            _ if calc::is_explicit(&s.query) => ("Calculator", "Enter a valid expression, for example = (2 + 3) * 4."),
-            _ if s.scope == Scope::Files && s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("Search indexed files", "Type at least 2 characters to search files.")
-            }
-            _ if s.scope == Scope::Applications => ("No matching applications", "Try a different application name."),
-            _ if s.query.trim().is_empty() => ("Start typing to search", "Find an application, a file, or try 2 + 3."),
-            _ if s.query.trim().chars().count() < MIN_FILE_QUERY => {
-                ("No matching applications", "Type at least 2 characters to search files.")
-            }
-            _ => ("No results", "Try a shorter name or a different keyword."),
-        };
+        let (msg, help) = empty_results_text(s);
         let mut empty = column![
             text(msg).size(18),
             text(help).size(13).style(move |theme: &iced::Theme| iced::widget::text::Style {
@@ -2320,15 +2421,23 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
             color: Some(palette::ACCENT.resolve(theme)),
         }));
     }
-    if !s.preview_visible() && !s.scope.implies_result_type(&item.target) {
-        content =
-            content.push(text(item.tag).size(11).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                color: Some(palette::DIM.resolve(theme)),
-            }));
+    if let Some(tag) = views::result_tag(s, item) {
+        content = content.push(tag);
     }
     content = content.push(numbered_slot(slot, selected, s.panel.is_none()));
     let content = content.spacing(12).align_y(Vertical::Center).padding(padding::left(9).right(12));
     // With the row's 4 px inset, 4 + 3 + 9 px keeps the icon on the 28 px gutter.
+    // Keep the full navigation slot clickable around the inset selection.
+    mouse_area(selectable_result_row(content, selected))
+        .on_press(Message::Selected(item.target.clone()))
+        .on_double_click(Message::Clicked(item.target.clone()))
+        .on_right_press(Message::ContextMenu(item.target.clone()))
+        .interaction(mouse::Interaction::Pointer)
+        .into()
+}
+
+fn selectable_result_row<'a, M: 'a>(content: impl Into<Element<'a, M>>, selected: bool) -> Element<'a, M> {
+    let content = content.into();
     let bar = selection_bar(selected, ROW_HEIGHT / 2.0);
     let row = container(row![bar, content].align_y(Vertical::Center))
         .height(ROW_HEIGHT - 4.0)
@@ -2344,35 +2453,20 @@ fn result_row(s: &Launcher, i: usize, slot: usize) -> Element<'_, Message> {
         border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
     });
-    // Keep the full navigation slot clickable around the inset selection.
-    mouse_area(container(widget::hover(row, hover)).padding([2, 4]).height(ROW_HEIGHT).clip(true))
-        .on_press(Message::Selected(item.target.clone()))
-        .on_double_click(Message::Clicked(item.target.clone()))
-        .on_right_press(Message::ContextMenu(item.target.clone()))
-        .interaction(mouse::Interaction::Pointer)
-        .into()
+    container(widget::hover(row, hover)).padding([2, 4]).height(ROW_HEIGHT).clip(true).into()
 }
 
-fn footer(s: &Launcher) -> Element<'_, Message> {
-    if s.unconfirmed_open {
-        return container(text(UNCONFIRMED_OPEN).size(12).style(move |theme: &iced::Theme| {
-            iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
-        }))
-        .width(Length::Fill)
-        .height(FOOTER_HEIGHT)
-        .padding([0, 16])
-        .align_y(Vertical::Center)
-        .style(footer_style)
-        .into();
-    }
-    let (msg, color) = match &s.status {
-        Status::Error(e) => (ellipsize_end(e, 70), palette::ERROR),
+fn search_status_text(s: &Launcher) -> (String, palette::Role) {
+    let query = s.query.trim();
+    let listing_folder = s.search_folder.is_some() && query.is_empty();
+    let calculating = s.search_folder.is_none() && calc::is_explicit(query);
+    match &s.status {
+        Status::Error(e) => (e.clone(), palette::ERROR),
+        Status::CatalogError => ("Check launcher-scripts.toml".into(), palette::ERROR),
         Status::Notice(n) => (n.clone(), palette::ACCENT),
-        Status::Searching if s.search_folder.is_some() && s.query.trim().is_empty() => {
-            ("Loading folder…".into(), palette::DIM)
-        }
-        Status::Searching => ("Searching…".to_string(), palette::DIM),
-        Status::Idle if s.search_folder.is_some() && s.query.trim().is_empty() => (
+        Status::Searching if listing_folder => ("Loading folder…".into(), palette::DIM),
+        Status::Searching => ("Searching…".into(), palette::DIM),
+        Status::Idle if listing_folder => (
             if s.folder_more {
                 format!("First {} indexed items · Type to search", s.items.len())
             } else {
@@ -2380,40 +2474,61 @@ fn footer(s: &Launcher) -> Element<'_, Message> {
             },
             palette::DIM,
         ),
-        Status::Idle if s.search_folder.is_none() && calc::is_explicit(&s.query) => {
-            ("Calculator".to_string(), palette::DIM)
-        }
-        Status::Idle if s.items.is_empty() && !s.query.trim().is_empty() => ("No results".to_string(), palette::DIM),
-        Status::Idle if s.items.is_empty() => ("FerroSeek".to_string(), palette::DIM),
-        Status::Idle if s.query.trim().is_empty() => ("Suggestions".to_string(), palette::DIM),
-        Status::Idle => match s.items.len() {
-            1 => ("1 result".to_string(), palette::DIM),
-            n => (format!("{n} results"), palette::DIM),
-        },
-    };
-    let status = widget::responsive(move |size| {
-        text(label_for_width(&msg, size.width, 12.0, false))
-            .size(12)
-            .style(move |theme: &Theme| text::Style { color: Some(color.resolve(theme)) })
-            .wrapping(text::Wrapping::None)
-            .into()
-    })
-    .height(Length::Shrink);
-    container(row![status, search_hints(s)].spacing(12).align_y(Vertical::Center).padding(padding::left(16).right(10)))
-        .height(FOOTER_HEIGHT)
-        .align_y(Vertical::Center)
-        .style(footer_style)
-        .into()
+        Status::Idle if calculating => ("Calculator".into(), palette::DIM),
+        Status::Idle => (result_count_text(s), palette::DIM),
+    }
 }
 
-fn search_hints(s: &Launcher) -> Element<'_, Message> {
+fn result_count_text(s: &Launcher) -> String {
+    if s.items.first().is_some_and(|item| item.section == model::Section::Fallback) {
+        return "No local results".into();
+    }
+    match (s.items.len(), s.query.trim().is_empty(), s.scope) {
+        (0, false, _) => "No results".into(),
+        (0, true, _) => "FerroSeek".into(),
+        (_, true, Scope::All | Scope::Applications | Scope::Files) => "Suggestions".into(),
+        (1, _, _) => "1 result".into(),
+        (n, _, _) => format!("{n} results"),
+    }
+}
+
+fn footer(s: &Launcher) -> Element<'_, Message> {
+    let compact = s.window_width < NARROW_SEARCH_WIDTH;
+    let (message, color) =
+        if s.unconfirmed_open { (UNCONFIRMED_OPEN.to_owned(), palette::ERROR) } else { search_status_text(s) };
+    let mut controls = row![footer_status(message, color)]
+        .spacing(if compact { 8 } else { 12 })
+        .align_y(Vertical::Center)
+        .padding(if compact { padding::left(8).right(8) } else { padding::left(16).right(10) });
+    if !s.unconfirmed_open {
+        controls = controls.push(search_hints(s, compact));
+    }
+    container(controls).height(FOOTER_HEIGHT).align_y(Vertical::Center).style(footer_style).into()
+}
+
+fn footer_status(message: String, color: palette::Role) -> Element<'static, Message> {
+    widget::responsive(move |size| {
+        let wrapping = text::Wrapping::WordOrGlyph;
+        let available = iced::Size::new(size.width, f32::INFINITY);
+        let label = fit_label(&message, false, |candidate| {
+            let measured = measure_text(candidate, 12.0, available, wrapping);
+            measured.width <= size.width && measured.height <= size.height
+        });
+        text(label)
+            .size(12)
+            .style(move |theme: &Theme| text::Style { color: Some(color.resolve(theme)) })
+            .wrapping(wrapping)
+            .into()
+    })
+    .height(Length::Shrink)
+    .into()
+}
+
+fn search_hints(s: &Launcher, compact: bool) -> Element<'_, Message> {
+    let shortcut = s.shortcuts.bindings.get(Shortcut::Actions).to_string();
     if s.panel.is_some() {
-        return button(primary_hint("Ctrl+K", "Close actions"))
-            .on_press(Message::Cmd(Command::ToggleActions))
-            .padding([3, 6])
-            .height(24)
-            .style(status_button_style)
-            .into();
+        let close = search_hint(shortcut, "Close actions", compact, true);
+        return footer_button(close, Message::Cmd(Command::ToggleActions));
     }
     let Some(item) = s.selected() else {
         // Same inset as the Actions button, so the last hint keeps the right edge.
@@ -2426,7 +2541,9 @@ fn search_hints(s: &Launcher) -> Element<'_, Message> {
         return container(hint("Esc", label)).padding([3, 6]).into();
     };
     let acts = s.actions_for(&item.target);
-    let mut hints = row![primary_hint("Enter", acts[0].label())].spacing(12).align_y(Vertical::Center);
+    let primary = search_hint("Enter", acts[0].label(), compact, true);
+    let mut hints =
+        row![footer_button(primary, Message::ResultPrimary(item.target.clone()))].spacing(8).align_y(Vertical::Center);
     if s.window_width >= 640 {
         if let Some(action) = model::secondary_action(&acts) {
             hints = hints.push(hint("Ctrl+Enter", action.label()));
@@ -2435,15 +2552,27 @@ fn search_hints(s: &Launcher) -> Element<'_, Message> {
             hints = hints.push(hint("Alt+→", "Browse here"));
         }
     }
-    hints
-        .push(
-            button(hint("Ctrl+K", "Actions"))
-                .on_press(Message::Cmd(Command::ToggleActions))
-                .padding([3, 6])
-                .height(24)
-                .style(status_button_style),
-        )
-        .into()
+    let actions = search_hint(shortcut, "Actions", compact, false);
+    hints.push(footer_button(actions, Message::Cmd(Command::ToggleActions))).into()
+}
+
+fn search_hint<'a>(
+    shortcut: impl text::IntoFragment<'a>,
+    label: &'static str,
+    compact: bool,
+    primary: bool,
+) -> Element<'a, Message> {
+    if compact {
+        text(label).size(12).into()
+    } else if primary {
+        primary_hint(shortcut, label)
+    } else {
+        hint(shortcut, label)
+    }
+}
+
+fn footer_button(content: Element<'_, Message>, message: Message) -> Element<'_, Message> {
+    button(content).on_press(message).padding([3, 6]).height(24).style(status_button_style).into()
 }
 
 pub(crate) fn footer_style(theme: &Theme) -> container::Style {
@@ -2454,7 +2583,7 @@ pub(crate) fn footer_style(theme: &Theme) -> container::Style {
     }
 }
 
-pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
+pub(crate) fn hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) -> Element<'a, M> {
     row![
         keycap(key, true),
         text(label)
@@ -2466,7 +2595,7 @@ pub(crate) fn hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
     .into()
 }
 
-pub(crate) fn primary_hint<'a, M: 'a>(key: &'a str, label: &'a str) -> Element<'a, M> {
+pub(crate) fn primary_hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) -> Element<'a, M> {
     row![
         keycap(key, true),
         text(label)
@@ -2513,13 +2642,6 @@ fn numbered_slot<M: 'static>(slot: usize, selected: bool, available: bool) -> El
     }
 }
 
-fn action_rows(height: u32) -> usize {
-    // Reserve surface margins, panel padding, title, query and return hint.
-    // Each command needs its 34 px row and the 2 px gap between rows.
-    (height.saturating_sub(208) / (ACTION_ROW_HEIGHT + ACTION_ROW_GAP) as u32).clamp(1, model::NUMBERED_SLOTS as u32)
-        as usize
-}
-
 fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let input = text_input("Search actions…", &p.query)
         .id(actions_id())
@@ -2531,11 +2653,18 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let file_title = matches!(target, Target::File(_));
     let title = container(
         widget::responsive(move |size| {
-            text(label_for_width(&p.title, size.width, 15.0, file_title))
-                .size(15)
-                .wrapping(text::Wrapping::None)
-                .style(move |theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) })
-                .into()
+            let title =
+                text(label_for_width(&p.title, size.width, 15.0, file_title)).size(15).wrapping(text::Wrapping::None);
+            let mut label = column![title].spacing(2);
+            if !p.context.is_empty() {
+                label = label.push(
+                    text(label_for_width(&p.context, size.width, 12.0, file_title))
+                        .size(12)
+                        .wrapping(text::Wrapping::None)
+                        .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+                );
+            }
+            label.into()
         })
         .height(Length::Shrink),
     )
@@ -2543,22 +2672,7 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
     let header = column![title, input].spacing(8);
     let actions = p.filtered_actions();
     let list = action_list(p, target, &actions);
-    let mut run = row![].spacing(12).align_y(Vertical::Center);
-    if actions.len() > p.cursor.visible {
-        let window = p.cursor.window(actions.len());
-        run = run.push(
-            text(format!("{}–{} / {}", window.start + 1, window.end, actions.len()))
-                .size(11)
-                .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
-        );
-    }
-    if !actions.is_empty() {
-        run = run.push(primary_hint("Enter", "Run"));
-    }
-    let footer =
-        row![hint("Esc", if p.query.is_empty() { "Close actions" } else { "Clear filter" }), space::horizontal(), run]
-            .align_y(Vertical::Center)
-            .padding([4, 12]);
+    let footer = action_footer(p, target, &actions);
     let col = column![header, list, footer].spacing(8);
     let panel = container(col).width(360).padding(8).style(|theme| container::Style {
         background: Some(Background::Color(palette::RAISED.resolve(theme))),
@@ -2585,6 +2699,40 @@ fn action_panel<'a>(p: &'a Panel, target: &Target) -> Element<'a, Message> {
         .align_y(Vertical::Bottom)
         .padding([FOOTER_HEIGHT + PAD + 4.0, PAD + 8.0])
         .into()
+}
+
+fn action_footer(p: &Panel, target: &Target, actions: &[Action]) -> Element<'static, Message> {
+    let range = (actions.len() > p.cursor.visible).then(|| {
+        let window = p.cursor.window(actions.len());
+        format!("{}–{} / {}", window.start + 1, window.end, actions.len())
+    });
+    let action = actions.get(p.cursor.selected).copied();
+    let filtering = !p.query.is_empty();
+    let target = target.clone();
+    widget::responsive(move |size| {
+        let mut run = row![].spacing(12).align_y(Vertical::Center);
+        // Keep both controls readable when the list fits only one row.
+        if let Some(range) = range.as_ref().filter(|_| size.width >= 288.0) {
+            run = run.push(
+                text(range.clone())
+                    .size(11)
+                    .style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+            );
+        }
+        if let Some(action) = action {
+            run = run.push(footer_button(
+                primary_hint("Enter", "Run"),
+                Message::PanelClicked { target: target.clone(), action },
+            ));
+        }
+        let back = footer_button(
+            hint("Esc", if filtering { "Clear filter" } else { "Close actions" }),
+            Message::PanelBack { target: target.clone(), filtering },
+        );
+        row![back, space::horizontal(), run].align_y(Vertical::Center).padding([2, 6]).into()
+    })
+    .height(Length::Shrink)
+    .into()
 }
 
 fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element<'a, Message> {
@@ -2647,26 +2795,33 @@ fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element
 }
 
 fn text_width(content: &str, size: f32) -> f32 {
+    measure_text(content, size, iced::Size::INFINITE, text::Wrapping::None).width
+}
+
+fn measure_text(content: &str, size: f32, bounds: iced::Size, wrapping: text::Wrapping) -> iced::Size {
     use iced::advanced::text::{Paragraph, Renderer};
 
     // Measure the same default font and shaping as the labels; character counts
     // cannot predict wide glyphs or the space left by icons, tags and the sidebar.
     <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
         content,
-        bounds: iced::Size::INFINITE,
+        bounds,
         size: iced::Pixels(size),
         line_height: Default::default(),
         font: iced::Font::DEFAULT,
         align_x: Default::default(),
         align_y: Vertical::Top,
         shaping: Default::default(),
-        wrapping: text::Wrapping::None,
+        wrapping,
     })
-    .min_width()
+    .min_bounds()
 }
 
 pub(crate) fn label_for_width(value: &str, width: f32, size: f32, middle: bool) -> String {
-    let fits = |content: &str| text_width(content, size) <= width;
+    fit_label(value, middle, |content| text_width(content, size) <= width)
+}
+
+fn fit_label(value: &str, middle: bool, fits: impl Fn(&str) -> bool) -> String {
     if fits(value) {
         return value.to_string();
     }

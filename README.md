@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucenx9/ferroseek/actions/workflows/ci.yml)
 
-**A keyboard-first Linux launcher for applications, files and calculations.**
+**A keyboard-first Linux launcher for applications, files, built-in commands and calculations.**
 
 Type an application name, find a file in your indexed folders, or calculate a
 result. Open it with Enter. FerroSeek combines a Wayland launcher with its own
@@ -10,12 +10,11 @@ Rust file search engine and keeps launch history locally.
 
 ![FerroSeek showing application and indexed file results](docs/assets/launcher.png)
 
-Screenshot from a nested test session with sample files.
+Captured at 1× in isolated Labwc with tiny-skia and synthetic files.
 
 **Status: experimental, 0.1 development.** Requires Wayland with
-`wlr-layer-shell` and session D-Bus. Graphical testing currently uses nested
-virtual KWin; other compositors have not been verified. No binary release has
-been published yet.
+`wlr-layer-shell` and session D-Bus. Graphical testing uses isolated KWin
+and Labwc sessions. No binary release has been published yet.
 
 ## What you can do
 
@@ -26,9 +25,16 @@ been published yet.
 - Browse indexed direct folder contents, or type to search its subfolders; return to the previous query and selection.
 - Inspect an indexed file's full location, type, current size and modification time.
 - Enable a text preview beside file results, with current metadata; navigate files without opening an application.
-- Calculate expressions such as `(2+3)*4`, `sqrt(2)` and `2^10`; Enter copies the result.
+- Calculate expressions such as `(2+3)*4` and convert units with `10 ft in m`.
+  Enter copies the result.
 - Open a file with its default app or choose a compatible installed app; reveal
   it in its folder or copy its path through keyboard actions.
+- Find built-in commands, saved links, reusable text and registered local commands in **Commands**.
+- Save websites and indexed paths, run web searches by keyword, and assign aliases to apps and commands.
+- Save and copy multiline text from [snippets](docs/LAUNCHER.md#snippets).
+- Opt in to [clipboard history](docs/LAUNCHER.md#clipboard-history) on supported Wayland compositors.
+- Find, switch, maximize and minimize [open windows](docs/LAUNCHER.md#switch-windows)
+  on supported Wayland compositors.
 - Pin applications and files as favorites at the top of the home suggestions.
 - Check indexing status and indexed locations from the launcher.
 - Revisit frequently opened applications and files with local, decaying history.
@@ -53,7 +59,7 @@ This installs `ferroseek-launcher`, the indexing daemon and the CLI under your
 user account, without sudo. Existing configuration and indexes are preserved;
 installation does not start or restart indexing. On first launch, choose your
 search folders and use **Save & apply** before file search starts. Existing
-configurations are retained; use **Search folders** or Ctrl+, to review them.
+configurations are retained; use **Settings → Search folders** or Ctrl+, to review them.
 
 ```sh
 ferroseek-launcher
@@ -64,7 +70,12 @@ Running the command again closes the open launcher. Clicking another window also
 compositor moves keyboard focus away; the [launcher guide](docs/LAUNCHER.md) lists exceptions. The installer does not
 register a global shortcut or change desktop settings.
 
-Choose **Appearance** for System/Light/Dark mode, paired color themes and a
+Use `ferroseek-launcher --list-commands` to find IDs for direct shortcuts such
+as `ferroseek-launcher --command clipboard-history`.
+Use **Settings → Global shortcuts** to manage bindings on supported desktops.
+[Desktop portal shortcuts](docs/LAUNCHER.md#desktop-portal-shortcuts)
+
+Choose **Settings → Appearance** for System/Light/Dark mode, paired color themes and a
 saved Glass/Solid preference. Glass has a solid fallback;
 `ferroseek-launcher --opaque` forces Solid for the session. See [appearance and renderer requirements](docs/LAUNCHER.md#appearance).
 
@@ -74,16 +85,20 @@ configuration, optional service enablement, archives and uninstall.
 
 ## Keyboard controls
 
+These are the defaults. Open **Settings → Shortcuts** to change the
+Actions and settings bindings. [Shortcut settings](docs/LAUNCHER.md#shortcuts)
+
 | Key | Action |
 |---|---|
 | Up/Down, Tab/Shift+Tab | Select a result |
 | Ctrl+Up/Ctrl+Down | Jump to the previous/next result group |
 | Enter | Launch, open or copy a calculation |
 | Ctrl+K | Show actions for the selected result |
+| Ctrl+Shift+S | Open Settings |
 | Ctrl+I | Show file search status; Esc returns to search |
 | Ctrl+Shift+Comma | Appearance preferences |
 | Ctrl+, | Choose search folders; Ctrl+S saves and applies |
-| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications and Files |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch between All, Applications, Files and Commands |
 | Ctrl+1…8 | Run a visible result or filtered action by its displayed number |
 | Ctrl+Enter | Reveal a file or continue a calculation from its result |
 | Alt+Right / Alt+Left | Browse the selected folder / return to the previous context |
@@ -105,8 +120,7 @@ and the [desktop validation matrix](docs/LAUNCHER.md#desktop-validation).
 The next priorities are real desktop validation, reliable activation, clear
 appearance settings and latency checks on real desktops. A first
 [virtual KWin diagnostic baseline](docs/BENCHMARKS.md#12-launcher-interaction-latency)
-is available. Window switching, clipboard
-history, web search and a plugin API are not implemented. See the [roadmap](docs/ROADMAP.md).
+is available. **Switch windows** works on supported Wayland sessions. A plugin API is planned. See the [roadmap](docs/ROADMAP.md).
 
 ## Engine and optional tools
 

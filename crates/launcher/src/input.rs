@@ -9,6 +9,7 @@ use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector, keyboard};
 
 use std::collections::VecDeque;
 
+use crate::shortcuts::Routing;
 use crate::ui;
 use crate::ui::Message;
 
@@ -17,8 +18,10 @@ pub fn capture<'a, R: iced::advanced::Renderer + 'a>(
     epoch: u64,
     focus: Option<iced::widget::Id>,
     context: Option<iced::widget::Id>,
+    focus_cycle: Option<FocusCycle>,
+    shortcuts: Routing,
 ) -> Element<'a, Message, Theme, R> {
-    Element::new(Input { content, epoch, focus, context })
+    Element::new(Input { content, epoch, focus, context, focus_cycle, shortcuts })
 }
 
 struct Input<'a, R> {
@@ -26,6 +29,8 @@ struct Input<'a, R> {
     epoch: u64,
     focus: Option<iced::widget::Id>,
     context: Option<iced::widget::Id>,
+    focus_cycle: Option<FocusCycle>,
+    shortcuts: Routing,
 }
 
 struct State {
@@ -74,6 +79,88 @@ impl<T> Operation<T> for EnsureFocus {
     }
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
         operate(self);
+    }
+}
+
+#[derive(Default)]
+struct CurrentFocus(Option<iced::widget::Id>);
+
+impl Operation for CurrentFocus {
+    fn focusable(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        _: Rectangle,
+        state: &mut dyn iced::advanced::widget::operation::focusable::Focusable,
+    ) {
+        if state.is_focused() {
+            self.0 = id.cloned();
+        }
+    }
+
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+}
+
+pub struct FocusCycle {
+    pub fields: Vec<(iced::widget::Id, Message)>,
+    pub tab_only: bool,
+}
+
+impl FocusCycle {
+    fn handles(&self, event: &Event) -> bool {
+        !self.tab_only
+            || matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if key.as_ref() == keyboard::Key::Named(keyboard::key::Named::Tab))
+    }
+
+    fn command<R: iced::advanced::Renderer>(
+        &self,
+        message: Option<Message>,
+        content: &mut dyn Widget<Message, Theme, R>,
+        child: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &R,
+    ) -> Option<Message> {
+        use crate::model::Command;
+
+        let step = match message {
+            Some(Message::Cmd(Command::Up)) => self.fields.len() - 1,
+            Some(Message::Cmd(Command::Down)) => 1,
+            _ => return message,
+        };
+        let mut current = CurrentFocus::default();
+        content.operate(child, layout, renderer, &mut current);
+        let index = self.fields.iter().position(|(id, _)| Some(id) == current.0.as_ref());
+        let next = index.map_or(0, |index| (index + step) % self.fields.len());
+        let (id, message) = &self.fields[next];
+        // Move the native caret before releasing subsequent buffered text.
+        // The message records the field and keeps it visible on short outputs.
+        let mut focus = EnsureFocus { target: id.clone(), found: false, allowed: true };
+        content.operate(child, layout, renderer, &mut focus);
+        Some(message.clone())
+    }
+}
+
+impl<R: iced::advanced::Renderer> Input<'_, R> {
+    fn restore_focus(&mut self, child: &mut Tree, layout: Layout<'_>, renderer: &R, shell: &mut Shell<'_, Message>) {
+        let Some(target) = &self.focus else { return };
+        if self.focus_cycle.is_some() {
+            let mut current = CurrentFocus::default();
+            self.content.as_widget_mut().operate(child, layout, renderer, &mut current);
+            if current.0.is_some() {
+                return;
+            }
+        }
+        let mut operation = EnsureFocus { target: target.clone(), found: false, allowed: true };
+        self.content.as_widget_mut().operate(child, layout, renderer, &mut operation);
+        if operation.found && crate::timing::enabled() {
+            shell.publish(Message::InputFocused {
+                epoch: self.epoch,
+                field: target.clone(),
+                at: std::time::Instant::now(),
+            });
+        }
     }
 }
 
@@ -173,29 +260,23 @@ impl<R: iced::advanced::Renderer> Widget<Message, Theme, R> for Input<'_, R> {
             _ => {}
         }
         if !state.blocked && state.needs_focus && state.window_focused {
-            if let Some(target) = &self.focus {
-                let mut operation = EnsureFocus { target: target.clone(), found: false, allowed: true };
-                self.content.as_widget_mut().operate(child, layout, renderer, &mut operation);
-                if operation.found && crate::timing::enabled() {
-                    shell.publish(Message::InputFocused {
-                        epoch: self.epoch,
-                        field: target.clone(),
-                        at: std::time::Instant::now(),
-                    });
-                }
-            }
+            self.restore_focus(child, layout, renderer, shell);
             state.needs_focus = false;
         }
         let mut dispatch = |event: &Event, child: &mut Tree, shell: &mut Shell<'_, Message>, cursor: mouse::Cursor| {
             let mut messages = Vec::new();
             let mut inner = Shell::new(&mut messages);
             // A printable global shortcut must not edit the focused text field.
-            if !matches!(ui::input_event(event, iced::event::Status::Ignored), Some(Message::ShowAppearance)) {
+            let shortcut = self.shortcuts.message(event);
+            if shortcut.is_none() {
                 self.content
                     .as_widget_mut()
                     .update(child, event, layout, cursor, renderer, clipboard, &mut inner, viewport);
             }
-            let command = ui::input_event(event, inner.event_status());
+            let mut command = shortcut.or_else(|| ui::input_event(event, inner.event_status()));
+            if let Some(cycle) = self.focus_cycle.as_ref().filter(|cycle| cycle.handles(event)) {
+                command = cycle.command(command, self.content.as_widget_mut(), child, layout, renderer);
+            }
             let numbered = matches!(event, Event::Keyboard(keyboard::Event::KeyPressed { key, physical_key, modifiers, .. })
                 if crate::model::numbered_command(key, *physical_key, *modifiers).is_some() && inner.is_event_captured());
             let pause = command.is_some()

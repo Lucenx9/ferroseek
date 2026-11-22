@@ -8,11 +8,14 @@
 //! through channels, never by awaiting zbus futures on its own executor.
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ferroseek_config::Config;
 
 use crate::activation::Activation;
+use crate::commands::{DirectCommand, Invocation};
+use crate::script_commands::Catalog;
 use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -78,6 +81,8 @@ pub const ACTION_OPEN_PARENT: &str = "open-parent";
 
 pub const LAUNCHER_BUS_NAME: &str = "io.github.ferroseek.Launcher";
 pub const LAUNCHER_PATH: &str = "/io/github/ferroseek/Launcher";
+const LAUNCHER_INTERFACE: &str = "io.github.ferroseek.Launcher1";
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(3);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 const STATUS_TIMED_OUT: &str = "Search status timed out. Try again.";
 const SEARCH_TIMED_OUT: &str = "File search timed out. Try another query or check index status.";
@@ -165,7 +170,27 @@ pub struct ApplicationChoice {
 pub enum UiEvent {
     /// Another invocation asked this instance to toggle (close).
     Toggle,
+    OpenCommand(CommandRequest),
     DesktopAppearance(Option<bool>),
+}
+
+type CommandReply = oneshot::Sender<Result<(), &'static str>>;
+
+#[derive(Debug, Clone)]
+pub struct CommandRequest {
+    pub command: Result<Invocation, &'static str>,
+    reply: Arc<Mutex<Option<CommandReply>>>,
+}
+
+impl CommandRequest {
+    pub fn new(command: Result<Invocation, &'static str>) -> (Self, oneshot::Receiver<Result<(), &'static str>>) {
+        let (send, receive) = oneshot::channel();
+        (Self { command, reply: Arc::new(Mutex::new(Some(send))) }, receive)
+    }
+
+    pub fn take_reply(&self) -> Option<CommandReply> {
+        self.reply.lock().ok()?.take().filter(|send| !send.is_canceled())
+    }
 }
 
 enum Request {
@@ -190,12 +215,14 @@ pub struct Backend {
 pub enum Startup {
     /// This process is the instance; the UI should start.
     Primary(Backend, mpsc::UnboundedReceiver<UiEvent>),
-    /// An instance was already running and has been told to toggle.
-    Toggled,
+    /// The running instance accepted the invocation.
+    Forwarded,
 }
 
 struct LauncherIface {
     events: mpsc::UnboundedSender<UiEvent>,
+    private: bool,
+    settings_path: PathBuf,
 }
 
 #[zbus::interface(name = "io.github.ferroseek.Launcher1")]
@@ -204,10 +231,68 @@ impl LauncherIface {
     async fn toggle(&self) {
         let _ = self.events.unbounded_send(UiEvent::Toggle);
     }
+
+    async fn open_command(&self, id: &str, private: bool) -> zbus::fdo::Result<()> {
+        let command =
+            DirectCommand::parse(id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("Invalid command ID".into()))?;
+        if private && !self.private {
+            return Err(zbus::fdo::Error::Failed("Close the launcher before opening a private session.".into()));
+        }
+        let runtime =
+            zruntime::SharedRuntime::current().map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+        runtime
+            .timeout(COMMAND_TIMEOUT, self.deliver_command(command))
+            .await
+            .map_err(|_| zbus::fdo::Error::Failed("The launcher did not acknowledge the command.".into()))?
+    }
+}
+
+impl LauncherIface {
+    async fn deliver_command(&self, command: DirectCommand) -> zbus::fdo::Result<()> {
+        let invocation = match command {
+            DirectCommand::Builtin(command) => Ok(Invocation::Builtin(command)),
+            DirectCommand::Local(key) => {
+                let settings = self.settings_path.clone();
+                // Validate against the file on disk, including edits made while the window is open.
+                zruntime::unblock(move || Invocation::local(&Catalog::load(&settings), key)).await
+            }
+        };
+        let (request, answer) = CommandRequest::new(invocation);
+        self.events.unbounded_send(UiEvent::OpenCommand(request)).map_err(|_| launcher_closed())?;
+        answer.await.map_err(|_| launcher_closed())?.map_err(|message| zbus::fdo::Error::Failed(message.into()))
+    }
+}
+
+fn launcher_closed() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed("The launcher closed. Open the command again.".into())
+}
+
+async fn forward(conn: &zbus::Connection, command: Option<DirectCommand>, private: bool) -> Result<Startup, String> {
+    let launcher = zbus::Proxy::new(conn, LAUNCHER_BUS_NAME, LAUNCHER_PATH, LAUNCHER_INTERFACE)
+        .await
+        .map_err(|error| error.to_string())?;
+    let runtime = zruntime::SharedRuntime::current().map_err(|error| error.to_string())?;
+    let request = async {
+        match command {
+            Some(command) => launcher.call("OpenCommand", &(command.id(), private)).await,
+            None => launcher.call("Toggle", &()).await,
+        }
+    };
+    runtime
+        .timeout(COMMAND_TIMEOUT + Duration::from_secs(1), request)
+        .await
+        .map_err(|_| "No reply from the running launcher.".to_string())?
+        .map(|()| Startup::Forwarded)
+        .map_err(|error| error.to_string())
 }
 
 /// Connects to the session bus and claims the single-instance name.
-pub fn start(activation: Activation) -> Result<Startup, String> {
+pub fn start(
+    activation: Activation,
+    command: Option<DirectCommand>,
+    private: bool,
+    settings_path: PathBuf,
+) -> Result<Startup, String> {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<Startup, String>>();
     std::thread::Builder::new()
         .name("bus".into())
@@ -223,7 +308,8 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                 let (ev_tx, ev_rx) = mpsc::unbounded();
                 // Export before owning the name, so a caller that sees the
                 // name can always reach the object.
-                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, LauncherIface { events: ev_tx.clone() }).await {
+                let iface = LauncherIface { events: ev_tx.clone(), private, settings_path };
+                if let Err(e) = conn.object_server().at(LAUNCHER_PATH, iface).await {
                     let _ = ready_tx.send(Err(format!("cannot export {LAUNCHER_PATH}: {e}")));
                     return;
                 }
@@ -232,19 +318,7 @@ pub fn start(activation: Activation) -> Result<Startup, String> {
                     Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {}
                     // zbus reports `Exists` as `Error::NameTaken`.
                     Ok(RequestNameReply::Exists | RequestNameReply::InQueue) | Err(zbus::Error::NameTaken) => {
-                        let r = conn
-                            .call_method(
-                                Some(LAUNCHER_BUS_NAME),
-                                LAUNCHER_PATH,
-                                Some("io.github.ferroseek.Launcher1"),
-                                "Toggle",
-                                &(),
-                            )
-                            .await;
-                        let _ = ready_tx.send(match r {
-                            Ok(_) => Ok(Startup::Toggled),
-                            Err(e) => Err(format!("another launcher owns {LAUNCHER_BUS_NAME} but did not answer: {e}")),
-                        });
+                        let _ = ready_tx.send(forward(&conn, command, private).await);
                         return;
                     }
                     Err(e) => {

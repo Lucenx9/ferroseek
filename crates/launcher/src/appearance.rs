@@ -127,9 +127,9 @@ pub struct Panel {
     notice: String,
 }
 impl Panel {
-    pub fn new(path: PathBuf, current: Preferences) -> Self {
+    pub fn new(path: PathBuf, current: Preferences, tab: Tab) -> Self {
         Self {
-            tab: Tab::Colors,
+            tab,
             path,
             draft: current,
             original: current,
@@ -292,8 +292,33 @@ impl Panel {
             None,
         )
     }
+    fn header(&self) -> Element<'_, Event> {
+        let active = self.tab;
+        ui::page_header(iced::widget::responsive(move |size| {
+            let compact = size.width < 340.0;
+            let horizontal = if compact { 4.0 } else { 8.0 };
+            let tab = |value, name: &'static str| {
+                button(text(name).size(12))
+                    .on_press(Event::Tab(value))
+                    .padding([6.0, horizontal])
+                    .style(move |theme, status| ui::tab_style(theme, status, active == value, Some(palette::SELECTED)))
+            };
+            let reload = if compact { text("Reload").size(12).into() } else { ui::hint("Ctrl+R", "Reload") };
+            let header = row![
+                text("Appearance").size(20),
+                tab(Tab::Colors, "Colors"),
+                tab(Tab::Layout, "Layout"),
+                space::horizontal(),
+                button(reload).on_press(Event::Reload).padding([6.0, horizontal]).style(ui::status_button_style)
+            ]
+            .spacing(horizontal)
+            .align_y(iced::Center);
+            container(header).center_y(Length::Fill).into()
+        }))
+        .into()
+    }
+
     pub fn view(&self, system: Option<bool>, opaque: bool, glass: bool) -> Element<'_, Event> {
-        let tab_fill = Some(palette::SELECTED);
         let enabled = !self.busy && self.document.is_some() && !self.confirm;
         let choice = |index, label: &'static str, selected| {
             let focused = self.cursor.selected == index;
@@ -418,30 +443,28 @@ impl Panel {
         let save = button(ui::primary_hint("Ctrl+S", "Save"))
             .padding([4, 8])
             .style(command_style(self.cursor.selected == self.save_index()));
-        let back = button(ui::hint("Esc", "Back to search"))
+        let back = button(ui::hint("Esc", "Back"))
             .padding([4, 8])
             .style(command_style(self.cursor.selected == self.save_index() + 1));
         let footer = if self.confirm {
             row![
-                text("Discard changes?").size(13),
-                space::horizontal(),
+                text("Discard changes?").size(13).width(Length::Fill),
                 button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep).style(ui::status_button_style),
                 button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard).style(ui::status_button_style)
             ]
-            .spacing(12)
+            .spacing(8)
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() { "Unsaved changes" } else { "Changes preview immediately" }).size(11).style(
+                text(if self.dirty() { "Unsaved changes" } else { "Live preview" }).size(11).width(Length::Fill).style(
                     move |theme: &Theme| text::Style {
                         color: Some(if self.dirty() { palette::TEXT } else { palette::DIM }.resolve(theme)),
                     }
                 ),
-                space::horizontal(),
                 if enabled { save.on_press(Event::Save) } else { save },
                 if self.busy { back } else { back.on_press(Event::Back) }
             ]
-            .spacing(12)
+            .spacing(8)
             .align_y(iced::Center)
         };
         let notice: Element<'_, Event> = if self.notice.is_empty() {
@@ -450,26 +473,7 @@ impl Panel {
             container(text(ui::ellipsize_end(&self.notice, 220)).size(12)).padding([6, 16]).into()
         };
         container(column![
-            ui::page_header(
-                row![
-                    text("Appearance").size(20),
-                    button(text("Colors").size(12))
-                        .on_press(Event::Tab(Tab::Colors))
-                        .padding([6, 8])
-                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Colors, tab_fill)),
-                    button(text("Layout").size(12))
-                        .on_press(Event::Tab(Tab::Layout))
-                        .padding([6, 8])
-                        .style(move |theme, status| ui::tab_style(theme, status, self.tab == Tab::Layout, tab_fill)),
-                    space::horizontal(),
-                    button(ui::hint("Ctrl+R", "Reload"))
-                        .padding([6, 8])
-                        .on_press(Event::Reload)
-                        .style(ui::status_button_style)
-                ]
-                .spacing(8)
-                .align_y(iced::Center)
-            ),
+            self.header(),
             ui::divider(),
             notice,
             scrollable(content.padding(iced::padding::top(12).bottom(8).left(16).right(16)))

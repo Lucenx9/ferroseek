@@ -18,9 +18,16 @@ import tomllib
 from install_transaction import InstallError, Transaction, digest, read, safe_path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'], 'launcher': ['launcher'], 'mcp': ['mcp']}
-BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'launcher': 'ferroseek-launcher', 'mcp': 'ferroseek-mcp'}
-PACKAGES = {'daemon': 'ferroseek-daemon', 'cli': 'ferroseek-cli', 'launcher': 'ferroseek-launcher', 'mcp': 'ferroseek-mcp'}
+SHORTCUTS_UNIT = 'app-io.github.ferroseek.Launcher.service'
+SHORTCUTS_BUS = 'io.github.ferroseek.LauncherShortcuts'
+PLASMA_HELPER = 'ferroseek-plasma-windows'
+COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'],
+                   'launcher': ['launcher', 'desktop', 'shortcuts_unit', 'plasma_helper', 'plasma_desktop'],
+                   'mcp': ['mcp']}
+BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'launcher': 'ferroseek-launcher',
+            'plasma_helper': PLASMA_HELPER, 'mcp': 'ferroseek-mcp'}
+PACKAGES = {'daemon': 'ferroseek-daemon', 'cli': 'ferroseek-cli', 'launcher': 'ferroseek-launcher',
+            'plasma_helper': 'ferroseek-launcher', 'mcp': 'ferroseek-mcp'}
 ARCHIVE_FILES = ['LICENSE', 'README.md', 'docs/INSTALLATION.md', 'docs/LAUNCHER.md', 'docs/MCP.md', 'docs/assets/launcher.png',
                  'scripts/install.sh', 'scripts/uninstall.sh', 'scripts/installer.py', 'scripts/install_transaction.py',
                  'data/ferroseek.service', 'data/io.github.ferroseek.FerroSeek.service']
@@ -54,6 +61,10 @@ def paths():
     claude = Path(os.environ['CLAUDE_CONFIG_DIR']) / '.claude.json' if os.environ.get('CLAUDE_CONFIG_DIR') else home / '.claude.json'
     targets = dict(daemon=home / '.local/bin/ferroseekd', cli=home / '.local/bin/ferroseek',
                    launcher=home / '.local/bin/ferroseek-launcher',
+                   desktop=data / 'applications/io.github.ferroseek.Launcher.desktop',
+                   plasma_helper=home / '.local/bin' / PLASMA_HELPER,
+                   plasma_desktop=data / 'applications/io.github.ferroseek.PlasmaWindows.desktop',
+                   shortcuts_unit=config / 'systemd/user' / SHORTCUTS_UNIT,
                    mcp=home / '.local/bin/ferroseek-mcp', unit=config / 'systemd/user/ferroseek.service',
                    bus=data / 'dbus-1/services/io.github.ferroseek.FerroSeek.service',
                    config=config / 'ferroseek/config.toml',
@@ -80,6 +91,23 @@ def systemd_quote(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%') + '"'
 
 
+def desktop_exec(path):
+    quoted = re.sub(r'(["`$\\])', r'\\\1', str(path).replace('%', '%%'))
+    return '"' + quoted.replace('\\', '\\\\') + '"'
+
+
+def render_shortcuts(launcher, environment):
+    args = ['/bin/sh', '-c', 'exec "$0" "$@"', str(launcher), '--global-shortcuts']
+    start = 'ExecStart=:' + ' '.join(systemd_quote(arg) for arg in args)
+    unit = ('[Unit]\nDescription=FerroSeek global shortcuts\nPartOf=graphical-session.target\n'
+            f'[Service]\n{environment}\n{start}\n'
+            '# The listener may have opened a launcher window with unsaved edits.\nKillMode=process\n'
+            '[Install]\nWantedBy=graphical-session.target\n')
+    desktop = ('[Desktop Entry]\nType=Application\nName=FerroSeek\nIcon=system-search\nNoDisplay=true\n'
+               f'Exec={desktop_exec(launcher)}\n')
+    return dict(desktop=desktop.encode(), shortcuts_unit=unit.encode())
+
+
 def render(targets, home, data, config, manager):
     # Fixed shell code, with the path in argv rather than interpolated into it.
     # systemd restricts executable characters; env would treat '=' in a command
@@ -96,7 +124,11 @@ def render(targets, home, data, config, manager):
     bus = '[D-BUS Service]\nName=io.github.ferroseek.FerroSeek\nExec=' + bus_exec + '\n'
     if manager:
         bus += 'SystemdService=ferroseek.service\n'
-    return dict(unit=unit.encode(), bus=bus.encode())
+    plasma_desktop = ('[Desktop Entry]\nType=Application\nName=FerroSeek Window Helper\nNoDisplay=true\n'
+                      f'Exec={desktop_exec(targets["plasma_helper"])}\n'
+                      'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management\n')
+    return dict(unit=unit.encode(), bus=bus.encode(), plasma_desktop=plasma_desktop.encode(),
+                **render_shortcuts(targets['launcher'], environment))
 
 
 def load_manifest(targets):
@@ -115,6 +147,11 @@ def load_manifest(targets):
     return manifest
 
 
+def component_binaries(components):
+    return {BINARIES[key]: PACKAGES[key] for component in sorted(components)
+            for key in COMPONENT_FILES[component] if key in BINARIES}
+
+
 def archive_info():
     path = ROOT / 'package.json'
     if not path.exists():
@@ -123,11 +160,7 @@ def archive_info():
     components = set(package['components'])
     if package.get('format') != 1 or 'core' not in components or not components <= set(COMPONENT_FILES):
         raise InstallError('unsupported archive manifest')
-    expected = set(ARCHIVE_FILES) | {'bin/ferroseek', 'bin/ferroseekd'}
-    if 'mcp' in components:
-        expected.add('bin/ferroseek-mcp')
-    if 'launcher' in components:
-        expected.add('bin/ferroseek-launcher')
+    expected = set(ARCHIVE_FILES) | {f'bin/{binary}' for binary in component_binaries(components)}
     if set(package['sha256']) != expected:
         raise InstallError('archive checksum manifest is incomplete or unexpected')
     if package['os'] != 'linux' or package['arch'] != platform.machine():
@@ -290,12 +323,11 @@ def refresh(env, dry_run=False):
             print('Registration refresh failed; files are installed. Retry: ' + shlex.join(cmd), file=sys.stderr)
 
 
-def active_bus_owner(env):
+def active_bus_owner(env, name):
     """PID of the current owner, without activating FerroSeek."""
     if not env['bus']:
         return None
     def call(method):
-        name = 'io.github.ferroseek.FerroSeek'
         if shutil.which('busctl'):
             cmd = ['busctl', '--user', 'call', 'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', method, 's', name]
         else:
@@ -313,6 +345,17 @@ def active_bus_owner(env):
     if not numbers or int(numbers[-1]) <= 0:
         raise InstallError('could not identify D-Bus owner; no files removed')
     return int(numbers[-1])
+
+
+def service_in_use(env, unit, name, description):
+    active = env['manager'] and succeeds(['systemctl', '--user', 'is-active', '--quiet', unit])
+    enabled = env['manager'] and succeeds(['systemctl', '--user', 'is-enabled', '--quiet', unit])
+    owner = active_bus_owner(env, name)
+    if owner is not None:
+        pid = command(['systemctl', '--user', 'show', unit, '--property=MainPID', '--value']) if active else None
+        if pid is None or pid.returncode or pid.stdout.strip() != str(owner):
+            raise InstallError(f'an unmanaged {description} owns the session bus name; stop it manually before uninstalling')
+    return active or enabled
 
 
 def install(args, env, layout):
@@ -367,9 +410,8 @@ def install(args, env, layout):
         if not shutil.which('cargo'):
             raise InstallError('source installation needs Rust/Cargo; install the toolchain or use a verified binary archive')
         cmd = ['cargo', 'build', '--release', '--locked']
-        for key in keys:
-            if key in PACKAGES:
-                cmd += ['-p', PACKAGES[key]]
+        for package_name in dict.fromkeys(component_binaries(selected).values()):
+            cmd += ['-p', package_name]
         subprocess.run(cmd, cwd=ROOT, check=True)
     content = render(targets, home, data, config, env['manager'])
     for key in keys:
@@ -441,39 +483,36 @@ def uninstall(args, env, layout):
         manifest['components'] = sorted(remaining)
         changes['manifest'] = (read(targets['manifest']), (json.dumps(manifest, indent=2) + '\n').encode() if manifest['files'] else None, 0o600)
         return changes
-    def check_service():
-        if 'core' not in selected:
-            return
-        active = env['manager'] and succeeds(['systemctl', '--user', 'is-active', '--quiet', 'ferroseek.service'])
-        enabled = env['manager'] and succeeds(['systemctl', '--user', 'is-enabled', '--quiet', 'ferroseek.service'])
-        owner = active_bus_owner(env)
-        if owner is not None:
-            pid = command(['systemctl', '--user', 'show', 'ferroseek.service', '--property=MainPID', '--value']) if active else None
-            if pid is None or pid.returncode or pid.stdout.strip() != str(owner):
-                raise InstallError('an unmanaged daemon owns the session bus name; stop it manually before uninstalling')
-        if (active or enabled) and not args.stop:
-            raise InstallError('service active or enabled; uninstall needs explicit --stop (never implicit)')
+    def check_services():
+        installed = load_manifest(targets)['files']
+        candidates = [('core', 'unit', 'ferroseek.service', 'io.github.ferroseek.FerroSeek', 'daemon'),
+                      ('launcher', 'shortcuts_unit', SHORTCUTS_UNIT, SHORTCUTS_BUS, 'shortcut listener')]
+        stopping = []
+        for component, key, unit, name, description in candidates:
+            if component in selected and key in installed and service_in_use(env, unit, name, description):
+                if not args.stop:
+                    raise InstallError(f'{unit} active or enabled; uninstall needs explicit --stop')
+                stopping.append(unit)
+        return stopping
     if args.dry_run:
         if (state / 'transaction.json').exists():
             print('Pending transaction would be recovered before removal.')
         else:
             for key in plan():
                 print('Remove/update: ' + str(targets[key]))
-        check_service()
-        if args.stop and 'core' in selected and env['manager']:
-            print('Would explicitly stop and disable ferroseek.service.')
+        for unit in check_services():
+            print(f'Would explicitly stop and disable {unit}.')
         refresh(env, dry_run=True)
         print('Dry run: nothing changed.')
         return
     transaction = Transaction(state, targets)
     with transaction.locked():
         changes = plan()
-        check_service()
+        stopping = check_services()
         for key in changes:
             print('Remove/update: ' + str(targets[key]))
-        if args.stop and 'core' in selected and env['manager']:
-            if not succeeds(['systemctl', '--user', 'disable', '--now', 'ferroseek.service']):
-                raise InstallError('could not stop/disable the service; no files removed')
+        if stopping and not succeeds(['systemctl', '--user', 'disable', '--now', *stopping]):
+            raise InstallError('could not stop/disable the services; no files removed')
         transaction.apply(changes)
     refresh(env)
     print('Uninstalled selected components. Indexes, configuration and agent registrations preserved.')

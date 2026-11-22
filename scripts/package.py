@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tomllib
 
-from installer import ARCHIVE_FILES
+from installer import ARCHIVE_FILES, component_binaries
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,13 +27,10 @@ def main():
     if platform.system() != 'Linux':
         parser.error('native Linux packaging only; cross-built artifacts need a separate validation workflow')
     components = ['core'] + (['launcher', 'mcp'] if args.components == 'full' else [] if args.components == 'core' else [args.components])
-    binaries = {'ferroseek': 'ferroseek-cli', 'ferroseekd': 'ferroseek-daemon'}
-    if 'mcp' in components:
-        binaries['ferroseek-mcp'] = 'ferroseek-mcp'
-    if 'launcher' in components:
-        binaries['ferroseek-launcher'] = 'ferroseek-launcher'
+    binaries = component_binaries(components)
     if not args.no_build:
-        subprocess.run(['cargo', 'build', '--release', '--locked', *[a for p in binaries.values() for a in ['-p', p]]], cwd=ROOT, check=True)
+        packages = dict.fromkeys(binaries.values())
+        subprocess.run(['cargo', 'build', '--release', '--locked', *[a for p in packages for a in ['-p', p]]], cwd=ROOT, check=True)
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
     name = f'ferroseek-{version}-linux-{platform.machine()}-{args.components}'
     args.output.mkdir(parents=True, exist_ok=True)

@@ -125,7 +125,7 @@ to duplicate in each screen:
 | Width presets | Compact 640, Standard 720, Wide 880 |
 | Optional preview | Adds 260 before output bounds are applied |
 | Output edge allowance / shell padding | 16 / 8 |
-| Header / footer | 72 / 34; narrow headers add 30 |
+| Header / footer | 72 / 34; Settings uses a 56-pixel header |
 | Result slot | 48 high, including clickable padding |
 | Result highlight | 44 high; inset 2 vertically and 4 horizontally |
 | Result content gap / selection bar | 12 / 3 |
@@ -135,6 +135,11 @@ Prefer the existing 4/8/12/16 spacing rhythm for new groups; optical adjustments
 belong in the owning component. Align icons, text starts and shortcut columns
 across repeated rows. Rounded corners should express containment, not make
 every element a pill. Preserve the full hit target around an inset highlight.
+
+Size the empty search to the visible suggestions, including the case where
+there are none. Use the computed size when the launcher first appears. Expand
+for the action panel and restore the suggestions height when it closes. Keep
+the results viewport steady while the user types or waits for results.
 
 Fit the selected output and scale. Short windows show fewer rows; narrow
 headers wrap controls before sacrificing the query or exit action. Test long
@@ -148,12 +153,61 @@ placement; never impose a new default solely to improve a promotional capture.
 Keep the query on its own full-width row, filters and utility actions beneath,
 results in the main region, and current action hints in the footer. Show the
 result name first and useful distinguishing context second: parent path for
-files, description for applications. The active search filter uses an accent
-underline and primary text. Type labels distinguish results in All. Applications
-and Files omit their redundant type labels and keep useful distinctions such
-as Folder and Calculator. The preview layout gives the space to names and paths.
+files, description for applications and a short purpose for commands. Commands
+use the same selection and action affordances as other results. All shows
+strong command matches. Commands browses the catalog with an empty search.
+Keep favorite commands, links and snippets ahead of the rest of that catalog and include them
+among the ordered favorites in All. Preserve the ranking of typed queries.
+Opened built-in commands and successful local runs join empty-query suggestions
+after favorites. Use the built-in ID or a fingerprint of the runnable definition.
+Keep runtime arguments and output out of history.
+Renaming a saved link or snippet keeps its favorite. Deleting it retires that
+identity. A local command or workflow favorite identifies its runnable definition.
+When that definition changes, the user can pin the new one explicitly.
+In an empty search, offer actions to move a shown favorite up or down among
+the shown favorites in its scope. Keep it selected after moving it.
+The active search filter uses an accent underline and primary text. On narrow
+windows, shorten Applications to Apps and tighten the gaps so all filters and
+Settings remain on the navigation row. In the footer, hide the action button
+keycaps on narrow windows and let status text wrap within the footer height.
+Keep the button labels and keyboard bindings available.
+Type labels distinguish results in All.
+On narrow windows, give names priority over generic type labels. Dedicated scopes
+omit labels that repeat the scope. Keep the Folder distinction when the preview
+is closed. The preview layout prioritizes names and paths.
+Give calculator answers and destination units the available width. Copying
+a conversion includes its destination unit. Using the answer for further
+arithmetic keeps its numeric value at full precision.
+Saved links show their destination host or path and optional keyword. Their
+editor uses labeled fields, native focus, and explicit confirmation for
+discard and delete. After Save, Commands selects the saved link.
+Saved web searches can opt in to appearing in All after a completed
+search with no local matches. Show the provider name and destination
+host. Use the captured query only when the user opens the action.
+An exact alias promotes its original result with the alias visible in the
+subtitle. The editor identifies the target and preserves the search on return.
+On narrow windows, keep its footer control labels visible without keycaps.
+Local command and workflow aliases identify the runnable definition. If it
+changes or is removed, keep the alias available for editing or removal.
+Snippets show their keyword and line count. Copy is an explicit action.
+The text field preserves multiline editing and uses Ctrl+S for save.
+Clipboard history has its own filter and result list. Show recording status,
+retention, copy and deletion controls in the view. Mark pinned entries in their
+rows and provide a pinned-only filter that keeps the query. Ask for confirmation
+before clearing all entries, including pins. Preserve the selected entry during
+live refreshes. Keep copied text available after leaving the launcher when the
+desktop supports a standalone clipboard source. Otherwise keep the surface
+available to serve the current selection.
+Switch windows filters the live window list by title and application. Use the
+application name and window state as context. Keep the selected window
+through updates and require a new selection if it closes. Back restores the
+parent search. Close the launcher after the desktop confirms the switch.
+If activation is unconfirmed, restore launcher input and keep the query and
+selection. Explain when the desktop cannot provide window switching.
+Window actions identify the selected window, offer the inverse of its current
+state, and confirm a change after the desktop reports it.
 
-Enter performs the selected result's primary action. Ctrl+K reveals its actions;
+Enter performs the selected result's primary action. Ctrl+K reveals its actions by default;
 Shift+F10, the Menu key, the footer button and context click provide the existing
 alternative entry points. Show shortcuts beside the action they invoke, using
 Linux key names. Keep the authoritative mapping in
@@ -174,11 +228,30 @@ and return hint remain visible. Keep primary commands easy to find, and explain 
 unavailable operation rather than leaving a plausible-looking dead control.
 Keep the filter and return hint in place as matches change. Hide result
 shortcuts without changing their label widths while the panel owns the keyboard.
-The target title uses primary text above the action filter. Command hover uses
-the same neutral fill as result hover and preserves keyboard selection. The
-panel footer shows Enter to run a matching action and the current Escape step.
-An empty filter result offers a next step and omits the run hint. The launcher
-footer offers Close actions while the panel is open.
+Show the target name and its distinguishing context above the action filter.
+Use primary text for the name and secondary text for the file's parent path or
+the result's description. Preserve the final path component when space is tight.
+Command hover uses the same neutral fill as result hover and preserves keyboard
+selection. The panel footer offers a clickable Run control with its Enter hint
+and a clickable control for the current Escape step. An empty filter result
+offers a next step and omits Run. The launcher footer offers a clickable primary
+action for the selected result and Close actions while the panel is open.
+Footer clicks operate on the target and action shown when clicked.
+
+Local command results use Run as their primary action. When confirmation is
+configured, show the executable and arguments and keep Back available. Show
+progress and cancellation during execution, then the outcome and readable,
+copyable text output. Back restores the captured query and selection.
+Offer Run again from the outcome. Keep the prior report available while the
+user reviews the next run, and ask for fresh values for its named arguments.
+Use labeled fields for registration and editing. Confirm discard and deletion
+explicitly. Save returns to Commands with the entry selected.
+When a command asks for values, focus the first field and keep the first
+missing value in view on submit. Run applies those values to that invocation.
+Confirm a workflow with its ordered command names. Show the active step while
+running and identify the step that stopped the workflow in the result.
+In the workflow editor, separate metadata from step ordering. Add commands
+through a searchable chooser and preserve the selected step while reordering.
 
 Escape unwinds the active context: clear the action filter before closing its
 panel; return from a secondary view before dismissing the launcher. Preserve
@@ -192,14 +265,35 @@ Details and previews should answer a selection question. Keep the selected file
 and return context stable during loading, errors and cancellation. Retain the
 explicit opt-in and resource bounds of the text preview. Do not turn the main
 result list into a dashboard or add preview formats merely for visual richness.
+In File details and Open with, put a visible Back button beside the page title.
+Give the captured filename prominence over its location, and keep the primary
+action in the footer. Back returns to the captured search. In Open with, Esc
+clears a nonempty filter first and the footer reflects the current Esc step.
+On narrow surfaces, prioritize visible controls and status in both file views.
+Show shortcut badges when space permits. Back and the shortcuts remain available.
 
 ### Settings and state feedback
 
-Group settings by the user's decision, with consistent labels and a visible
-current choice. Appearance previews immediately, but Save persists changes;
+The search header has one Settings entry. Group its destinations by the user's
+decision, with a visible keyboard selection. Show all destination labels at
+the default Settings height. Back from a settings page returns
+to its entry point, and Back from Settings preserves the search context.
+Keyboard shortcut editing identifies the action being recorded, keeps recovery
+keys available and explains binding conflicts. Show the active binding next to
+its action. Only a successful save applies the draft.
+Global shortcuts show the key labels reported by the desktop and keep Back
+available while the desktop opens its configuration. Distinguish active
+bindings from setup in progress.
+From a command's actions, offer its launch command for desktop assignment.
+Show reported bindings for built-in commands. A local command or workflow
+shortcut opens its review and resolves the saved runnable definition.
+Back restores the originating search.
+Appearance previews immediately, but Save persists changes;
 Back with unsaved edits requires explicit discard, and Escape at that prompt
 keeps editing. Save failures retain the draft. Preserve the distinct save/apply
 behavior of folder settings documented in [LAUNCHER.md](docs/LAUNCHER.md).
+On narrow surfaces, the Appearance tabs and Reload remain visible. The Reload
+keycap yields space to its label.
 
 Design each affected state and its next step. The following are requirements
 for new or changed flows; example wording must match the actual condition:

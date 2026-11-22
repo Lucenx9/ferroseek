@@ -67,6 +67,9 @@ impl Paths {
 pub struct Config {
     /// Launcher-only appearance; does not affect indexing.
     pub appearance: appearance::Preferences,
+    /// Launcher-only keyboard bindings.
+    #[serde(skip_serializing_if = "shortcuts::Preferences::is_default")]
+    pub shortcuts: shortcuts::Preferences,
     /// Directories to index. `~` expands to `$HOME`.
     pub roots: Vec<String>,
     /// Index dotfiles and dot-directories.
@@ -98,6 +101,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             appearance: appearance::Preferences::default(),
+            shortcuts: shortcuts::Preferences::default(),
             roots: vec!["~".into()],
             index_hidden: false,
             exclude_names: DEFAULT_EXCLUDE_NAMES.iter().map(|s| s.to_string()).collect(),
@@ -223,6 +227,7 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        self.shortcuts.validate().map_err(ConfigError::Invalid)?;
         if !(1..=100).contains(&self.max_cpu_percent) {
             return Err(ConfigError::Invalid("max_cpu_percent must be 1..=100".into()));
         }
@@ -281,6 +286,7 @@ pub fn normalize(p: &Path) -> PathBuf {
 
 pub mod appearance;
 pub mod folders;
+pub mod shortcuts;
 
 #[cfg(test)]
 mod tests {

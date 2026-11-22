@@ -5,9 +5,51 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::uri;
-use crate::usage::{self, Kind, Usage};
+use crate::usage::{self, Usage};
 
 const MAX_FAVORITES: usize = 400;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Kind {
+    App,
+    File,
+    Command,
+    Link,
+    Snippet,
+}
+
+impl From<usage::Kind> for Kind {
+    fn from(kind: usage::Kind) -> Self {
+        match kind {
+            usage::Kind::App => Self::App,
+            usage::Kind::File => Self::File,
+            usage::Kind::Command => Self::Command,
+        }
+    }
+}
+
+impl Kind {
+    fn parse(tag: &str) -> Option<Self> {
+        match tag {
+            "app" => Some(Self::App),
+            "file" => Some(Self::File),
+            "command" => Some(Self::Command),
+            "link" => Some(Self::Link),
+            "snippet" => Some(Self::Snippet),
+            _ => None,
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            Self::App => "app",
+            Self::File => "file",
+            Self::Command => "command",
+            Self::Link => "link",
+            Self::Snippet => "snippet",
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Favorites {
@@ -47,13 +89,30 @@ impl Favorites {
         if !valid_key(kind, key) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid favorite key"));
         }
+        self.edit(|items| update_items(items, kind, key, enabled))
+    }
+
+    /// Swaps two visible favorites, leaving hidden entries in their slots.
+    pub fn swap_in_order(&mut self, earlier: (Kind, &str), later: (Kind, &str)) -> io::Result<()> {
+        self.edit(|items| {
+            let index = |(kind, key)| items.iter().position(|(k, value)| (*k, value.as_str()) == (kind, key));
+            match (index(earlier), index(later)) {
+                (Some(first), Some(second)) if first < second => {
+                    items.swap(first, second);
+                    Ok(true)
+                }
+                _ => Err(io::Error::other("The order changed on disk. Reopen FerroSeek to load it.")),
+            }
+        })
+    }
+
+    fn edit(&mut self, change: impl FnOnce(&mut Vec<(Kind, String)>) -> io::Result<bool>) -> io::Result<()> {
         let Some(path) = self.path.clone() else {
-            update_items(&mut self.items, kind, key, enabled)?;
-            return Ok(());
+            return change(&mut self.items).map(|_| ());
         };
         let items = usage::with_lock(&path, false, || {
             let mut items = read_items(&path)?;
-            if update_items(&mut items, kind, key, enabled)? {
+            if change(&mut items)? {
                 write_items(&path, &items)?;
             }
             Ok(items)
@@ -66,7 +125,7 @@ impl Favorites {
 fn valid_key(kind: Kind, key: &str) -> bool {
     !key.is_empty()
         && !key.contains(['\n', '\r', '\t'])
-        && (kind == Kind::App || uri::path_from_file_url(key).is_some())
+        && (kind != Kind::File || uri::path_from_file_url(key).is_some())
 }
 
 fn update_items(items: &mut Vec<(Kind, String)>, kind: Kind, key: &str, enabled: bool) -> io::Result<bool> {
@@ -99,11 +158,7 @@ fn read_items(path: &Path) -> io::Result<Vec<(Kind, String)>> {
         }
         let Ok(line) = std::str::from_utf8(line) else { continue };
         let Some((tag, key)) = line.split_once('\t') else { continue };
-        let kind = match tag {
-            "app" => Kind::App,
-            "file" => Kind::File,
-            _ => continue,
-        };
+        let Some(kind) = Kind::parse(tag) else { continue };
         if valid_key(kind, key) && !items.iter().any(|(k, value)| *k == kind && value == key) {
             items.push((kind, key.to_string()));
         }
@@ -117,10 +172,7 @@ fn write_items(path: &Path, items: &[(Kind, String)]) -> io::Result<()> {
     let result = (|| {
         let mut file = usage::private_options().write(true).create_new(true).open(&tmp)?;
         for (kind, key) in items {
-            let tag = match kind {
-                Kind::App => "app",
-                Kind::File => "file",
-            };
+            let tag = kind.tag();
             writeln!(file, "{tag}\t{key}")?;
         }
         file.sync_all()?;
@@ -147,6 +199,7 @@ mod tests {
         favorites.set(Kind::App, "a.desktop", true).unwrap();
         favorites.set(Kind::File, "file:///synthetic/a%20b%FF", true).unwrap();
         favorites.set(Kind::App, "b.desktop", true).unwrap();
+        favorites.set(Kind::Command, "switch-windows", true).unwrap();
         let inode = std::fs::metadata(&path).unwrap().ino();
         favorites.set(Kind::App, "a.desktop", true).unwrap();
         assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode, "an idempotent request does not replace the file");
@@ -157,6 +210,7 @@ mod tests {
             [
                 (Kind::File, "file:///synthetic/a%20b%FF".to_string()),
                 (Kind::App, "b.desktop".to_string()),
+                (Kind::Command, "switch-windows".to_string()),
                 (Kind::App, "a.desktop".to_string()),
             ]
         );
@@ -183,6 +237,25 @@ mod tests {
             Favorites::load(Some(path)).items(),
             [(Kind::App, "b.desktop".to_string()), (Kind::App, "a.desktop".to_string())]
         );
+    }
+
+    #[test]
+    fn reordering_keeps_hidden_slots_and_rejects_a_stale_direction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher-favorites");
+        let mut favorites = Favorites::load(Some(path.clone()));
+        let app = (Kind::App, "a.desktop");
+        let file = (Kind::File, "file:///synthetic/file.txt");
+        let command = (Kind::Command, "switch-windows");
+        for (kind, key) in [app, file, command] {
+            favorites.set(kind, key, true).unwrap();
+        }
+        let mut stale = Favorites::load(Some(path.clone()));
+        favorites.swap_in_order(app, command).unwrap();
+        assert_eq!(favorites.items(), [command, file, app].map(|(kind, key)| (kind, key.to_owned())));
+        assert!(stale.swap_in_order(app, command).is_err());
+        assert_eq!(stale.items(), [app, file, command].map(|(kind, key)| (kind, key.to_owned())));
+        assert_eq!(Favorites::load(Some(path)).items(), favorites.items());
     }
 
     #[test]
@@ -317,11 +390,11 @@ mod tests {
         let path = history.with_file_name("launcher-favorites");
         let mut usage = Usage::load(Some(history.clone()));
         let mut favorites = Favorites::load(Some(path.clone()));
-        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        usage.record(usage::Kind::App, "saved.desktop", "sav", 100);
         favorites.set(Kind::App, "saved.desktop", true).unwrap();
-        usage.reset(Kind::App, "saved.desktop").unwrap();
+        usage.reset(usage::Kind::App, "saved.desktop").unwrap();
         assert!(Favorites::load(Some(path.clone())).contains(Kind::App, "saved.desktop"));
-        usage.record(Kind::App, "saved.desktop", "sav", 100);
+        usage.record(usage::Kind::App, "saved.desktop", "sav", 100);
         let disk = std::fs::read(&history).unwrap();
         favorites.set(Kind::App, "saved.desktop", false).unwrap();
         assert_eq!(std::fs::read(&history).unwrap(), disk);

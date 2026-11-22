@@ -7,7 +7,7 @@ use iced::{Background, Border, Element, Length};
 use crate::backend::{ApplicationChoice, FileHit};
 use crate::icons::{Icon, Icons};
 use crate::matcher;
-use crate::model::{self, Command, Cursor, NUMBERED_SLOTS};
+use crate::model::{Command, Cursor, NUMBERED_SLOTS};
 use crate::ui::{self, palette};
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,7 @@ pub enum Event {
     Open(String),
     Reload,
     Back,
+    ReturnToSearch,
 }
 
 pub enum Effect {
@@ -92,13 +93,17 @@ impl Panel {
             return false;
         }
         if matches!(self.state, State::Ready(_)) {
-            self.restore = self.filtered().get(self.cursor.selected).map(|&i| self.apps()[i].id.clone());
+            self.restore = self.selected_app(&self.filtered()).map(|app| app.id.clone());
         }
         self.state = State::Loading;
         self.error = None;
         self.icons.clear();
         self.cursor.reset();
         true
+    }
+
+    fn selected_app(&self, filtered: &[usize]) -> Option<&ApplicationChoice> {
+        filtered.get(self.cursor.selected).map(|&index| &self.apps()[index])
     }
 
     pub fn loaded(&mut self, result: Result<Vec<ApplicationChoice>, String>, icons: &mut Icons) {
@@ -136,6 +141,7 @@ impl Panel {
                 self.cursor.reset();
             }
             Event::Reload if !matches!(self.state, State::Loading) => return Effect::Reload,
+            Event::ReturnToSearch => return Effect::Close,
             Event::Back if self.query.is_empty() => return Effect::Close,
             Event::Back => {
                 self.query.clear();
@@ -162,8 +168,8 @@ impl Panel {
         match cmd {
             Command::Back => return self.event(Event::Back),
             Command::Activate => {
-                if let Some(&i) = filtered.get(self.cursor.selected) {
-                    return Effect::Open(self.apps()[i].id.clone());
+                if let Some(app) = self.selected_app(&filtered) {
+                    return Effect::Open(app.id.clone());
                 }
             }
             Command::ActivateVisible(slot) if slot < NUMBERED_SLOTS => {
@@ -186,7 +192,7 @@ impl Panel {
     /// Fit rows after reserving the header, input, footer and feedback headroom.
     /// Error text can wrap.
     pub fn resize(&mut self, height: u32, opening: bool) {
-        let reserved = 208
+        let reserved = 228
             + if self.error.is_some() {
                 100
             } else if opening {
@@ -202,23 +208,24 @@ impl Panel {
         self.cursor.move_by(delta, self.filtered().len());
     }
 
-    pub fn view(&self, opening: bool) -> Element<'_, Event> {
-        let mut reload = button(ui::hint("Ctrl+R", "Refresh")).padding([6, 8]).style(ui::status_button_style);
-        if !opening && !matches!(self.state, State::Loading) {
-            reload = reload.on_press(Event::Reload);
-        }
-        let title = row![text("Open with…").size(20), space::horizontal(), reload].align_y(Vertical::Center);
+    fn file_context(&self) -> Element<'_, Event> {
         let path = self.file.path.as_deref().and_then(|path| path.to_str());
-        let display = path.map_or_else(|| self.file.id.clone(), model::home_relative);
-        let target = widget::responsive(move |size| {
+        let location = path.unwrap_or(&self.file.id);
+        let parent =
+            if path.is_some() && !self.file.subtext.is_empty() { self.file.subtext.as_str() } else { location };
+        widget::responsive(move |size| {
             widget::tooltip(
-                text(ui::label_for_width(&display, size.width, 12.0, true))
-                    .size(12)
-                    .style(move |theme: &iced::Theme| iced::widget::text::Style {
-                        color: Some(palette::DIM.resolve(theme)),
-                    })
-                    .wrapping(text::Wrapping::None),
-                container(text(path.unwrap_or(&self.file.id)).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                column![
+                    text(ui::label_for_width(&self.file.name, size.width, 16.0, true))
+                        .size(16)
+                        .wrapping(text::Wrapping::None),
+                    text(ui::label_for_width(parent, size.width, 12.0, true))
+                        .size(12)
+                        .style(|theme: &iced::Theme| text::Style { color: Some(palette::DIM.resolve(theme)) })
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(2),
+                container(text(location).size(12).wrapping(text::Wrapping::WordOrGlyph))
                     .padding(8)
                     .max_width(560)
                     .style(ui::surface_style),
@@ -226,7 +233,13 @@ impl Panel {
             )
             .into()
         })
-        .height(Length::Shrink);
+        .height(Length::Shrink)
+        .into()
+    }
+
+    pub fn view(&self, opening: bool, launch_unconfirmed: bool) -> Element<'_, Event> {
+        let can_open = !opening && !launch_unconfirmed;
+        let reload = (!opening && !matches!(self.state, State::Loading)).then_some(Event::Reload);
         let mut input = text_input("Search applications…", &self.query)
             .id(input_id())
             .size(15)
@@ -235,6 +248,7 @@ impl Panel {
         if !opening {
             input = input.on_input(Event::Query);
         }
+        let filtered = self.filtered();
         let mut body = column![].spacing(3);
         match &self.state {
             State::Loading => {
@@ -247,12 +261,11 @@ impl Panel {
                 body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
                     iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
                 }));
-                body = body.push(text("Use Refresh to try again, or Esc to return to search.").size(12).style(
+                body = body.push(text("Use Refresh to try again, or Back to return to search.").size(12).style(
                     move |theme: &iced::Theme| iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) },
                 ));
             }
             State::Ready(apps) => {
-                let filtered = self.filtered();
                 if filtered.is_empty() {
                     body = body.push(
                         text(if apps.is_empty() {
@@ -326,7 +339,7 @@ impl Panel {
                             border: Border { radius: 9.0.into(), ..Default::default() },
                             ..Default::default()
                         });
-                    if !opening {
+                    if can_open {
                         choice = choice.on_press(Event::Open(app.id.clone()));
                     }
                     body = body.push(choice);
@@ -338,62 +351,15 @@ impl Panel {
                 iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
             }));
         }
-        let body = container(body)
-            .padding(iced::padding::left(if self.apps().is_empty() || self.filtered().is_empty() { 16 } else { 0 }));
-        let back = button(ui::hint("Esc", if self.query.is_empty() { "Back to search" } else { "Clear filter" }))
-            .on_press(Event::Back)
-            .style(ui::status_button_style);
-        let (status, color) = if opening {
-            ("Opening…".to_string(), palette::ACCENT)
-        } else if self.error.is_some() {
-            ("Could not open file".into(), palette::ERROR)
-        } else {
-            match &self.state {
-                State::Loading => ("Loading applications…".into(), palette::DIM),
-                State::Error(_) => ("Applications unavailable".into(), palette::ERROR),
-                State::Ready(_) => {
-                    let filtered = self.filtered();
-                    let window = self.cursor.window(filtered.len());
-                    let status = if filtered.is_empty() {
-                        "0 applications".into()
-                    } else {
-                        if window.start == 0 && window.end == filtered.len() {
-                            format!("{} application{}", filtered.len(), if filtered.len() == 1 { "" } else { "s" })
-                        } else {
-                            format!("{}–{} of {} applications", window.start + 1, window.end, filtered.len())
-                        }
-                    };
-                    (status, palette::DIM)
-                }
-            }
-        };
-        let footer = row![
-            text(status)
-                .size(12)
-                .width(Length::Fill)
-                .wrapping(text::Wrapping::None)
-                .style(move |theme: &iced::Theme| text::Style { color: Some(color.resolve(theme)) }),
-            if !opening && !self.filtered().is_empty() {
-                ui::primary_hint("Enter", "Open")
-            } else {
-                ui::hint("Enter", "Open")
-            },
-            back
-        ]
-        .spacing(14)
-        .align_y(Vertical::Center);
+        let body = container(body).padding(iced::padding::left(if filtered.is_empty() { 16 } else { 0 }));
         container(
             column![
-                ui::page_header(title),
+                ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
                 ui::divider(),
-                container(target).width(Length::Fill).clip(true).padding([4, 16]),
+                container(self.file_context()).width(Length::Fill).clip(true).padding([4, 16]),
                 container(input).padding([0, 16]),
                 container(body).padding([4, 0]).height(Length::Fill),
-                container(footer)
-                    .height(crate::layout::FOOTER_HEIGHT)
-                    .padding(iced::padding::left(16).right(10))
-                    .center_y(crate::layout::FOOTER_HEIGHT)
-                    .style(ui::footer_style)
+                self.footer(opening, can_open, &filtered)
             ]
             .spacing(3),
         )
@@ -402,5 +368,63 @@ impl Panel {
         .height(Length::Fill)
         .style(ui::surface_style)
         .into()
+    }
+
+    fn footer_status(&self, opening: bool, count: usize) -> (String, palette::Role) {
+        match &self.state {
+            _ if opening => ("Opening…".into(), palette::ACCENT),
+            _ if self.error.is_some() => ("Could not open file".into(), palette::ERROR),
+            State::Loading => ("Loading applications…".into(), palette::DIM),
+            State::Error(_) => ("Applications unavailable".into(), palette::ERROR),
+            State::Ready(_) => {
+                let window = self.cursor.window(count);
+                let status = if window.len() < count {
+                    format!("{}–{} of {count} applications", window.start + 1, window.end)
+                } else if count == 1 {
+                    "1 application".into()
+                } else {
+                    format!("{count} applications")
+                };
+                (status, palette::DIM)
+            }
+        }
+    }
+
+    fn footer(&self, opening: bool, can_open: bool, filtered: &[usize]) -> Element<'_, Event> {
+        let (status, color) = self.footer_status(opening, filtered.len());
+        let selected = self.selected_app(filtered).filter(|_| can_open);
+        let has_filter = !self.query.is_empty();
+        let footer = widget::responsive(move |size| {
+            let compact = size.width < 360.0;
+            let mut controls = row![
+                text(status.clone())
+                    .size(12)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::None)
+                    .style(move |theme: &iced::Theme| text::Style { color: Some(color.resolve(theme)) })
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center);
+            if !compact || has_filter {
+                let back = if compact {
+                    text("Clear filter").size(12).into()
+                } else {
+                    ui::hint("Esc", if has_filter { "Clear filter" } else { "Back to search" })
+                };
+                controls = controls.push(button(back).on_press(Event::Back).style(ui::status_button_style));
+            }
+            if let Some(app) = selected {
+                let open = if compact { text("Open").size(12).into() } else { ui::primary_hint("Enter", "Open") };
+                controls =
+                    controls.push(button(open).on_press(Event::Open(app.id.clone())).style(ui::status_button_style));
+            }
+            container(controls).center_y(Length::Fill).into()
+        });
+        container(footer)
+            .height(crate::layout::FOOTER_HEIGHT)
+            .padding(iced::padding::left(16).right(10))
+            .center_y(crate::layout::FOOTER_HEIGHT)
+            .style(ui::footer_style)
+            .into()
     }
 }

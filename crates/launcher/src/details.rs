@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Current metadata for one captured file; never opens the index or file contents.
 use iced::alignment::Vertical;
-use iced::widget::{Id, button, column, container, row, scrollable, space, text};
+use iced::widget::{Id, button, column, container, responsive, row, scrollable, text};
 use iced::{Element, Length};
 
 use crate::backend::{FileDetails, FileHit};
@@ -96,21 +96,11 @@ impl Panel {
     }
 
     pub fn view(&self) -> Element<'_, Event> {
-        let mut refresh = button(ui::hint("Ctrl+R", "Refresh")).padding([6, 8]).style(ui::status_button_style);
-        if !matches!(self.state, State::Loading) {
-            refresh = refresh.on_press(Event::Refresh);
-        }
-        let header = row![
-            text("File details").size(20),
-            space::horizontal(),
-            button(ui::hint("Enter", "Preview text")).on_press(Event::Preview).style(ui::status_button_style),
-            refresh
-        ]
-        .align_y(Vertical::Center);
+        let refresh = (!matches!(self.state, State::Loading)).then_some(Event::Refresh);
         let (location, url) = self.location();
         let copy = if url { "Copy file URL" } else { "Copy path" };
         let mut body = column![
-            field("Name", &self.file.name),
+            text(&self.file.name).size(18).wrapping(text::Wrapping::WordOrGlyph),
             column![
                 text(if url { "File URL" } else { "Location" }).size(12).style(move |theme: &iced::Theme| {
                     iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
@@ -121,11 +111,7 @@ impl Panel {
         ]
         .spacing(16);
         match &self.state {
-            State::Loading => {
-                body = body.push(text("Loading file details…").size(15).style(move |theme: &iced::Theme| {
-                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-                }))
-            }
+            State::Loading => {}
             State::Error(error) => {
                 body = body.push(text("File details could not be loaded").size(16));
                 body = body.push(text(ui::ellipsize_end(error, 300)).size(13).style(move |theme: &iced::Theme| {
@@ -145,39 +131,54 @@ impl Panel {
                 body = body.push(field("Modified", &modified));
             }
         }
-        let mut footer = row![
-            button(ui::hint("Esc", "Back to search"))
-                .on_press(Event::Back)
-                .padding([4, 0])
-                .style(ui::status_button_style),
-            space::horizontal()
-        ]
-        .align_y(Vertical::Center);
-        if let Some(notice) = self.notice {
-            footer = footer
-                .push(text(notice).size(12).style(move |theme: &iced::Theme| iced::widget::text::Style {
-                    color: Some(palette::ACCENT.resolve(theme)),
-                }))
-                .push(space::horizontal());
-        }
-        footer = footer.push(
-            button(ui::hint("Ctrl+Shift+C", copy))
-                .on_press(Event::CopyLocation)
-                .padding([4, 8])
-                .style(ui::status_button_style),
-        );
         container(column![
-            ui::page_header(header),
+            ui::back_refresh_header("File details", Event::Back, refresh),
             ui::divider(),
             scrollable(container(body).padding([12, 16])).id(scroll_id()).height(Length::Fill),
             ui::divider(),
-            container(footer).padding(iced::padding::left(16).right(8)).height(34).center_y(34).style(ui::footer_style),
+            self.footer(copy),
         ])
         .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
         .style(ui::surface_style)
         .into()
+    }
+
+    fn footer(&self, copy_label: &'static str) -> Element<'_, Event> {
+        let (status, color) = match (self.notice, &self.state) {
+            (Some(notice), _) => (notice, palette::ACCENT),
+            (_, State::Loading) => ("Loading details…", palette::DIM),
+            (_, State::Error(_)) => ("Details unavailable", palette::ERROR),
+            (_, State::Ready(_)) => ("", palette::DIM),
+        };
+        let content = responsive(move |size| {
+            let mut controls = row![
+                text(status)
+                    .size(12)
+                    .width(Length::Fill)
+                    .wrapping(text::Wrapping::None)
+                    .style(move |theme: &iced::Theme| text::Style { color: Some(color.resolve(theme)) })
+            ]
+            .spacing(8)
+            .align_y(Vertical::Center);
+            let (copy, preview) = if size.width >= 560.0 {
+                controls = controls.push(ui::hint("Esc", "Back to search"));
+                (ui::hint("Ctrl+Shift+C", copy_label), ui::primary_hint("Enter", "Preview text"))
+            } else {
+                (text(copy_label).size(12).into(), text("Preview text").size(12).into())
+            };
+            let controls = controls
+                .push(button(copy).on_press(Event::CopyLocation).padding([4, 6]).style(ui::status_button_style))
+                .push(button(preview).on_press(Event::Preview).padding([4, 6]).style(ui::status_button_style));
+            container(controls).center_y(Length::Fill).into()
+        });
+        container(content)
+            .padding(iced::padding::left(16).right(8))
+            .height(crate::layout::FOOTER_HEIGHT)
+            .center_y(crate::layout::FOOTER_HEIGHT)
+            .style(ui::footer_style)
+            .into()
     }
 }
 

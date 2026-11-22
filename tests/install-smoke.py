@@ -29,9 +29,12 @@ printf '%s %s\\n' "$(basename "$0")" "$*" >> "$TEST_CALLS"
 case "$*" in
   *show-environment*) [ "$TEST_MANAGER" = yes ]; exit $?;;
   *status*) [ "${TEST_BUS:-$TEST_MANAGER}" = yes ]; exit $?;;
+  *NameHasOwner*LauncherShortcuts) if [ "$TEST_SHORTCUT_OWNER" = yes ]; then echo 'b true'; else echo 'b false'; fi; exit 0;;
   *NameHasOwner*) if [ "$TEST_OWNER" = yes ]; then echo 'b true'; else echo 'b false'; fi; exit 0;;
   *GetConnectionUnixProcessID*) echo 'u 999'; exit 0;;
   *MainPID*) echo 999; exit 0;;
+  *is-active*app-io.github.ferroseek.Launcher.service|*is-enabled*app-io.github.ferroseek.Launcher.service)
+    [ "$TEST_SHORTCUT_ACTIVE" = yes ]; exit $?;;
   *is-active*|*is-enabled*) [ "$TEST_ACTIVE" = yes ]; exit $?;;
 esac
 exit 0
@@ -70,6 +73,18 @@ exit 0
             assert False, 'cancel must not install'
     env = environment()
     home = Path(env['HOME'])
+    def assert_plasma_helper(registered):
+        helper = home / '.local/bin/ferroseek-plasma-windows'
+        desktop = home / '.local/share/applications/io.github.ferroseek.PlasmaWindows.desktop'
+        assert helper.exists() == desktop.exists() == registered
+        if registered:
+            lines = desktop.read_text().splitlines()
+            assert f'Exec="{helper}"' in lines
+            assert 'NoDisplay=true' in lines
+            assert [line for line in lines if line.startswith('X-KDE-')] == [
+                'X-KDE-Wayland-Interfaces=org_kde_plasma_window_management']
+            assert helper.read_bytes() == (repo / 'target/release/ferroseek-plasma-windows').read_bytes()
+            assert helper.stat().st_mode & 0o777 == 0o755
     def run(*args, expected=0, custom=None, text=''):
         r = subprocess.run([str(repo / 'scripts/install.sh'), '--no-build', *args], env=custom or env,
                            cwd=repo, input=text, capture_output=True, text=True)
@@ -97,19 +112,34 @@ exit 0
     bindir = home / '.local/bin'
     assert (bindir / 'ferroseekd').read_bytes() == (repo / 'target/release/ferroseekd').read_bytes()
     assert not (bindir / 'ferroseek-mcp').exists()
+    assert_plasma_helper(False)
     run('--launcher')
     launcher = bindir / 'ferroseek-launcher'
+    desktop = home / '.local/share/applications/io.github.ferroseek.Launcher.desktop'
+    shortcut_unit = home / '.config/systemd/user/app-io.github.ferroseek.Launcher.service'
+    assert f'Exec="{launcher}"' in desktop.read_text()
+    assert 'X-KDE-Wayland-Interfaces' not in desktop.read_text()
+    assert_plasma_helper(True)
+    assert '--global-shortcuts' in shortcut_unit.read_text()
     assert launcher.read_bytes() == (repo / 'target/release/ferroseek-launcher').read_bytes()
     assert launcher.stat().st_mode & 0o777 == 0o755
     run('--core')
     assert launcher.exists()  # Core upgrades retain the installed UI.
+    assert_plasma_helper(True)
     uninstall('--core', expected=1)
     launcher.write_bytes(b'local override')
     uninstall('--launcher', expected=1)
     run('--launcher', expected=1)
     assert launcher.read_bytes() == b'local override'
     launcher.write_bytes((repo / 'target/release/ferroseek-launcher').read_bytes())
-    uninstall('--launcher')
+    uninstall('--launcher', custom=dict(env, TEST_SHORTCUT_ACTIVE='yes'), expected=1)
+    unmanaged = uninstall('--launcher', '--stop', custom=dict(env, TEST_SHORTCUT_OWNER='yes'), expected=1)
+    assert 'unmanaged shortcut listener' in unmanaged.stderr
+    assert 'disable --now app-io.github.ferroseek.Launcher.service' not in log.read_text()
+    uninstall('--launcher', '--stop', custom=dict(env, TEST_SHORTCUT_ACTIVE='yes', TEST_SHORTCUT_OWNER='yes'))
+    assert 'disable --now app-io.github.ferroseek.Launcher.service' in log.read_text()
+    assert not desktop.exists() and not shortcut_unit.exists()
+    assert_plasma_helper(False)
     assert not launcher.exists() and (bindir / 'ferroseekd').exists()
     config = home / '.config/ferroseek/config.toml'
     config.write_text('# preserve custom config\nroots = []\n')
@@ -121,7 +151,8 @@ exit 0
     run('--full')
     assert config.read_text().startswith('# preserve')
     assert (data / 'sentinel').read_text() == 'preserve'
-    assert not any(word in log.read_text() for word in ['restart', 'enable --now', 'disable'])
+    assert not any(word in log.read_text() for word in ['restart', 'enable --now'])
+    assert log.read_text().count(' disable --now ') == 1  # Only the explicit shortcut teardown.
     run('--core', custom=dict(env, TEST_ACTIVE='yes'))  # Never restart an active daemon.
     assert 'restart' not in log.read_text()
     run('--core', '--enable')
@@ -160,7 +191,7 @@ exit 0
     # while still exercising a colon in the executable path itself.
     special.update(XDG_DATA_HOME=str(root / 'special-data'), XDG_CONFIG_HOME=str(root / 'special-config'),
                    FERROSEEK_CONFIG=str(root / 'special-config/ferroseek/config.toml'),
-                   FERROSEEK_DATA_DIR=str(root / 'special-data/ferroseek'))
+                   FERROSEEK_DATA_DIR=str(root / 'special-data/ferroseek'), WAYLAND_DISPLAY='wayland-installer-test')
     run('--full', custom=special)
     unit = Path(special['XDG_CONFIG_HOME']) / 'systemd/user/ferroseek.service'
     # systemd-analyze treats ':' in its UNIT argument as an alias separator.
@@ -168,6 +199,10 @@ exit 0
     verify_dir = root / 'unit-verify'; verify_dir.mkdir()
     verify_unit = verify_dir / 'ferroseek.service'; verify_unit.write_bytes(unit.read_bytes())
     r = subprocess.run(['systemd-analyze', '--user', 'verify', str(verify_unit)], env=special, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    verify_shortcuts = verify_dir / installer.SHORTCUTS_UNIT
+    verify_shortcuts.write_bytes(unit.with_name(installer.SHORTCUTS_UNIT).read_bytes())
+    r = subprocess.run(['systemd-analyze', '--user', 'verify', str(verify_shortcuts)], env=special, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     # Exercise the actual D-Bus argv parser with those same special characters.
     # No systemd manager is contacted: stub detection says unavailable.

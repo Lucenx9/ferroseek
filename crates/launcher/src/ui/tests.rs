@@ -2,6 +2,7 @@
 //! Launcher window tests: input routing, view state and rendering helpers.
 
 use super::*;
+use crate::commands::{DirectCommand, Invocation};
 
 fn typed(value: &str, modifiers: Modifiers) -> Event {
     Event::Keyboard(keyboard::Event::KeyPressed {
@@ -67,9 +68,108 @@ fn settle_widgets(s: &mut Launcher, cache: &mut iced_runtime::user_interface::Ca
     }
 }
 
+fn named(key: keyboard::key::Named) -> Event {
+    Event::Keyboard(keyboard::Event::KeyPressed {
+        key: Key::Named(key),
+        modified_key: Key::Named(key),
+        physical_key: keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Unidentified),
+        location: keyboard::Location::Standard,
+        modifiers: Modifiers::empty(),
+        text: None,
+        repeat: false,
+    })
+}
+
+#[test]
+fn immediate_link_editor_input_follows_each_tab_without_focus_tasks() {
+    use iced::keyboard::key::Named;
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("create link".into()));
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    let mut events = vec![named(Named::Enter)];
+    for (index, value) in ["Atlas", "https://example.net/?q={query}", "atlas"].into_iter().enumerate() {
+        if index != 0 {
+            events.push(named(Named::Tab));
+        }
+        events.extend(value.chars().map(|c| typed(&c.to_string(), Modifiers::empty())));
+    }
+    widget_batch(&mut s, &mut cache, &events, true);
+    settle_widgets(&mut s, &mut cache);
+    let saved_editor::Entry::Link(draft) = s.saved_editor.as_ref().unwrap().draft().unwrap() else {
+        panic!("expected a link");
+    };
+    assert_eq!(
+        (draft.name.as_str(), draft.address.as_str(), draft.keyword.as_str()),
+        ("Atlas", "https://example.net/?q={query}", "atlas")
+    );
+    assert_eq!(s.query, "create link");
+}
+
+#[test]
+fn snippet_editor_keeps_enter_and_arrow_keys_in_the_multiline_field() {
+    use iced::keyboard::key::Named;
+
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Query("create snippet".into()));
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    let events = [
+        named(Named::Enter),
+        typed("N", Modifiers::empty()),
+        named(Named::Tab),
+        typed("a", Modifiers::empty()),
+        named(Named::Enter),
+        typed("b", Modifiers::empty()),
+        named(Named::ArrowUp),
+        named(Named::End),
+        typed("c", Modifiers::empty()),
+        named(Named::Tab),
+        typed("q", Modifiers::empty()),
+    ];
+    widget_batch(&mut state, &mut cache, &events, true);
+    settle_widgets(&mut state, &mut cache);
+    let saved_editor::Entry::Snippet(snippet) = state.saved_editor.as_ref().unwrap().draft().unwrap() else {
+        panic!("expected pending snippet");
+    };
+    assert_eq!((snippet.name.as_str(), &*snippet.body, snippet.keyword.as_str()), ("N", "ac\nb", "q"));
+    assert!(state.saved.snippets.is_empty());
+}
+
+#[test]
+fn exact_snippet_keyword_wins_over_a_saved_link_name() {
+    let mut state = search_state();
+    state.saved.links.push(
+        crate::links::Link::new(crate::links::LinkFields {
+            name: "Brief",
+            address: "https://example.net/",
+            keyword: "",
+        })
+        .unwrap(),
+    );
+    state.saved.snippets.push(
+        crate::snippets::Snippet::new(crate::snippets::Fields {
+            name: "Sprint reply",
+            keyword: "brief",
+            body: "Thanks\nSee you tomorrow",
+        })
+        .unwrap(),
+    );
+    let _ = update(&mut state, Message::Query("BRIEF".into()));
+    assert!(matches!(state.selected().map(|item| &item.target), Some(Target::Snippet(_))));
+    assert!(state.items.iter().any(|item| matches!(item.target, Target::Link(..))));
+}
+
 #[test]
 fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
+    check_action_shortcut_typing("k", Modifiers::CTRL);
+    check_action_shortcut_typing("u", Modifiers::CTRL | Modifiers::SHIFT);
+}
+
+fn check_action_shortcut_typing(key: &str, modifiers: Modifiers) {
     let mut s = search_state();
+    s.shortcuts
+        .bindings
+        .set(Shortcut::Actions, Chord::new(key.chars().next().unwrap(), modifiers.shift()).unwrap())
+        .unwrap();
     let _ = update(&mut s, Message::Query("report".into()));
     let mut cache = iced_runtime::user_interface::Cache::default();
     widget_batch(&mut s, &mut cache, &[], true);
@@ -77,8 +177,8 @@ fn action_shortcut_and_typing_in_one_event_batch_keep_the_main_query() {
         &mut s,
         &mut cache,
         &[
-            Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::CTRL)),
-            typed("k", Modifiers::CTRL),
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+            typed(key, modifiers),
             Event::Keyboard(keyboard::Event::ModifiersChanged(Modifiers::empty())),
             typed("p", Modifiers::empty()),
             typed("i", Modifiers::empty()),
@@ -132,24 +232,24 @@ fn repeated_menu_transitions_preserve_order_and_native_text_editing() {
 #[test]
 fn query_prefill_is_applied_before_the_first_input_event() {
     let temp = tempfile::tempdir().unwrap();
-    let config = temp.path().join("config.toml");
-    std::fs::write(&config, "roots = []\n").unwrap();
+    let config = tempfile::NamedTempFile::new_in(temp.path()).unwrap();
     let (mut s, _pending_tasks) = boot_from(
         Boot {
-            appearance: Preferences::default(),
+            config: ferroseek_config::Config::default(),
             opaque: true,
+            private: true,
             activation: Activation::default(),
             backend: Backend::disconnected(),
             apps: search_state().apps,
             usage: Usage::disabled(),
             favorites: Favorites::disabled(),
-            initial_query: "report".into(),
-            settings_path: config,
+            settings_path: config.path().to_path_buf(),
         },
         Material::default(),
         output::Observer::default(),
         Icons::disabled(),
-    );
+    )
+    .start_destination(Destination::Search("report".into()));
     assert_eq!(s.query, "report");
     let mut cache = iced_runtime::user_interface::Cache::default();
     widget_batch(&mut s, &mut cache, &[typed("x", Modifiers::empty())], false);
@@ -448,23 +548,32 @@ fn material_keeps_small_text_readable_over_light_and_dark_backdrops() {
     }
 }
 
-fn search_state() -> Launcher {
-    let app = crate::apps::parse(
+fn report_app() -> App {
+    crate::apps::parse(
         "report.desktop",
         std::path::Path::new("/synthetic"),
         "[Desktop Entry]\nType=Application\nName=Report Viewer\nExec=viewer\n",
         &[],
         &[],
     )
-    .unwrap();
+    .unwrap()
+}
+
+fn search_state() -> Launcher {
     Launcher {
         output: output::Observer::default(),
         output_bounds: None,
         placement: None,
+        surface_ready: true,
         window_height: full_height(),
         preferences: Preferences::default(),
         system_dark: None,
         opaque: false,
+        settings: None,
+        shortcuts: shortcut_settings::State::new(Default::default()),
+        global_shortcuts: global_shortcut_settings::State::default(),
+        clipboard_history: clipboard_view::State::new(true),
+        window_switcher: windows::State::default(),
         appearance: None,
         appearance_generation: 0,
         input_epoch: 0,
@@ -472,9 +581,14 @@ fn search_state() -> Launcher {
         glass: false,
         activation: Activation::default(),
         backend: Backend::disconnected(),
-        apps: vec![app],
+        apps: vec![report_app()],
         usage: Usage::disabled(),
         favorites: Favorites::disabled(),
+        saved: saved::Store::default(),
+        scripts: scripts::State::default(),
+        alias_editor: None,
+        saved_editor: None,
+        edit_generation: 0,
         opening: None,
         launch_task: None,
         unconfirmed_open: false,
@@ -488,6 +602,7 @@ fn search_state() -> Launcher {
         scope_generation: 0,
         app_hits: Vec::new(),
         files: Vec::new(),
+        file_search_succeeded: false,
         items: Vec::new(),
         item_icons: Vec::new(),
         cursor: Cursor::new(VISIBLE_ROWS),
@@ -506,7 +621,7 @@ fn search_state() -> Launcher {
         folder_settings: None,
         folder_generation: 0,
         settings_path: "/synthetic/config.toml".into(),
-        deferred_query: None,
+        deferred_destination: None,
         status_generation: 0,
         generation: 0,
         status: Status::Idle,
@@ -573,6 +688,362 @@ fn scope_changes_replace_results_and_reject_late_replies() {
 }
 
 #[test]
+fn exact_alias_promotes_the_original_target_once_and_obeys_scope() {
+    let mut s = search_state();
+    let target = saved::AliasTarget::Application(s.apps[0].id.clone());
+    s.saved.aliases.push(saved::Alias::new(target, "report").unwrap());
+    let _ = update(&mut s, Message::Query(" REPORT ".into()));
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    let selected = s.selected().unwrap();
+    assert_eq!(selected.target, Target::App(0));
+    assert_eq!(selected.subtitle, "Alias · report");
+    assert_eq!(s.items.iter().filter(|item| item.target == Target::App(0)).count(), 1);
+    let _ = update(&mut s, Message::Scope(Scope::Files));
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::File(_))));
+}
+
+#[test]
+fn unavailable_alias_can_be_edited_without_dispatching_an_application() {
+    let mut s = search_state();
+    s.output_bounds = Some((320, 332));
+    let alias = saved::Alias::new(saved::AliasTarget::Application("missing.desktop".into()), "missing").unwrap();
+    s.saved.aliases.push(alias.clone());
+    let _ = update(&mut s, Message::Query("missing".into()));
+    assert_eq!(s.selected().unwrap().target, Target::UnavailableAlias(alias));
+    let _ = update(&mut s, Message::Cmd(Command::Activate));
+    assert!(s.alias_editor.is_some() && s.opening.is_none());
+    let width = s.window_width as f32;
+    let size = iced::Size::new(width, s.window_height as f32);
+    let labels = rendered_labels(view_content(&s), size).text;
+    for name in ["Back", "Remove", "Save"] {
+        let (_, bounds) = labels.iter().find(|(value, _)| value == name).unwrap();
+        assert!(bounds.width >= text_width(name, 12.0) && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
+    }
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert!(s.alias_editor.is_none());
+    assert_eq!(s.query, "missing");
+}
+
+#[test]
+fn local_aliases_resolve_only_the_saved_runnable_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("launcher-scripts.toml");
+    let source = r#"
+[[command]]
+title = "Launch check"
+executable = "/synthetic/launch-check"
+args = ["before"]
+confirm = true
+
+[[workflow]]
+title = "Daily review"
+steps = ["Launch check", "Launch check"]
+"#;
+    std::fs::write(&manifest, source).unwrap();
+    let mut state = search_state();
+    state.settings_path = dir.path().join("config.toml");
+    state.scripts = scripts::State::load(&state.settings_path);
+    let aliases = [("Launch check", "check-now"), ("Daily review", "review-now")];
+
+    for (title, alias) in aliases {
+        let _ = update(&mut state, Message::Query(title.into()));
+        let target = state.selected().unwrap().target.clone();
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("edit alias".into()));
+        assert_eq!(state.panel.as_ref().unwrap().filtered_actions(), [Action::EditAlias]);
+        let _ = update(&mut state, Message::PanelClicked { target: target.clone(), action: Action::EditAlias });
+        let generation = state.edit_generation;
+        let _ =
+            update(&mut state, Message::AliasEditor { generation, event: alias_editor::Event::Input(alias.into()) });
+        let save = update(&mut state, Message::Cmd(Command::Activate));
+        let mut stream = iced_runtime::task::into_stream(save).unwrap();
+        let Some(iced_runtime::Action::Output(result)) = iced::futures::executor::block_on(stream.next()) else {
+            panic!("alias save must report a result");
+        };
+        let _ = update(&mut state, result);
+        assert_eq!(state.status, Status::Notice("Alias saved".into()));
+        assert_eq!(state.query, title);
+        assert_eq!(state.selected().unwrap().target, target);
+    }
+
+    state.saved = saved::Store::load(&saved::Store::path(&state.settings_path));
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+    for (title, alias) in aliases {
+        let _ = update(&mut state, Message::Query(alias.to_uppercase()));
+        assert_eq!(state.items[0].title, title);
+        assert_eq!(state.items[0].subtitle, format!("Alias · {alias}"));
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.scripts.panel.is_some());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+        assert_eq!(state.query, alias.to_uppercase());
+    }
+
+    std::fs::write(&manifest, source.replace("before", "after")).unwrap();
+    state.scripts = scripts::State::load(&state.settings_path);
+    for (_, alias) in aliases {
+        let _ = update(&mut state, Message::Query(alias.into()));
+        assert!(matches!(state.selected().unwrap().target, Target::UnavailableAlias(_)));
+        assert_eq!(state.items[0].subtitle, "Command unavailable");
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.alias_editor.is_some() && state.scripts.panel.is_none());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+    }
+}
+
+#[test]
+fn command_action_uses_the_selected_destination_after_file_results_change() {
+    use crate::commands::Builtin;
+
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("window width".into()));
+    let generation = s.generation;
+    let target = Target::Command(Builtin::Layout);
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::ToggleActions);
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert_eq!(s.selected().unwrap().target, target);
+    assert_eq!(
+        s.panel.as_ref().unwrap().actions,
+        [Action::OpenCommand, Action::EditAlias, Action::AddFavorite, Action::GlobalShortcut, Action::ResetRanking]
+    );
+    let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action: Action::OpenCommand });
+    assert_eq!(s.appearance.as_ref().unwrap().content_id(), Id::new("appearance-layout"));
+    assert!(s.panel.is_none() && s.opening.is_none());
+    let appearance_generation = s.appearance_generation;
+    let event = appearance::Event::Loaded(Err("Can’t read appearance settings".into()));
+    let _ = update(&mut s, Message::Appearance { generation: appearance_generation, event });
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert!(s.appearance.is_none());
+    assert_eq!((s.query.as_str(), s.generation, &s.selected().unwrap().target), ("window width", generation, &target));
+}
+
+#[test]
+fn opening_a_builtin_promotes_it_after_favorites_in_empty_searches() {
+    use crate::commands::Builtin;
+    use crate::favorites::Kind as FavoriteKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("launcher-usage");
+    let mut state = search_state();
+    state.usage = Usage::load(Some(history.clone()));
+    state.favorites.set(FavoriteKind::Command, Builtin::Settings.id(), true).unwrap();
+
+    let target = Target::Command(Builtin::CreateScript);
+    let _ = update(&mut state, Message::Query("create local command".into()));
+    assert_eq!(state.selected().unwrap().target, target);
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.query, "create local command");
+
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!(state.items[1].target, target);
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+    assert_eq!(state.items[1].target, target);
+    assert_eq!(state.items.iter().filter(|item| item.target == target).count(), 1);
+
+    let saved = std::fs::read_to_string(&history).unwrap();
+    assert!(saved.ends_with("\tcreate-script\n"));
+    assert!(!saved.contains("create local command"));
+
+    state.usage = Usage::load(Some(history.clone()));
+    state.rebuild(false);
+    assert_eq!(state.items[1].target, target);
+    let _ = command(&mut state, Command::Down);
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("reset ranking".into()));
+    let _ = command(&mut state, Command::Activate);
+    assert_eq!(state.selected().unwrap().target, target);
+    assert_eq!(state.items[1].target, Target::Command(Builtin::Appearance));
+
+    assert!(state.favorites.contains(FavoriteKind::Command, Builtin::Settings.id()));
+    assert!(std::fs::read_to_string(history).unwrap().is_empty());
+}
+
+#[test]
+fn successful_local_runs_join_suggestions_without_storing_runtime_values() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    let history = dir.path().join("launcher-usage");
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Launch check'\nexecutable = '/bin/true'\nparameters = ['Project name']\n",
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&settings);
+    state.usage = Usage::load(Some(history.clone()));
+    let _ = update(&mut state, Message::Query("launch check".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let generation = state.scripts.generation;
+    let send = |state: &mut Launcher, event| update(state, Message::Script { generation, event });
+    let _ = send(&mut state, scripts::Event::Input(0, "fixture runtime value".into()));
+    let _ = send(&mut state, scripts::Event::Run);
+    assert!(!history.exists());
+    let _ = send(
+        &mut state,
+        scripts::Event::Finished(crate::script_commands::Report {
+            completion: Ok(crate::script_commands::Completion::Exited(std::process::ExitStatus::from_raw(0))),
+            failed_step: None,
+            output: "fixture output".into(),
+            truncated: false,
+        }),
+    );
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!(state.items[0].title, "Launch check");
+    let contents = std::fs::read_to_string(history).unwrap();
+    assert!(!contents.contains("fixture runtime value"));
+    assert!(!contents.contains("fixture output"));
+}
+
+#[test]
+fn local_command_favorites_follow_the_pinned_definition() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    let manifest = dir.path().join("launcher-scripts.toml");
+    let favorites = dir.path().join("launcher-favorites");
+    let source = r#"
+[[command]]
+title = "Launch check"
+executable = "/bin/true"
+args = ["old"]
+
+[[workflow]]
+title = "Daily review"
+steps = ["Launch check", "Launch check"]
+"#;
+    std::fs::write(&manifest, source).unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&settings);
+    state.favorites = crate::favorites::Favorites::load(Some(favorites.clone()));
+    let _ = update(&mut state, Message::Scope(Scope::Commands));
+
+    for title in ["Launch check", "Daily review"] {
+        let _ = update(&mut state, Message::Query(title.into()));
+        assert_eq!(state.selected().unwrap().title, title);
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("pin".into()));
+        assert_eq!(state.panel.as_ref().unwrap().filtered_actions(), [Action::AddFavorite]);
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.is_favorite(&state.selected().unwrap().target));
+    }
+
+    state.favorites = crate::favorites::Favorites::load(Some(favorites.clone()));
+    let _ = update(&mut state, Message::Query(String::new()));
+    assert_eq!((&state.items[0].title[..], &state.items[1].title[..]), ("Launch check", "Daily review"));
+    let _ = command(&mut state, Command::Down);
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("move favorite up".into()));
+    let _ = command(&mut state, Command::Activate);
+    assert_eq!(state.items[0].title, "Daily review");
+    let captured = state.selected().unwrap().target.clone();
+    assert_eq!(captured, state.items[0].target);
+
+    std::fs::write(&manifest, source.replace("\"old\"", "\"changed\"")).unwrap();
+    state.scripts = scripts::State::load(&settings);
+    let _ = update(&mut state, Message::Query("Daily review".into()));
+    assert!(!state.is_favorite(&state.selected().unwrap().target));
+    let _ = command(&mut state, Command::OpenActions);
+    let _ = update(&mut state, Message::ActionQuery("pin".into()));
+    let persisted = std::fs::read_to_string(&favorites).unwrap();
+    let _ = update(&mut state, Message::PanelClicked { target: captured, action: Action::AddFavorite });
+    assert_eq!(std::fs::read_to_string(favorites).unwrap(), persisted);
+}
+
+#[test]
+fn command_shortcut_action_keeps_the_target_and_returns_to_search() {
+    use crate::commands::Builtin;
+
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Query("window width".into()));
+    let target = Target::Command(Builtin::Layout);
+    assert_eq!(state.selected().unwrap().target, target);
+    let _ = command(&mut state, Command::ToggleActions);
+    let _ = update(&mut state, Message::ActionQuery("global shortcut".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+
+    assert!(state.global_shortcuts.panel.is_some());
+    assert!(state.panel.is_none());
+    let labels = rendered_labels(view_content(&state), iced::Size::new(288.0, 275.0));
+    assert!(labels.text.iter().any(|(label, _)| label == "Layout"));
+    assert!(labels.text.iter().any(|(label, _)| label == "ferroseek-launcher --command layout"));
+    for control in ["Refresh", "Copy launch command"] {
+        let (_, bounds) = labels.text.iter().find(|(label, _)| label == control).unwrap();
+        assert!(bounds.x + bounds.width <= 288.0 - PAD, "{control} is clipped: {bounds:?}");
+    }
+    let _ = update(&mut state, Message::Cmd(Command::CopyPath));
+    assert!(state.clipboard_owner);
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+
+    assert!(state.global_shortcuts.panel.is_none());
+    assert_eq!((state.query.as_str(), &state.selected().unwrap().target), ("window width", &target));
+}
+
+#[test]
+fn saved_search_fallback_waits_for_current_empty_results() {
+    use crate::links;
+
+    let mut s = search_state();
+    let link = links::Link::new(links::LinkFields {
+        name: "Guide",
+        address: "https://example.net/?q={query}",
+        keyword: "guide",
+    })
+    .unwrap()
+    .with_fallback(true)
+    .unwrap();
+    s.saved.links.push(link.clone());
+    let _ = update(&mut s, Message::Query("first unmatched".into()));
+    let old = s.generation;
+    let query = "caffè &key=1";
+    let _ = s.open_setup_destination(Destination::Search(query.into()));
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation: old, result: Ok(Some(vec![])) });
+    assert!(s.items.is_empty(), "an earlier empty reply must not expose a fallback");
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![])) });
+    let item = s.selected().unwrap();
+    assert!(matches!(&s.status, Status::Notice(notice) if notice.starts_with("Folders applied")));
+    assert_eq!((item.title.as_str(), item.subtitle.as_str()), ("Search with Guide", "example.net"));
+    assert_eq!(item.target, Target::Link(link, query.into()));
+    let target = item.target.clone();
+    let _ = update(&mut s, Message::Query("next unmatched".into()));
+    let _ = update(&mut s, Message::Selected(target.clone()));
+    let _ = update(&mut s, Message::Clicked(target));
+    assert!(s.opening.is_none());
+    let generation = s.generation;
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert!(s.items.iter().all(|item| item.section != model::Section::Fallback));
+    let _ = update(&mut s, Message::Files { generation, result: Err("disconnected".into()) });
+    assert!(s.items.is_empty(), "an unavailable search is distinct from no matches");
+}
+
+#[test]
+fn commands_tab_lists_local_destinations_and_drops_stale_file_replies() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("report".into()));
+    let generation = s.generation;
+    let rendered = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, label) = rendered.text.iter().find(|(title, _)| title == "Commands").unwrap();
+    for message in pointer_messages(
+        &s,
+        iced::Point::new(label.center_x(), label.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    ) {
+        let _ = update(&mut s, message);
+    }
+    assert_eq!((s.scope, &s.status), (Scope::Commands, &Status::Idle));
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(file_hits())) });
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
+    let _ = command(&mut s, Command::Back);
+    assert!(s.query.is_empty());
+    assert_eq!(s.items.len(), crate::commands::matching("", true).len());
+    assert!(s.items.iter().all(|item| matches!(item.target, Target::Command(_))));
+}
+
+#[test]
 fn explicit_calculator_overrides_scope_but_implicit_calculations_obey_it() {
     let mut s = search_state();
     for scope in Scope::ALL {
@@ -636,6 +1107,170 @@ fn session_favorites_toggle_from_actions_without_changing_ranking() {
     let _ = command(&mut s, Command::Activate);
     assert!(!s.is_favorite(&target));
     assert_eq!(s.items.len(), 1, "unpinning retains the available application suggestion");
+}
+
+#[test]
+fn favorite_command_is_ready_from_an_empty_query_and_can_be_unpinned() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("switch windows".into()));
+    let target = Target::Command(crate::commands::Builtin::SwitchWindows);
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("pin".into()));
+    let _ = command(&mut s, Command::Activate);
+    assert!(s.is_favorite(&target));
+    assert!(s.panel.is_none());
+
+    let _ = update(&mut s, Message::Query(String::new()));
+    assert_eq!(s.selected().unwrap().target, target);
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("unpin".into()));
+    let _ = command(&mut s, Command::Activate);
+    assert!(!s.is_favorite(&target));
+    assert!(s.items.iter().all(|item| item.target != target));
+}
+
+#[test]
+fn moving_a_favorite_keeps_the_selected_command_and_allows_moving_it_back() {
+    let mut s = search_state();
+    s.favorites.set(crate::favorites::Kind::App, "report.desktop", true).unwrap();
+    s.favorites.set(crate::favorites::Kind::Command, "clipboard-history", true).unwrap();
+    let _ = update(&mut s, Message::Query(String::new()));
+    let _ = command(&mut s, Command::Down);
+    let target = s.selected().unwrap().target.clone();
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("move favorite up".into()));
+    let available = s.panel.as_ref().unwrap().filtered_actions();
+    assert_eq!(available.first().map(|action| action.label()), Some("Move favorite up"));
+    let _ = command(&mut s, Command::Activate);
+    assert_eq!((&s.items[0].target, &s.selected().unwrap().target), (&target, &target));
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("move favorite down".into()));
+    let action = s.panel.as_ref().unwrap().filtered_actions()[0];
+    let _ = update(&mut s, Message::PanelClicked { target: target.clone(), action });
+    assert_eq!((&s.items[1].target, &s.selected().unwrap().target), (&target, &target));
+}
+
+#[test]
+fn local_command_confirmation_tracks_appearance_and_restores_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("config.toml");
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = \"Launch check\"\nexecutable = \"/synthetic/launch-check\"\nconfirm = true\n",
+    )
+    .unwrap();
+    let mut s = search_state();
+    s.scripts = scripts::State::load(&settings);
+    let _ = update(&mut s, Message::Ui(UiEvent::DesktopAppearance(Some(false))));
+    let _ = update(&mut s, Message::Scope(Scope::Commands));
+    let _ = update(&mut s, Message::Query("launch check".into()));
+    let saved_target = s.selected().unwrap().target.clone();
+    assert!(matches!(saved_target, Target::Script(_)));
+
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = command(&mut s, Command::Activate);
+    assert!(s.scripts.panel.is_some());
+    assert!(s.search_suspended());
+    let _ = update(&mut s, Message::Query("queued text".into()));
+    let _ = update(&mut s, Message::Ui(UiEvent::DesktopAppearance(Some(true))));
+    assert_eq!(s.system_dark, Some(true));
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!((s.query.as_str(), s.selected().map(|item| &item.target)), ("launch check", Some(&saved_target)));
+    assert!(s.scripts.panel.is_none());
+    assert!(s.appearance_theme(false).palette().background.r < 0.2);
+}
+
+#[test]
+fn repeating_a_local_command_keeps_the_report_until_a_new_run() {
+    use scripts::Event;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Launch check'\nexecutable = '/bin/true'\nparameters = ['Project name']\n",
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.scripts = scripts::State::load(&dir.path().join("config.toml"));
+    let _ = update(&mut state, Message::Query("launch check".into()));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    let generation = state.scripts.generation;
+    let send = |state: &mut Launcher, generation, event| update(state, Message::Script { generation, event });
+    let _ = send(&mut state, generation, Event::Input(0, "first value".into()));
+    let _ = send(&mut state, generation, Event::Run);
+    let _ = send(
+        &mut state,
+        generation,
+        Event::Finished(crate::script_commands::Report {
+            completion: Err("Synthetic failure".into()),
+            failed_step: None,
+            output: "fixture output".into(),
+            truncated: false,
+        }),
+    );
+
+    let size = iced::Size::new(288.0, 275.0);
+    let labels = rendered_labels(view_content(&state), size);
+    for name in ["Back", "Run again", "Copy output"] {
+        let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
+        assert!(bounds.x + bounds.width <= size.width - PAD, "{name} is clipped: {bounds:?}");
+    }
+
+    let _ = update(&mut state, Message::RefreshSearchStatus);
+    let retry = state.scripts.generation;
+    assert_ne!(retry, generation);
+    let _ = send(&mut state, generation, Event::Input(0, "stale input".into()));
+    let _ = send(&mut state, retry, Event::Run);
+    let labels = rendered_labels(view_content(&state), size);
+    assert!(labels.text.iter().any(|(value, _)| value == "Enter a value."));
+
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    let labels = rendered_labels(view_content(&state), size);
+    assert!(labels.text.iter().any(|(value, _)| value == "fixture output"));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.scripts.panel.is_none());
+    assert_eq!(state.query, "launch check");
+}
+
+#[test]
+fn saved_favorites_share_the_home_order_with_commands() {
+    let mut s = search_state();
+    s.saved.links.push(
+        crate::links::Link::new(crate::links::LinkFields {
+            name: "Project docs",
+            address: "https://example.net/docs",
+            keyword: "docs",
+        })
+        .unwrap(),
+    );
+    s.saved.snippets.push(
+        crate::snippets::Snippet::new(crate::snippets::Fields {
+            name: "Common reply",
+            keyword: "reply",
+            body: "A synthetic reply",
+        })
+        .unwrap(),
+    );
+    for query in ["project docs", "clipboard history", "common reply"] {
+        let _ = update(&mut s, Message::Query(query.into()));
+        let _ = command(&mut s, Command::OpenActions);
+        let _ = update(&mut s, Message::ActionQuery("pin".into()));
+        let _ = command(&mut s, Command::Activate);
+    }
+    let _ = update(&mut s, Message::Query(String::new()));
+    let pins = ["Project docs", "Clipboard history", "Common reply"];
+    assert_eq!(s.items.iter().take(3).map(|item| item.title.as_str()).collect::<Vec<_>>(), pins);
+    let _ = update(&mut s, Message::Scope(Scope::Commands));
+    let displayed = s
+        .items
+        .iter()
+        .filter(|item| pins.contains(&item.title.as_str()))
+        .map(|item| item.title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(displayed, pins);
 }
 
 #[test]
@@ -716,6 +1351,7 @@ fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {
 fn displayed_shortcuts_work_inside_the_action_panel() {
     let panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -736,6 +1372,7 @@ fn displayed_shortcuts_work_inside_the_action_panel() {
     );
     let app = Panel {
         title: "Files".into(),
+        context: String::new(),
         actions: vec![Action::Launch, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -790,6 +1427,7 @@ fn filtering_actions_keeps_the_target_and_selects_a_matching_action() {
 fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
     let mut panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -813,6 +1451,7 @@ fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
 fn action_search_ranks_precise_matches_and_keeps_activation_consistent() {
     let mut panel = Panel {
         title: "notes.txt".into(),
+        context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
@@ -916,7 +1555,7 @@ fn action_clicks_keep_their_identity_after_filtering_and_ignore_changed_targets(
 
 #[test]
 fn calculator_secondary_action_is_available_while_filtering_for_copy() {
-    let mut panel = Panel::new(&model::calc_item("= 1/3").unwrap(), false);
+    let mut panel = Panel::new(&model::calc_item("= 10 ft in m").unwrap(), false);
     panel.filter("copy".into());
     assert_eq!(panel.filtered_actions(), [Action::CopyResult]);
     assert_eq!(panel.action_for_command(Command::Activate), Some(Action::CopyResult));
@@ -1359,6 +1998,79 @@ fn search_folder_hit(path: &str) -> FileHit {
         subtext: "/synthetic".into(),
         is_dir: true,
     }
+}
+
+#[test]
+fn folder_listing_finishes_while_a_saved_editor_is_open() {
+    let mut s = search_state();
+    let folder = search_folder_hit("/synthetic/Reports");
+    let _ = s.enter_folder_search(folder.clone());
+    let generation = s.generation;
+    let _ = s.open_saved_editor(saved_editor::Kind::Snippet, None);
+    let _ = update(&mut s, Message::FolderListed { generation: generation - 1, result: Ok((file_hits(), true)) });
+    assert!(s.files.is_empty());
+    let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+    assert!(s.saved_editor.is_some());
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!(s.search_folder, Some(folder));
+    assert_eq!(s.files, file_hits());
+    assert!(s.folder_more);
+    assert_eq!(s.status, Status::Idle);
+}
+
+#[test]
+fn saving_a_snippet_from_folder_search_selects_it_in_commands() {
+    use crate::snippets::{Fields, Snippet};
+    use saved_editor::{Event, Field, Kind};
+
+    let mut s = search_state();
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports"));
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports/Child"));
+    let folder_generation = s.generation;
+    let _ = s.open_saved_editor(Kind::Snippet, None);
+    let generation = s.edit_generation;
+    let send = |s: &mut Launcher, event| update(s, Message::SavedEditor { generation, event });
+    let _ = send(&mut s, Event::Input(Field::Name, "Signature".into()));
+    let _ = send(
+        &mut s,
+        Event::Text(iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Insert('x'))),
+    );
+    let _ = send(&mut s, Event::Save);
+    let snippet = Snippet::new(Fields { name: "Signature", body: "x", keyword: "" }).unwrap();
+    let store = saved::Store { snippets: vec![snippet.clone()], ..saved::Store::default() };
+    let _ = send(&mut s, Event::Written { name: Some("Signature".into()), result: Ok(store) });
+    let _ = update(&mut s, Message::FolderListed { generation: folder_generation, result: Ok((file_hits(), true)) });
+    assert_eq!(s.scope, Scope::Commands);
+    assert!(s.search_folder.is_none() && s.folder_search_history.is_empty() && s.files.is_empty());
+    assert_eq!(s.selected().unwrap().target, Target::Snippet(snippet));
+}
+
+#[test]
+fn saving_a_local_command_leaves_folder_search() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Check status'\nexecutable = '/synthetic/check'\n",
+    )
+    .unwrap();
+    let mut s = search_state();
+    s.scripts = scripts::State::load(&dir.path().join("config.toml"));
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports"));
+    let generation = s.generation;
+    let _ = s.select_saved_local("Check status", |target| matches!(target, Target::Script(_)), "Command saved");
+    let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+    assert!(s.search_folder.is_none() && s.folder_search_history.is_empty() && s.files.is_empty());
+    assert_eq!(s.selected().map(|item| item.title.as_str()), Some("Check status"));
+}
+
+#[test]
+fn empty_commands_reports_catalog_errors() {
+    let mut s = search_state();
+    s.scripts.catalog.error = Some("invalid manifest".into());
+    s.scope = Scope::Commands;
+    let _ = update(&mut s, Message::Query("never a matching command".into()));
+    assert!(s.items.is_empty());
+    assert_eq!(empty_results_text(&s).0, "Command catalog unavailable");
 }
 
 #[test]
@@ -1937,7 +2649,7 @@ fn sidebar_toolbar_buttons_enter_refresh_copy_and_hide_through_real_widgets() {
     }
     assert!(!s.preview_enabled && !pending.is_active());
     let _ = s.perform(Action::Details);
-    let messages = control(&s, "Back to search");
+    let messages = control(&s, "Back");
     assert!(matches!(&messages[..], [Message::Details { event: details::Event::Back, .. }]));
     for message in messages {
         let _ = update(&mut s, message);
@@ -2175,6 +2887,31 @@ fn picker_escape_restores_search_and_ignores_closed_or_reopened_generations() {
 }
 
 #[test]
+fn picker_back_button_returns_to_the_captured_search_with_a_filter() {
+    let mut s = picker_state();
+    let target = s.selected().unwrap().target.clone();
+    let generation = s.application_generation;
+    let _ = update(&mut s, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(3)) });
+    let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("02".into()) });
+
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, back) = labels.text.iter().find(|(text, _)| text == "Back").expect("visible Back button");
+    let messages = pointer_messages(
+        &s,
+        iced::Point::new(back.center_x(), back.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert_eq!(messages.len(), 1);
+    for message in messages {
+        let _ = update(&mut s, message);
+    }
+    assert_eq!(
+        (s.application_picker.is_none(), s.query.as_str(), s.scope, &s.selected().unwrap().target),
+        (true, "report", Scope::Files, &target),
+    );
+}
+
+#[test]
 fn picker_reload_keeps_selection_across_read_errors() {
     for failures in [0, 1, 2] {
         let mut s = picker_state();
@@ -2247,6 +2984,8 @@ fn picker_read_errors_can_retry_but_unconfirmed_dispatch_cannot_duplicate() {
     let _ = update(&mut s, Message::Opened(Err(RunError::Unconfirmed("connection lost".into()))));
     assert!(s.unconfirmed_open);
     assert!(s.usage.recent(usage::now(), 8).is_empty());
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    assert!(!labels.text.iter().any(|(value, _)| value == "Open"), "hide Open when launch cannot be retried");
     let _ = command(&mut s, Command::Activate);
     assert!(s.opening.is_none());
     let _ = command(&mut s, Command::Back);
@@ -2266,7 +3005,19 @@ fn picker_rejected_dispatch_can_choose_another_application() {
     assert!(s.opening.is_none());
     assert_eq!(s.usage.boost(Kind::File, &file, &query, usage::now()), 0);
     let _ = update(&mut s, Message::OpenWith { generation, event: open_with::Event::Query("01".into()) });
-    let _ = command(&mut s, Command::Activate);
+    let labels = rendered_labels(view_content(&s), iced::Size::new(WIDTH as f32, full_height() as f32));
+    let (_, open) = labels.text.iter().find(|(text, _)| text == "Open").unwrap();
+    let messages = pointer_messages(
+        &s,
+        iced::Point::new(open.center_x(), open.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert!(
+        matches!(messages.as_slice(), [Message::OpenWith { event: open_with::Event::Open(id), .. }] if id == "editor-01.desktop")
+    );
+    for message in messages {
+        let _ = update(&mut s, message);
+    }
     assert_eq!(s.opening.as_ref(), Some(&(file.clone(), query.clone())));
     assert_eq!(s.application_picker.as_ref().unwrap().query, "01");
     let _ = update(&mut s, Message::Opened(Ok(())));
@@ -2625,18 +3376,116 @@ fn captured_input_copy_also_runs_the_copy_path_command() {
 #[test]
 fn first_run_defers_file_queries_until_folders_are_applied() {
     let mut s = search_state();
-    s.deferred_query = Some("report".into());
+    s.deferred_destination = Some(Destination::Search("report".into()));
     let _ = s.show_folders(true);
     let _ = update(&mut s, Message::Query("report".into()));
     assert_eq!(s.generation, 0);
     assert!(s.query.is_empty());
     let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
     assert!(s.folder_settings.is_none());
-    assert!(s.deferred_query.is_none());
+    assert!(s.deferred_destination.is_none());
     assert_eq!(s.query, "report");
     assert_eq!(s.generation, 1);
     assert!(s.files.is_empty());
-    assert!(matches!(key_message(&Key::Character(",".into()), Modifiers::CTRL), Some(Message::ShowFolders)));
+    assert!(matches!(
+        crate::shortcuts::Routing::Commands(s.shortcuts.bindings).message(&typed(",", Modifiers::CTRL)),
+        Some(Message::ShowFolders)
+    ));
+}
+
+#[test]
+fn direct_command_waits_for_first_run_setup() {
+    let mut s = search_state();
+    s.deferred_destination = Some(Destination::Command(DirectCommand::Builtin(crate::commands::Builtin::Settings)));
+    let _ = s.show_folders(true);
+    assert!(s.settings.is_none());
+    let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
+    assert!(s.folder_settings.is_none());
+    assert!(s.deferred_destination.is_none());
+    assert!(s.settings_menu_open());
+}
+
+#[test]
+fn forwarded_commands_keep_parent_search_and_respect_the_active_view() {
+    use crate::backend::CommandRequest;
+    use crate::commands::Builtin;
+
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query("report".into()));
+    let (request, mut reply) = CommandRequest::new(Ok(Invocation::Builtin(Builtin::Shortcuts)));
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert_eq!(reply.try_recv().unwrap(), Some(Ok(())));
+    assert_eq!((s.shortcuts.panel.is_some(), s.query.as_str()), (true, "report"));
+
+    let (request, mut reply) = CommandRequest::new(Ok(Invocation::Builtin(Builtin::Appearance)));
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert!(matches!(reply.try_recv().unwrap(), Some(Err(_))));
+    assert_eq!((s.shortcuts.panel.is_some(), s.appearance.is_none(), s.query.as_str()), (true, true, "report"));
+}
+
+#[test]
+fn a_command_whose_caller_timed_out_never_opens_a_view() {
+    let mut s = search_state();
+    let (request, reply) =
+        crate::backend::CommandRequest::new(Ok(Invocation::Builtin(crate::commands::Builtin::Settings)));
+    drop(reply);
+    let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
+    assert!(s.settings.is_none());
+}
+
+#[test]
+fn local_shortcuts_preserve_search_and_require_review_before_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("launcher-scripts.toml");
+    std::fs::write(
+        &manifest,
+        r#"
+[[command]]
+title = "Daily check"
+executable = "/synthetic/daily-check"
+
+[[workflow]]
+title = "Daily review"
+steps = ["Daily check", "Daily check"]
+"#,
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.settings_path = dir.path().join("config.toml");
+    state.scripts = scripts::State::load(&state.settings_path);
+    state.output_bounds = Some((320, 332));
+
+    for title in ["Daily check", "Daily review"] {
+        let _ = update(&mut state, Message::Query(title.into()));
+        let target = state.selected().unwrap().target.clone();
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("global shortcut".into()));
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.global_shortcuts.panel.is_some());
+
+        let key = state.scripts.history_key(&target).unwrap().to_owned();
+        let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+        let labels = rendered_labels(view_content(&state), size).text;
+        assert!(labels.iter().any(|(label, _)| label == &format!("ferroseek-launcher --command {key}")));
+        assert!(labels.iter().any(|(label, _)| label == "Copy launch command"));
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+
+        let invocation = Invocation::local(&state.scripts.catalog, key);
+        let (request, mut reply) = crate::backend::CommandRequest::new(invocation);
+        let _ = update(&mut state, Message::Ui(UiEvent::OpenCommand(request)));
+        assert_eq!(reply.try_recv().unwrap(), Some(Ok(())));
+        assert!(state.scripts.panel.as_ref().unwrap().prompt().is_some());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+        assert_eq!(state.query, title);
+        assert_eq!(state.selected().unwrap().target, target);
+    }
+    let _ = update(&mut state, Message::Query(String::new()));
+    let missing = DirectCommand::Local(format!("script-v1:{}", "0".repeat(64)));
+    let _ = state.open_startup_destination(Destination::Command(missing));
+    assert!(state.scripts.panel.is_none());
+    let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+    let labels = rendered_labels(view_content(&state), size).text;
+    assert!(labels.iter().any(|(label, _)| label == "Shortcut unavailable. Reassign it."));
 }
 
 #[test]
@@ -2660,7 +3509,9 @@ fn search_status_errors_can_retry_and_empty_search_restores_its_size() {
     assert!(s.search_status.is_none(), "the status shortcut also closes the view");
     assert!(s.compact);
     assert_eq!(
-        key_message(&Key::Character("I".into()), Modifiers::CTRL).map(|m| matches!(m, Message::ShowSearchStatus)),
+        crate::shortcuts::Routing::Commands(s.shortcuts.bindings)
+            .message(&typed("I", Modifiers::CTRL))
+            .map(|m| matches!(m, Message::ShowSearchStatus)),
         Some(true)
     );
     assert_eq!(
@@ -2799,17 +3650,18 @@ fn long_action_menus_scroll_page_and_number_the_visible_window() {
     let _ = command(&mut s, Command::PageDown);
     let panel = s.panel.as_ref().unwrap();
     assert_eq!(panel.cursor.selected, 14);
-    assert_eq!(panel.cursor.window(16), 7..15);
+    assert_eq!(panel.cursor.window(17), 7..15);
     assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(3)));
     let _ = command(&mut s, Command::Last);
     let panel = s.panel.as_ref().unwrap();
-    assert_eq!(panel.cursor.window(16), 8..16);
-    assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Desktop(11)));
-    assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(4)));
-    assert_eq!(panel.action_for_command(Command::ActivateVisible(7)), Some(Action::Desktop(11)));
+    assert_eq!(panel.cursor.window(17), 9..17);
+    assert_eq!(panel.action_for_command(Command::Activate), Some(Action::EditAlias));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Desktop(5)));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(6)), Some(Action::Desktop(11)));
+    assert_eq!(panel.action_for_command(Command::ActivateVisible(7)), Some(Action::EditAlias));
     assert_eq!(panel.action_for_command(Command::ActivateVisible(8)), None);
     let _ = update(&mut s, Message::Wheel(1.0));
-    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 14);
+    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 15);
     assert_eq!(s.cursor.selected, 0, "menu scrolling must leave the result selected");
     let _ = update(&mut s, Message::ActionQuery("Window 11".into()));
     let panel = s.panel.as_ref().unwrap();
@@ -2818,11 +3670,11 @@ fn long_action_menus_scroll_page_and_number_the_visible_window() {
     assert_eq!(panel.action_for_command(Command::ActivateVisible(1)), None);
     let _ = command(&mut s, Command::Back);
     let panel = s.panel.as_ref().unwrap();
-    assert_eq!(panel.cursor.window(16), 0..8);
+    assert_eq!(panel.cursor.window(17), 0..8);
     assert_eq!(panel.action_for_command(Command::Activate), Some(Action::Launch));
     let _ = command(&mut s, Command::Last);
     let _ = command(&mut s, Command::PageUp);
-    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 8);
+    assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 9);
     let _ = command(&mut s, Command::First);
     assert_eq!(s.panel.as_ref().unwrap().cursor.selected, 0);
 }
@@ -3068,6 +3920,7 @@ fn invalid_application_action_keeps_the_menu_usable_and_does_not_record_usage() 
 struct RenderedLabels {
     text: Vec<(String, iced::Rectangle)>,
     inputs: Vec<iced::Rectangle>,
+    scroll_offsets: Vec<iced::Vector>,
 }
 
 impl iced::advanced::widget::Operation for RenderedLabels {
@@ -3076,6 +3929,16 @@ impl iced::advanced::widget::Operation for RenderedLabels {
     }
     fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
         self.text.push((value.to_string(), bounds));
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&Id>,
+        _: iced::Rectangle,
+        _: iced::Rectangle,
+        translation: iced::Vector,
+        _: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        self.scroll_offsets.push(translation);
     }
     fn text_input(
         &mut self,
@@ -3113,13 +3976,16 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
         assert_eq!(model::home_relative(&format!("{home}x/report.md")), format!("{home}x/report.md"));
         let mut file = file_hits().remove(0);
         file.path = Some(path.clone().into());
+        file.name = "report.md".into();
+        file.subtext = "~/Corpus".into();
         let mut preview = preview::Panel::new(file.clone());
         let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
         assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus"));
         assert!(matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == path));
         let chooser = open_with::Panel::new(file.clone());
-        let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
-        assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus/report.md"));
+        let labels = rendered_labels(chooser.view(false, false), Size::new(640.0, 500.0));
+        assert!(labels.text.iter().any(|(value, _)| value == "report.md"));
+        assert!(labels.text.iter().any(|(value, _)| value == "~/Corpus"));
         let mut state = search_state();
         state.search_folder = Some(file);
         let labels = rendered_labels(view_content(&state), Size::new(640.0, full_height() as f32));
@@ -3132,7 +3998,7 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
     let labels = rendered_labels(preview.view(), Size::new(500.0, 400.0));
     assert!(labels.text.iter().any(|(value, _)| value == &file.id));
     let chooser = open_with::Panel::new(file.clone());
-    let labels = rendered_labels(chooser.view(false), Size::new(640.0, 500.0));
+    let labels = rendered_labels(chooser.view(false, false), Size::new(640.0, 500.0));
     assert!(labels.text.iter().any(|(value, _)| value == &file.id));
     assert!(matches!(preview.event(preview::Event::CopyLocation), preview::Effect::Copy(value) if value == file.id));
     let mut state = search_state();
@@ -3143,20 +4009,166 @@ fn displayed_home_paths_preserve_absolute_copy_and_url_fallbacks() {
 
 #[test]
 fn search_query_has_its_own_full_width_and_navigation_stays_in_the_header() {
-    for width in [320, 608, 640, 720, 880] {
+    for width in [256, 288, 320, 336, 608, 640, 720, 880] {
         let mut state = search_state();
-        let geometry = layout::calculate(Preferences::default(), Some((width + 32, 800)), false, false);
-        state.placement = Some(layout::Geometry { width, header_extra: if width < 512 { 30 } else { 0 }, ..geometry });
+        state.output_bounds = Some((width + 32, 800));
+        let _ = state.resize();
+        let _ = update(&mut state, Message::Query("window width".into()));
         let labels = rendered_labels(view_content(&state), iced::Size::new(width as f32, 600.0));
         let input = labels.inputs[0];
         assert_eq!(input.width, width as f32 - 32.0);
-        for name in ["All", "Applications", "Files", "Search status", "Search folders", "Appearance"] {
+        let applications = if width < 336 { "Apps" } else { "Applications" };
+        assert!(labels.text.iter().any(|(name, _)| name == "Layout"), "result name must fit at {width}px");
+        for name in ["All", applications, "Files", "Commands", "Settings"] {
             let (_, bounds) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(bounds.y >= input.y + input.height, "{name} overlaps the query at {width}px");
-            assert!(bounds.x >= PAD && bounds.x + bounds.width <= width as f32 - PAD, "{name}: {bounds:?}");
-            assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT + state.placement.unwrap().header_extra as f32);
+            assert!(
+                bounds.width + 0.5 >= text_width(name, 12.0)
+                    && bounds.x >= PAD
+                    && bounds.x + bounds.width <= width as f32 - PAD,
+                "{width}px {name}: {bounds:?}"
+            );
+            assert!(bounds.y + bounds.height <= PAD + INPUT_HEIGHT);
         }
     }
+}
+
+#[test]
+fn settings_navigation_keeps_search_and_ignores_stale_search_input() {
+    let mut state = search_state();
+    let _ = update(&mut state, Message::Scope(Scope::Files));
+    let _ = update(&mut state, Message::Query("report".into()));
+    let generation = state.generation;
+    let mut shortcut = typed("S", Modifiers::CTRL | Modifiers::SHIFT);
+    if let Event::Keyboard(keyboard::Event::KeyPressed { text, .. }) = &mut shortcut {
+        *text = Some("S".into());
+    }
+    let mut cache = iced_runtime::user_interface::Cache::default();
+    widget_batch(&mut state, &mut cache, &[shortcut], false);
+    assert!(state.settings_menu_open());
+    let _ = update(&mut state, Message::Query("queued edit".into()));
+    let _ = update(&mut state, Message::Scope(Scope::Applications));
+    let _ = update(&mut state, Message::Files { generation, result: Ok(Some(file_hits())) });
+    let selected = state.selected().unwrap().target.clone();
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.global_shortcuts.panel.is_some());
+    assert!(!state.settings_menu_open());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings_menu_open());
+    assert_eq!(state.settings, Some(settings::Entry::GlobalShortcuts));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.folder_settings.is_some());
+    assert!(!state.settings_menu_open());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings_menu_open());
+    assert_eq!(state.settings, Some(settings::Entry::SearchFolders));
+    let _ = update(&mut state, Message::Cmd(Command::Down));
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert!(state.search_status.is_some());
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.settings, Some(settings::Entry::SearchStatus));
+    let _ = update(&mut state, Message::ShowFolders);
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert_eq!(state.settings, Some(settings::Entry::SearchFolders));
+    let _ = update(&mut state, Message::Cmd(Command::Back));
+    assert!(state.settings.is_none() && state.search_status.is_none());
+    assert_eq!((state.query.as_str(), state.generation, state.scope), ("report", generation, Scope::Files));
+    assert_eq!(state.selected().unwrap().target, selected);
+}
+
+#[test]
+fn settings_pointer_controls_open_and_restore_the_menu_at_narrow_width() {
+    let mut state = search_state();
+    state.output_bounds = Some((320, 800));
+    let _ = state.resize();
+    let click = |state: &mut Launcher, label: &str| {
+        let width = state.window_width as f32;
+        let labels = rendered_labels(view_content(state), iced::Size::new(width, full_height() as f32));
+        let (_, bounds) = labels.text.iter().find(|(value, _)| value == label).unwrap();
+        assert!(bounds.x >= PAD && bounds.x + bounds.width <= width - PAD, "{label}: {bounds:?}");
+        let messages = pointer_messages(
+            state,
+            iced::Point::new(bounds.center_x(), bounds.center_y()),
+            vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+        );
+        assert!(!messages.is_empty(), "{label} must be clickable for {:?}: {bounds:?}", state.settings);
+        for message in messages {
+            let _ = update(state, message);
+        }
+    };
+    click(&mut state, "Apps");
+    assert_eq!(state.scope, Scope::Applications);
+    click(&mut state, "Settings");
+    for (label, entry) in [
+        ("Appearance", settings::Entry::Appearance),
+        ("Global shortcuts", settings::Entry::GlobalShortcuts),
+        ("Search status", settings::Entry::SearchStatus),
+    ] {
+        click(&mut state, label);
+        if entry == settings::Entry::Appearance {
+            let generation = state.appearance_generation;
+            let _ = update(
+                &mut state,
+                Message::Appearance {
+                    generation,
+                    event: appearance::Event::Loaded(Err("Cannot read settings".into())),
+                },
+            );
+        } else if entry == settings::Entry::GlobalShortcuts {
+            click(&mut state, "Refresh");
+        }
+        assert!(!state.settings_menu_open());
+        click(&mut state, "Back");
+        assert!(state.settings_menu_open());
+        assert_eq!(state.settings, Some(entry));
+    }
+    click(&mut state, "Back to search");
+    assert!(state.settings.is_none());
+}
+
+#[test]
+fn settings_scroll_does_not_carry_into_child_pages() {
+    check_settings_scroll(Command::Last, settings::Entry::SearchStatus);
+    check_settings_scroll(Command::Down, settings::Entry::Shortcuts);
+}
+
+fn check_settings_scroll(step: Command, destination: settings::Entry) {
+    use iced::Size;
+    use iced_runtime::{Action as RuntimeAction, UserInterface, task, user_interface::Cache};
+
+    let mut state = search_state();
+    state.output_bounds = Some((352, 300));
+    let _ = update(&mut state, Message::ShowSettings);
+    let scroll = update(&mut state, Message::Cmd(step));
+    let mut renderer =
+        iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+    let size = Size::new(state.window_width as f32, state.window_height as f32);
+    let mut menu = UserInterface::build(view(&state), size, Cache::default(), &mut renderer);
+    let mut stream = task::into_stream(scroll).unwrap();
+    let Some(RuntimeAction::Widget(mut operation)) = iced::futures::executor::block_on(stream.next()) else {
+        panic!("moving down in Settings must scroll the selected entry into view");
+    };
+    menu.operate(&renderer, operation.as_mut());
+    let mut layout = RenderedLabels::default();
+    menu.operate(&renderer, &mut layout);
+    assert!(layout.scroll_offsets.iter().any(|offset| offset.y > 0.0));
+    let cache = menu.into_cache();
+
+    let _ = update(&mut state, Message::Cmd(Command::Activate));
+    assert_eq!(state.settings, Some(destination));
+    if destination == settings::Entry::SearchStatus {
+        let generation = state.status_generation;
+        let error = "The search service is temporarily unavailable. ".repeat(20);
+        let _ = update(&mut state, Message::SearchStatusLoaded { generation, result: Err(error) });
+    }
+    let size = Size::new(state.window_width as f32, state.window_height as f32);
+    let mut page = UserInterface::build(view(&state), size, cache, &mut renderer);
+    let mut layout = RenderedLabels::default();
+    page.operate(&renderer, &mut layout);
+    assert_eq!(layout.scroll_offsets, vec![iced::Vector::ZERO], "{destination:?}");
 }
 
 #[test]
@@ -3226,6 +4238,12 @@ fn open_with_labels_use_available_width_and_keep_suffixes() {
             }
         }
         assert!(labels.iter().any(|(value, _)| value == "Ctrl+1"));
+        let (_, refresh) = labels.iter().find(|(value, _)| value == "Refresh").unwrap();
+        let (_, count) = labels.iter().find(|(value, _)| value == "1 application").unwrap();
+        let (_, open) = labels.iter().find(|(value, _)| value == "Open").unwrap();
+        assert!(refresh.width >= 42.0 && refresh.x + refresh.width <= width - PAD, "{refresh:?}");
+        assert!(count.width >= 70.0 && count.x + count.width <= open.x, "{count:?}");
+        assert!(open.width >= 26.0 && open.x + open.width <= width - PAD, "{open:?}");
     }
 }
 
@@ -3237,18 +4255,22 @@ fn dedicated_scopes_hide_only_their_redundant_result_type() {
     state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &files);
     state.items.push(model::calc_item("= 40 + 2").unwrap());
 
-    for (scope, tag, visible) in [
-        (Scope::All, "Application", true),
-        (Scope::All, "File", true),
-        (Scope::Applications, "Application", false),
-        (Scope::Files, "File", false),
-        (Scope::Files, "Folder", true),
-        (Scope::Applications, "Calculator", true),
-        (Scope::Files, "Calculator", true),
+    for (width, scope, tag, visible) in [
+        (640, Scope::All, "Application", true),
+        (640, Scope::All, "File", true),
+        (640, Scope::Applications, "Application", false),
+        (640, Scope::Files, "File", false),
+        (640, Scope::Files, "Folder", true),
+        (640, Scope::Applications, "Calculator", false),
+        (640, Scope::Files, "Calculator", false),
+        (288, Scope::All, "Application", false),
+        (288, Scope::All, "File", false),
+        (288, Scope::Files, "Folder", true),
     ] {
+        state.window_width = width;
         state.scope = scope;
         let index = state.items.iter().position(|item| item.tag == tag).unwrap();
-        let labels = rendered_labels(result_row(&state, index, 0), iced::Size::new(640.0, ROW_HEIGHT));
+        let labels = rendered_labels(result_row(&state, index, 0), iced::Size::new(width as f32, ROW_HEIGHT));
         assert_eq!(labels.text.iter().any(|(value, _)| value == tag), visible, "{scope}: {tag}");
     }
 }
@@ -3264,13 +4286,17 @@ fn narrow_result_labels_fit_and_keep_distinguishing_text() {
     file.subtext = "~/Corpus/Documents/Department/Annual planning/Reports 2026".into();
     state.apps[0].comment = Some("Create and protect your documents with the synthetic report viewer".into());
     state.items = model::build_items(&state.apps, &[(0, crate::matcher::EXACT)], &[file]);
-    state.items.push(model::calc_item("1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12").unwrap());
+    state.items.push(model::calc_item("= 60 mph in km/h").unwrap());
     for (width, preview) in [(280.0, false), (320.0, false), (384.0, false), (704.0, false), (352.0, true)] {
         state.preview_enabled = preview;
         for i in 0..state.items.len() {
             let labels = rendered_labels(result_row(&state, i, i), Size::new(width, ROW_HEIGHT)).text;
             assert!(labels.len() >= 2);
-            assert_eq!(labels.iter().any(|(value, _)| value == state.items[i].tag), !preview);
+            let calculator = matches!(state.items[i].target, Target::Calc(_));
+            assert_eq!(labels.iter().any(|(value, _)| value == state.items[i].tag), !preview && !calculator);
+            if calculator {
+                assert_eq!(labels[0].0, "= 96.56064 km/h", "keep the full conversion visible at {width}px");
+            }
             assert!(labels.iter().any(|(value, _)| value == &format!("Ctrl+{}", i + 1)));
             for ((value, bounds), size) in labels.iter().take(2).zip([15.0, 12.0]) {
                 let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
@@ -3310,7 +4336,8 @@ fn secondary_pages_share_title_and_return_action_alignment() {
     let file = file_hits().remove(0);
     let status = SearchStatusPanel::Loading;
     let folders = folders::Panel::new("/synthetic/config.toml".into(), false);
-    let appearance = appearance::Panel::new("/synthetic/config.toml".into(), Preferences::default());
+    let appearance =
+        appearance::Panel::new("/synthetic/config.toml".into(), Preferences::default(), appearance::Tab::Colors);
     let details = details::Panel::new(file.clone());
     let chooser = open_with::Panel::new(file);
     for (title, page) in [
@@ -3318,14 +4345,69 @@ fn secondary_pages_share_title_and_return_action_alignment() {
         ("Search folders", folders.view().map(|_| ())),
         ("Appearance", appearance.view(None, true, false).map(|_| ())),
         ("File details", details.view().map(|_| ())),
-        ("Open with…", chooser.view(false).map(|_| ())),
+        ("Open with…", chooser.view(false, false).map(|_| ())),
     ] {
         let labels = rendered_labels(page, iced::Size::new(720.0, 515.0)).text;
         let (_, heading) = labels.iter().find(|(value, _)| value == title).unwrap();
         assert!((heading.center_y() - 44.0).abs() < 0.5, "{title}: {heading:?}");
-        let (_, back) = labels.iter().find(|(value, _)| value == "Back to search").unwrap();
+        let (_, back) = labels.iter().rev().find(|(value, _)| value == "Back to search" || value == "Back").unwrap();
         assert!((back.center_y() - 490.0).abs() < 0.5, "{title}: {back:?}");
     }
+}
+
+#[test]
+fn narrow_file_details_footer_keeps_copy_feedback_and_actions_visible() {
+    let mut file = file_hits().remove(0);
+    file.path = None;
+    let mut panel = details::Panel::new(file);
+    let _ = panel.event(details::Event::CopyLocation);
+    let width = 320.0;
+    let labels = rendered_labels(panel.view(), iced::Size::new(width, 515.0)).text;
+    let (_, refresh) = labels.iter().find(|(value, _)| value == "Refresh").unwrap();
+    assert!(refresh.width >= 42.0 && refresh.x + refresh.width <= width - PAD, "{refresh:?}");
+    let mut end = PAD;
+    for label in ["Copied file URL", "Copy file URL", "Preview text"] {
+        let (_, bounds) = labels.iter().find(|(value, _)| value == label).unwrap();
+        assert!(
+            bounds.width >= 65.0 && bounds.x >= end && bounds.x + bounds.width <= width - PAD,
+            "{label}: {bounds:?}"
+        );
+        end = bounds.x + bounds.width;
+    }
+}
+
+#[test]
+fn narrow_search_footer_keeps_feedback_and_both_actions_readable() {
+    let mut state = search_state();
+    state.output_bounds = Some((320, 332));
+    let _ = update(&mut state, Message::Query(String::new()));
+    let _ = state.resize();
+    let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+    for (label, status) in [
+        ("Moved up", Status::Notice as fn(String) -> Status),
+        ("Added to favorites for this session", Status::Notice),
+        ("Favorites are busy. Try again.", Status::Error),
+    ] {
+        state.status = status(label.into());
+        let labels = rendered_labels(view_content(&state), size).text;
+        let mut end = PAD;
+        for name in [label, "Launch", "Actions"] {
+            let (_, bounds) = labels
+                .iter()
+                .find(|(value, _)| value == name)
+                .unwrap_or_else(|| panic!("missing complete footer text {name:?}"));
+            assert!(bounds.x >= end && bounds.x + bounds.width <= size.width - PAD, "{name}: {bounds:?}");
+            assert!(
+                bounds.y >= size.height - PAD - FOOTER_HEIGHT && bounds.y + bounds.height <= size.height - PAD,
+                "{name}: {bounds:?}"
+            );
+            end = bounds.x + bounds.width;
+        }
+    }
+    state.unconfirmed_open = true;
+    let labels = rendered_labels(view_content(&state), size).text;
+    assert!(labels.iter().any(|(value, _)| value == UNCONFIRMED_OPEN));
+    assert!(!labels.iter().any(|(value, _)| value == "Launch" || value == "Actions"));
 }
 
 #[test]
@@ -3372,15 +4454,104 @@ fn ellipsizing() {
 }
 
 #[test]
+fn startup_geometry_is_ready_before_the_first_surface_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = search_state();
+    s.settings_path = dir.path().join("config.toml");
+    std::fs::write(&s.settings_path, "roots = []").unwrap();
+    s.surface_ready = false;
+    let (s, task) = s.start_destination(Destination::Search(String::new()));
+    assert_eq!(s.placement.unwrap().rows, 1);
+    assert_eq!(s.window_height, compact_height() + ROW_HEIGHT as u32 + PAD as u32);
+    assert_eq!(task.units(), 0);
+}
+
+#[test]
+fn home_sizes_to_suggestions_and_makes_room_for_actions() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Query(String::new()));
+    let home = s.placement.unwrap();
+    assert_eq!((home.height, home.rows), (compact_height() + ROW_HEIGHT as u32 + PAD as u32, 1));
+
+    let _ = update(&mut s, Message::Cmd(Command::OpenActions));
+    assert_eq!((s.window_height, s.query.as_str()), (full_height(), ""));
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    assert_eq!((s.placement, s.selected().unwrap().title.as_str()), (Some(home), "Report Viewer"));
+}
+
+#[test]
 fn heights_fit_the_rows() {
     assert!(full_height() > compact_height());
     assert!(full_height() as f32 >= compact_height() as f32 + ROW_HEIGHT * VISIBLE_ROWS as f32);
+}
+
+fn click_footer_label(s: &Launcher, label: &str) -> Message {
+    let size = iced::Size::new(s.window_width as f32, full_height() as f32);
+    let labels = rendered_labels(view_content(s), size);
+    let (_, rect) = labels.text.iter().find(|(value, _)| value == label).unwrap();
+    let messages = pointer_messages(
+        s,
+        iced::Point::new(rect.center_x(), rect.center_y()),
+        vec![mouse::Event::ButtonPressed(mouse::Button::Left), mouse::Event::ButtonReleased(mouse::Button::Left)],
+    );
+    assert_eq!(messages.len(), 1, "clicking {label} emits a single command");
+    messages.into_iter().next().unwrap()
+}
+
+#[test]
+fn result_footer_runs_only_the_target_it_showed() {
+    let mut s = search_state();
+    let _ = update(&mut s, Message::Scope(Scope::Files));
+    let _ = update(&mut s, Message::Query("report".into()));
+    let generation = s.generation;
+    let files = file_hits();
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(files.clone())) });
+
+    let old_open = click_footer_label(&s, "Open");
+    let _ = command(&mut s, Command::Down);
+    let _ = update(&mut s, old_open);
+    assert!(s.opening.is_none());
+
+    let open = click_footer_label(&s, "Open");
+    let _ = update(&mut s, open);
+    assert_eq!(s.opening.as_ref().unwrap().0, files[1].id);
+}
+
+#[test]
+fn action_footer_runs_the_match_and_unwinds_the_filter() {
+    let mut s = application_actions(&[]);
+    let _ = update(&mut s, Message::ActionQuery("copy name".into()));
+    let old_run = click_footer_label(&s, "Run");
+    let clear = click_footer_label(&s, "Clear filter");
+    let _ = update(&mut s, clear.clone());
+    assert!(s.panel.as_ref().unwrap().query.is_empty());
+
+    let _ = update(&mut s, clear);
+    assert!(s.panel.is_some(), "a queued Clear filter must not close the menu");
+    let _ = update(&mut s, Message::ActionQuery("reset ranking".into()));
+    let status = s.status.clone();
+    let _ = update(&mut s, old_run);
+    assert_eq!(s.status, status, "a filtered-out Run button must not dispatch another action");
+
+    let _ = update(&mut s, Message::ActionQuery("copy name".into()));
+    let run = click_footer_label(&s, "Run");
+    let _ = update(&mut s, run);
+    assert_eq!(s.status, Status::Notice("Copied name".into()));
+    assert!(s.panel.is_none());
+    assert_eq!(s.query, "report");
+
+    let _ = command(&mut s, Command::OpenActions);
+    let back = click_footer_label(&s, "Esc");
+    let _ = update(&mut s, back);
+    assert!(s.panel.is_none());
+    assert_eq!(s.query, "report");
 }
 
 #[test]
 fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
     let mut state = application_actions(&["New window", "Other window"]);
     state.panel = None;
+    state.items[0].subtitle = "Synthetic workspace editor".into();
     state.output_bounds = Some((640, 332));
     let _ = state.resize();
     let _ = command(&mut state, Command::OpenActions);
@@ -3396,9 +4567,12 @@ fn action_panel_keeps_its_return_hint_visible_on_short_outputs() {
             action_panel(panel, target),
             iced::Size::new(state.window_width as f32, state.window_height as f32),
         );
-        for name in ["Esc", "Close actions", "Run"] {
+        for name in ["Synthetic workspace editor", "Esc", "Close actions", "Run"] {
             let (_, rect) = labels.text.iter().find(|(value, _)| value == name).unwrap();
             assert!(rect.height >= 14.0, "{name} is clipped on {bounds:?}: {rect:?}");
+            if name == "Run" {
+                assert!(rect.width >= 20.0, "Run is clipped on {bounds:?}: {rect:?}");
+            }
             assert!(rect.x >= 0.0 && rect.x + rect.width <= state.window_width as f32, "{name}: {rect:?}");
         }
         let actions = panel.filtered_actions();
