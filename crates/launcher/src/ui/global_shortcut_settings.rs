@@ -8,8 +8,8 @@ use iced::widget::{button, column, container, responsive, row, scrollable, space
 use iced::{Element, Font, Length, Task, Theme};
 
 use super::{
-    Launcher, Message, divider, footer_style, hint, page_header, palette, primary_hint, status_button_style,
-    surface_style,
+    Launcher, Message, divider, footer_button, footer_style, hint, page_header, palette, primary_hint,
+    status_button_style, surface_style,
 };
 use crate::activation::Activation;
 use crate::commands::Builtin;
@@ -254,24 +254,19 @@ impl Panel {
         if self.command.is_some() {
             let label = if self.copied { "Launch command copied" } else { "Copy launch command" };
             let copy = if compact { text(label).size(12).into() } else { hint("Ctrl+Shift+C", label) };
-            controls =
-                controls.push(button(copy).on_press(Event::CopyCommand).padding([4, 8]).style(status_button_style));
+            controls = controls.push(footer_button(copy, Some(Event::CopyCommand)));
         } else if self.can_stop() {
-            controls = controls.push(
-                button(hint("Ctrl+Enter", "Stop"))
-                    .padding([4, 8])
-                    .style(status_button_style)
-                    .on_press_maybe(self.available(Action::Stop).then_some(Event::Act(Action::Stop))),
-            );
+            controls = controls.push(footer_button(
+                hint("Ctrl+Enter", "Stop"),
+                self.available(Action::Stop).then_some(Event::Act(Action::Stop)),
+            ));
         }
         controls = controls.push(space::horizontal());
         if let Some(action) = self.primary() {
-            controls = controls.push(
-                button(primary_hint("Enter", action.label()))
-                    .padding([4, 8])
-                    .style(status_button_style)
-                    .on_press_maybe(self.available(action).then_some(Event::Act(action))),
-            );
+            controls = controls.push(footer_button(
+                primary_hint("Enter", action.label()),
+                self.available(action).then_some(Event::Act(action)),
+            ));
         }
         container(controls).center_y(Length::Fill).into()
     }

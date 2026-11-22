@@ -419,10 +419,13 @@ impl Panel {
                     preview.light_theme = *palette;
                     preview.dark_theme = *palette;
                     let color_theme = theme(preview, system, false);
-                    let b = button(column![miniature(&color_theme), choice_label(name, 12, selected)].spacing(4))
-                        .padding(5)
-                        .width(Length::Fill)
-                        .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
+                    let b = button(
+                        column![miniature(&color_theme), container(choice_label(name, 12, selected)).padding([0, 4])]
+                            .spacing(4),
+                    )
+                    .padding(5)
+                    .width(Length::Fill)
+                    .style(move |theme: &Theme, status| choice_style(theme, status, selected, focused));
                     cards = cards.push(if enabled { b.on_press(Event::Choose(index)) } else { b });
                 }
                 content =
@@ -440,23 +443,25 @@ impl Panel {
                 ..ui::status_button_style(theme, status)
             }
         };
-        let save = button(ui::primary_hint("Ctrl+S", "Save"))
-            .padding([4, 8])
+        let save = button(container(ui::primary_hint("Ctrl+S", "Save")).height(Length::Fill).center_y(Length::Fill))
+            .padding([0, 6])
+            .height(24)
             .style(command_style(self.cursor.selected == self.save_index()));
-        let back = button(ui::hint("Esc", "Back"))
-            .padding([4, 8])
+        let back = button(container(ui::hint("Esc", "Back")).height(Length::Fill).center_y(Length::Fill))
+            .padding([0, 6])
+            .height(24)
             .style(command_style(self.cursor.selected == self.save_index() + 1));
         let footer = if self.confirm {
             row![
                 text("Discard changes?").size(13).width(Length::Fill),
-                button(ui::hint("Esc", "Keep editing")).on_press(Event::Keep).style(ui::status_button_style),
-                button(ui::hint("Ctrl+D", "Discard")).on_press(Event::Discard).style(ui::status_button_style)
+                ui::footer_button(ui::hint("Esc", "Keep editing"), Some(Event::Keep)),
+                ui::footer_button(ui::hint("Ctrl+D", "Discard"), Some(Event::Discard)),
             ]
             .spacing(8)
             .align_y(iced::Center)
         } else {
             row![
-                text(if self.dirty() { "Unsaved changes" } else { "Live preview" }).size(11).width(Length::Fill).style(
+                text(if self.dirty() { "Unsaved changes" } else { "Live preview" }).size(12).width(Length::Fill).style(
                     move |theme: &Theme| text::Style {
                         color: Some(if self.dirty() { palette::TEXT } else { palette::DIM }.resolve(theme)),
                     }

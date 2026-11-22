@@ -716,9 +716,10 @@ fn unavailable_alias_can_be_edited_without_dispatching_an_application() {
     let width = s.window_width as f32;
     let size = iced::Size::new(width, s.window_height as f32);
     let labels = rendered_labels(view_content(&s), size).text;
-    for name in ["Back", "Remove", "Save"] {
+    for (name, font) in [("Back", Font::DEFAULT), ("Remove", Font::DEFAULT), ("Save", PRIMARY_FONT)] {
         let (_, bounds) = labels.iter().find(|(value, _)| value == name).unwrap();
-        assert!(bounds.width >= text_width(name, 12.0) && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
+        let expected = text_width_with_font(name, 12.0, font);
+        assert!(bounds.width + 0.5 >= expected && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
     }
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert!(s.alias_editor.is_none());
@@ -1350,11 +1351,13 @@ fn numbered_shortcuts_are_not_dispatched_again_by_the_subscription() {
 #[test]
 fn displayed_shortcuts_work_inside_the_action_panel() {
     let panel = Panel {
+        id: 0,
         title: "notes.txt".into(),
         context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
+        filter_revision: 0,
         cursor: Cursor { selected: 3, ..Cursor::new(VISIBLE_ROWS) },
     };
     let key = |key, mods| model::command_for(&key, mods).unwrap();
@@ -1371,11 +1374,13 @@ fn displayed_shortcuts_work_inside_the_action_panel() {
         Some(Action::CopyName)
     );
     let app = Panel {
+        id: 0,
         title: "Files".into(),
         context: String::new(),
         actions: vec![Action::Launch, Action::CopyName],
         query: String::new(),
         desktop_labels: Vec::new(),
+        filter_revision: 0,
         cursor: Cursor { selected: 0, ..Cursor::new(VISIBLE_ROWS) },
     };
     assert_eq!(app.action_for_command(Command::Secondary), None);
@@ -1426,11 +1431,13 @@ fn filtering_actions_keeps_the_target_and_selects_a_matching_action() {
 #[test]
 fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
     let mut panel = Panel {
+        id: 0,
         title: "notes.txt".into(),
         context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
+        filter_revision: 0,
         cursor: Cursor { selected: 4, ..Cursor::new(VISIBLE_ROWS) },
     };
     assert_eq!(panel.action_for_command(Command::ActivateVisible(0)), Some(Action::Open));
@@ -1450,11 +1457,13 @@ fn numbered_actions_follow_the_filter_without_falling_back_to_the_selection() {
 #[test]
 fn action_search_ranks_precise_matches_and_keeps_activation_consistent() {
     let mut panel = Panel {
+        id: 0,
         title: "notes.txt".into(),
         context: String::new(),
         actions: vec![Action::Open, Action::Reveal, Action::CopyPath, Action::CopyName, Action::ResetRanking],
         query: String::new(),
         desktop_labels: Vec::new(),
+        filter_revision: 0,
         cursor: Cursor { selected: 0, ..Cursor::new(VISIBLE_ROWS) },
     };
     let original = panel.actions.clone();
@@ -3112,6 +3121,32 @@ fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
     assert!(
         matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-07.desktop")
     );
+    for (height, first_id, visible_rows) in [(419, "editor-03.desktop", 3..7), (515, "editor-01.desktop", 1..7)] {
+        let mut sized = open_with::Panel::new(file_hits().remove(0));
+        sized.resize(height, false);
+        sized.loaded(Ok(picker_choices(7)), &mut Icons::disabled());
+        let _ = sized.command(Command::Last);
+        assert!(
+            matches!(sized.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == first_id),
+            "height {height} must dispatch {first_id} as the first visible row"
+        );
+        let labels = rendered_labels(sized.view(false, false), iced::Size::new(608.0, height as f32)).text;
+        let body_bottom = height as f32 - PAD - FOOTER_HEIGHT - 1.0;
+        for index in visible_rows {
+            for expected in [format!("Editor {index:02}"), format!("editor-{index:02}.desktop")] {
+                let (_, bounds) = labels.iter().find(|(value, _)| value == &expected).unwrap();
+                assert!(
+                    bounds.y + bounds.height <= body_bottom,
+                    "height {height} clipped {expected} into divider/footer: {bounds:?}"
+                );
+            }
+        }
+        let (_, open) = labels.iter().find(|(value, _)| value == "Open").unwrap();
+        assert!(
+            open.y >= height as f32 - PAD - FOOTER_HEIGHT && open.y + open.height <= height as f32 - PAD,
+            "height {height} pushed footer Open out of bounds: {open:?}"
+        );
+    }
 }
 
 #[test]
@@ -3920,6 +3955,8 @@ fn invalid_application_action_keeps_the_menu_usable_and_does_not_record_usage() 
 struct RenderedLabels {
     text: Vec<(String, iced::Rectangle)>,
     inputs: Vec<iced::Rectangle>,
+    containers: Vec<iced::Rectangle>,
+    scrollables: Vec<(iced::Rectangle, iced::Rectangle)>,
     scroll_offsets: Vec<iced::Vector>,
 }
 
@@ -3930,14 +3967,18 @@ impl iced::advanced::widget::Operation for RenderedLabels {
     fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
         self.text.push((value.to_string(), bounds));
     }
+    fn container(&mut self, _: Option<&Id>, bounds: iced::Rectangle) {
+        self.containers.push(bounds);
+    }
     fn scrollable(
         &mut self,
         _: Option<&Id>,
-        _: iced::Rectangle,
-        _: iced::Rectangle,
+        bounds: iced::Rectangle,
+        content_bounds: iced::Rectangle,
         translation: iced::Vector,
         _: &mut dyn iced::advanced::widget::operation::Scrollable,
     ) {
+        self.scrollables.push((bounds, content_bounds));
         self.scroll_offsets.push(translation);
     }
     fn text_input(
@@ -4377,6 +4418,57 @@ fn narrow_file_details_footer_keeps_copy_feedback_and_actions_visible() {
 }
 
 #[test]
+fn file_details_footer_press_cancels_when_width_changes_action_in_slot() {
+    use iced_runtime::user_interface::Cache;
+
+    let panel = details::Panel::new(file_hits().remove(0));
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+    let position = |width, label| {
+        let labels = rendered_labels(panel.view(), iced::Size::new(width, 515.0)).text;
+        mouse::Cursor::Available(labels.iter().find(|(value, _)| value == label).unwrap().1.center())
+    };
+    let send = |cache: &mut Cache, width, cursor, events: &[Event]| {
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let mut ui = iced_runtime::UserInterface::build(
+            panel.view(),
+            iced::Size::new(width, 515.0),
+            std::mem::take(cache),
+            &mut renderer,
+        );
+        let mut messages = Vec::new();
+        ui.update(events, cursor, &mut renderer, &mut iced::advanced::clipboard::Null, &mut messages);
+        *cache = ui.into_cache();
+        messages
+    };
+
+    for (old_width, old_label, new_width, new_label) in [
+        (720.0, "Back to search", 320.0, "Copy path"),
+        (720.0, "Copy path", 320.0, "Preview text"),
+        (320.0, "Copy path", 720.0, "Back to search"),
+        (320.0, "Preview text", 720.0, "Copy path"),
+    ] {
+        let mut cache = Cache::default();
+        let old_cursor = position(old_width, old_label);
+        let new_cursor = position(new_width, new_label);
+        assert!(send(&mut cache, old_width, old_cursor, std::slice::from_ref(&press)).is_empty());
+        assert!(
+            send(&mut cache, new_width, new_cursor, std::slice::from_ref(&release)).is_empty(),
+            "releasing {old_label} after resizing must not trigger {new_label}"
+        );
+        let messages = send(&mut cache, new_width, new_cursor, &[press.clone(), release.clone()]);
+        assert_eq!(messages.len(), 1, "a fresh click on {new_label} must work");
+        assert!(matches!(
+            (new_label, &messages[0]),
+            ("Back to search", details::Event::Back)
+                | ("Copy path", details::Event::CopyLocation)
+                | ("Preview text", details::Event::Preview)
+        ));
+    }
+}
+
+#[test]
 fn narrow_search_footer_keeps_feedback_and_both_actions_readable() {
     let mut state = search_state();
     state.output_bounds = Some((320, 332));
@@ -4611,5 +4703,401 @@ fn filtering_actions_keeps_the_field_and_return_hint_in_place() {
             assert_eq!(after.text.iter().any(|(value, _)| value == "Run"), query == "other window");
         }
         let _ = command(&mut state, Command::Back);
+    }
+}
+
+#[test]
+fn active_scope_underline_matches_label_width_and_aligns_with_settings() {
+    let mut state = search_state();
+    for (width, apps_label) in [(256, "Apps"), (320, "Apps"), (640, "Applications"), (720, "Applications")] {
+        state.window_width = width;
+        for scope in Scope::ALL {
+            state.scope = scope;
+            let labels = rendered_labels(views::search_navigation(&state), iced::Size::new(width as f32, 48.0));
+            let active = if scope == Scope::Applications { apps_label.to_owned() } else { scope.to_string() };
+            let (_, tab_rect) = labels.text.iter().find(|(value, _)| value == &active).unwrap();
+            let (_, settings_rect) = labels.text.iter().find(|(value, _)| value == "Settings").unwrap();
+            assert!(
+                (tab_rect.center_y() - settings_rect.center_y()).abs() < 1.0,
+                "width={width} scope={active}: tab={tab_rect:?} settings={settings_rect:?}"
+            );
+            let underlines: Vec<_> = labels
+                .containers
+                .iter()
+                .copied()
+                .filter(|rect| (rect.height - 2.0).abs() < 0.1 && rect.width > 0.5)
+                .collect();
+            assert_eq!(underlines.len(), 1, "expected one active underline at width={width} scope={active}");
+            let underline = underlines[0];
+            let expected_width = text_width(&active, 12.0).ceil();
+            assert!(
+                (underline.width - expected_width).abs() < 0.5,
+                "width={width} scope={active}: underline={underline:?} expected_width={expected_width}"
+            );
+            assert!(
+                (underline.center_x() - tab_rect.center_x()).abs() < 1.0 && underline.y > tab_rect.y,
+                "width={width} scope={active}: underline={underline:?} tab={tab_rect:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn search_footer_secondary_and_browse_buttons_act_on_captured_target_only() {
+    let mut s = search_state();
+    s.output_bounds = Some((720, 800));
+    let _ = s.resize();
+    let _ = update(&mut s, Message::Scope(Scope::Files));
+    let _ = update(&mut s, Message::Query("report".into()));
+    let generation = s.generation;
+    let file = file_hits().remove(0);
+    let folder = search_folder_hit("/synthetic/Reports");
+    let _ = update(&mut s, Message::Files { generation, result: Ok(Some(vec![file.clone(), folder.clone()])) });
+
+    // Stale footer secondary button on file row must not act on folder row.
+    let stale_secondary = click_footer_label(&s, "Show in folder");
+    let _ = command(&mut s, Command::Down);
+    assert_eq!(s.selected().unwrap().target, Target::File(folder.clone()));
+    let _ = update(&mut s, stale_secondary);
+    assert!(s.opening.is_none());
+
+    // Stale Browse here button must not open folder search after moving back to a file.
+    let stale_browse = click_footer_label(&s, "Browse here");
+    let _ = command(&mut s, Command::Up);
+    let _ = update(&mut s, stale_browse);
+    assert!(s.search_folder.is_none());
+
+    // Ordinary search at 640 px retains both Show in folder and Browse here for folder rows.
+    let _ = command(&mut s, Command::Down);
+    s.preferences.width = ferroseek_config::appearance::Width::Compact;
+    s.output_bounds = Some((1280, 800));
+    let _ = s.resize();
+    assert_eq!(s.window_width, 640);
+    let search_640 = rendered_labels(view_content(&s), iced::Size::new(640.0, full_height() as f32)).text;
+    assert!(search_640.iter().any(|(value, _)| value == "Show in folder"));
+    assert!(search_640.iter().any(|(value, _)| value == "Browse here"));
+
+    // Live Browse here button enters folder search cleanly.
+    let browse = click_footer_label(&s, "Browse here");
+    let _ = update(&mut s, browse);
+    assert_eq!(s.search_folder, Some(folder.clone()));
+
+    // At 640 px folder browser omits secondary action so "2 indexed items" stays unclipped.
+    let folder_gen = s.generation;
+    let _ = update(
+        &mut s,
+        Message::FolderListed {
+            generation: folder_gen,
+            result: Ok((vec![search_folder_hit("/synthetic/Reports/Sub"), file.clone()], false)),
+        },
+    );
+    let labels_640 = rendered_labels(view_content(&s), iced::Size::new(640.0, full_height() as f32)).text;
+    let (_, count_rect) = labels_640
+        .iter()
+        .find(|(value, _)| value == "2 indexed items")
+        .unwrap_or_else(|| panic!("expected full folder count on 640 px footer: {labels_640:?}"))
+        .clone();
+    let (_, browse_rect) = labels_640.iter().find(|(value, _)| value == "Browse here").unwrap();
+    assert!(count_rect.x + count_rect.width < browse_rect.x, "count={count_rect:?} browse={browse_rect:?}");
+    assert!(!labels_640.iter().any(|(value, _)| value == "Show in folder"));
+
+    // Queued Clear search click only clears once and never falls through to Close.
+    s.search_folder = None;
+    let _ = update(&mut s, Message::Query("zzzz-no-hits".into()));
+    let clear = click_footer_label(&s, "Clear search");
+    let duplicate_clear = clear.clone();
+    let _ = update(&mut s, clear);
+    assert!(s.query.is_empty());
+    let repeated = update(&mut s, duplicate_clear);
+    assert_eq!(repeated.units(), 0, "stale Clear search click must not exit");
+
+    // Stale calculator Use result click does not apply when full-precision query changes.
+    let _ = update(&mut s, Message::Scope(Scope::All));
+    let _ = update(&mut s, Message::Query("= 1.00000000001".into()));
+    let stale_use = click_footer_label(&s, "Use result");
+    let _ = update(&mut s, Message::Query("= 1.00000000002".into()));
+    let _ = update(&mut s, stale_use);
+    assert_eq!(s.query, "= 1.00000000002");
+    let live_use = click_footer_label(&s, "Use result");
+    let _ = update(&mut s, live_use);
+    assert_eq!(s.query, calc::continuation("= 1.00000000002").unwrap());
+
+    // File details Esc footer action is clickable.
+    s.preferences.width = ferroseek_config::appearance::Width::Standard;
+    s.file_details = Some(details::Panel::new(file));
+    s.output_bounds = Some((1280, 800));
+    let _ = s.resize();
+    let back_to_search = click_footer_label(&s, "Back to search");
+    let _ = update(&mut s, back_to_search);
+    assert!(s.file_details.is_none());
+}
+
+#[test]
+fn settings_and_shortcuts_fit_default_height_without_scroll_overflow() {
+    let mut state = search_state();
+    let _ = update(&mut state, Message::ShowSettings);
+    assert_eq!(state.window_height, settings::HEIGHT);
+    let settings_layout = rendered_labels(view_content(&state), iced::Size::new(WIDTH as f32, settings::HEIGHT as f32));
+    assert_eq!(settings_layout.scrollables.len(), 1);
+    let (viewport, content) = settings_layout.scrollables[0];
+    assert!(
+        content.height <= viewport.height + 0.5,
+        "Settings overflows default height: content={content:?} viewport={viewport:?}"
+    );
+
+    let _ = state.show_shortcuts();
+    assert_eq!(state.window_height, settings::SHORTCUTS_HEIGHT);
+    let shortcuts_layout =
+        rendered_labels(view_content(&state), iced::Size::new(WIDTH as f32, settings::SHORTCUTS_HEIGHT as f32));
+    assert_eq!(shortcuts_layout.scrollables.len(), 1);
+    let (viewport, content) = shortcuts_layout.scrollables[0];
+    assert!(
+        content.height <= viewport.height + 0.5,
+        "Shortcuts overflows default height: content={content:?} viewport={viewport:?}"
+    );
+    assert!(shortcuts_layout.text.iter().any(|(value, _)| value == "Restore defaults"));
+    assert!(shortcuts_layout.text.iter().any(|(value, _)| value == "Ctrl+R"));
+
+    let temp = tempfile::tempdir().unwrap();
+    let cfg = temp.path().join("ferroseek.toml");
+    std::fs::write(&cfg, "[appearance]\nmode = \"dark\"\nmaterial = \"solid\"\n").unwrap();
+    let mut panel = appearance::Panel::new(cfg.clone(), Preferences::default(), appearance::Tab::Colors);
+    let _ = panel.update(appearance::Event::Loaded(Ok(ferroseek_config::folders::Document::load(cfg).unwrap())));
+    let appearance_layout =
+        rendered_labels(panel.view(None, false, false), iced::Size::new(WIDTH as f32, full_height() as f32));
+    assert_eq!(appearance_layout.scrollables.len(), 1);
+    let (viewport, content) = appearance_layout.scrollables[0];
+    assert!(
+        content.height <= viewport.height + 0.5,
+        "Appearance overflows default height: content={content:?} viewport={viewport:?}"
+    );
+}
+
+#[test]
+fn preview_identity_uses_rendered_width_without_clipping() {
+    let long_name = "Quarterly-financial-summary-and-audit-working-notes-2026-draft.txt";
+    let parent = "/synthetic/workspace/archive/reports/quarterly/financials/2026/appendix";
+    let mut file = file_hits().remove(0);
+    file.name = long_name.into();
+    file.path = Some(std::path::Path::new(parent).join(long_name));
+    file.subtext = parent.into();
+    let panel = preview::Panel::new(file);
+
+    // Narrow preview panel must ellipsize based on available width instead of overflowing.
+    let narrow = rendered_labels(panel.view(), iced::Size::new(360.0, 400.0)).text;
+    let (shown_name, name_rect) = narrow
+        .iter()
+        .find(|(value, _)| value.contains("Quarterly-financial") && value.contains("2026-draft.txt"))
+        .unwrap();
+    assert!(shown_name.contains('…') && name_rect.x + name_rect.width <= 345.0, "{shown_name} {name_rect:?}");
+    let (shown_parent, parent_rect) =
+        narrow.iter().find(|(value, _)| value.contains("/synthetic") && value.contains("appendix")).unwrap();
+    assert!(shown_parent.contains('…') && parent_rect.x + parent_rect.width <= 345.0, "{shown_parent} {parent_rect:?}");
+
+    // Wide preview panel renders the full 67-character name without artificial 65-char truncation.
+    let wide = rendered_labels(panel.view(), iced::Size::new(800.0, 400.0)).text;
+    assert!(wide.iter().any(|(value, _)| value == long_name));
+}
+
+#[test]
+fn footer_press_cancels_when_target_query_or_step_changes() {
+    use iced_runtime::user_interface::Cache;
+
+    let mut s = search_state();
+    s.output_bounds = Some((1280, 800));
+    let _ = s.resize();
+    let folder = search_folder_hit("/synthetic/Reports");
+    let _ = s.enter_folder_search(folder);
+    let file_a = FileHit {
+        id: "file:///synthetic/Reports/a.txt".into(),
+        name: "a.txt".into(),
+        path: Some("/synthetic/Reports/a.txt".into()),
+        icon: String::new(),
+        subtext: "/synthetic/Reports".into(),
+        is_dir: false,
+    };
+    let file_b = FileHit {
+        id: "file:///synthetic/Reports/b.txt".into(),
+        name: "b.txt".into(),
+        path: Some("/synthetic/Reports/b.txt".into()),
+        icon: String::new(),
+        subtext: "/synthetic/Reports".into(),
+        is_dir: false,
+    };
+    let folder_gen = s.generation;
+    let _ = update(&mut s, Message::FolderListed { generation: folder_gen, result: Ok((vec![file_a], false)) });
+
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+    let size = iced::Size::new(s.window_width as f32, full_height() as f32);
+
+    // 1. Pressing Show in folder then replacing the file before release must not open the replacement.
+    let labels = rendered_labels(view_content(&s), size).text;
+    let (_, show_rect) = labels.iter().find(|(value, _)| value == "Show in folder").unwrap();
+    let cursor = mouse::Cursor::Available(show_rect.center());
+    let mut cache = Cache::default();
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&press), false, cursor);
+    let refresh_gen = s.generation;
+    let _ =
+        update(&mut s, Message::FolderListed { generation: refresh_gen, result: Ok((vec![file_b.clone()], false)) });
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&release), false, cursor);
+    assert!(s.opening.is_none(), "releasing Show in folder after replacement must not open replacement");
+    widget_batch_at(&mut s, &mut cache, &[press.clone(), release.clone()], false, cursor);
+    assert_eq!(s.opening.as_ref().unwrap().0, file_b.id);
+    s.opening = None;
+
+    // 2. Pressing Use result then changing query with identical display text must not apply replacement.
+    let _ = update(&mut s, Message::Cmd(Command::Back));
+    let _ = update(&mut s, Message::Scope(Scope::All));
+    let _ = update(&mut s, Message::Query("= 1.00000000001".into()));
+    let labels = rendered_labels(view_content(&s), size).text;
+    let (_, use_rect) = labels.iter().find(|(value, _)| value == "Use result").unwrap();
+    let cursor = mouse::Cursor::Available(use_rect.center());
+    let mut cache = Cache::default();
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&press), false, cursor);
+    let _ = update(&mut s, Message::Query("= 1.00000000002".into()));
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&release), false, cursor);
+    assert_eq!(s.query, "= 1.00000000002");
+
+    // 3. Queued Clear search click from an older query generation must not erase a newer unmatched query.
+    let _ = update(&mut s, Message::Query("zzzz-one".into()));
+    let stale_clear = click_footer_label(&s, "Clear search");
+    let _ = update(&mut s, Message::Query("zzzz-two".into()));
+    let ignored = update(&mut s, stale_clear);
+    assert_eq!(ignored.units(), 0);
+    assert_eq!(s.query, "zzzz-two");
+
+    // 4. Pressing Clear search on one unmatched query then editing to another cancels the pending press.
+    let labels = rendered_labels(view_content(&s), size).text;
+    let (_, clear_rect) = labels.iter().find(|(value, _)| value == "Clear search").unwrap();
+    let cursor = mouse::Cursor::Available(clear_rect.center());
+    let mut cache = Cache::default();
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&press), false, cursor);
+    let _ = update(&mut s, Message::Query("zzzz-three".into()));
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&release), false, cursor);
+    assert_eq!(s.query, "zzzz-three");
+
+    // 5. Pressing Actions then replacing the selected result before release must not open for replacement.
+    let folder_a = search_folder_hit("/synthetic/Reports");
+    let _ = update(&mut s, Message::Query(String::new()));
+    let _ = s.enter_folder_search(folder_a);
+    let list_gen = s.generation;
+    let file_c = FileHit {
+        id: "file:///synthetic/Reports/c.txt".into(),
+        name: "c.txt".into(),
+        path: Some("/synthetic/Reports/c.txt".into()),
+        icon: String::new(),
+        subtext: "/synthetic/Reports".into(),
+        is_dir: false,
+    };
+    let _ = update(&mut s, Message::FolderListed { generation: list_gen, result: Ok((vec![file_b], false)) });
+    let labels = rendered_labels(view_content(&s), size).text;
+    let (_, actions_rect) = labels.iter().find(|(value, _)| value == "Actions").unwrap();
+    let cursor = mouse::Cursor::Available(actions_rect.center());
+    let mut cache = Cache::default();
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&press), false, cursor);
+    let replace_gen = s.generation;
+    let _ = update(&mut s, Message::FolderListed { generation: replace_gen, result: Ok((vec![file_c], false)) });
+    widget_batch_at(&mut s, &mut cache, std::slice::from_ref(&release), false, cursor);
+    assert!(s.panel.is_none(), "releasing Actions after result replacement must not open panel");
+
+    // 6. Queued Close actions click must not reopen a panel closed via Escape.
+    let _ = command(&mut s, Command::OpenActions);
+    assert!(s.panel.is_some());
+    let close_msg = click_footer_label(&s, "Close actions");
+    let _ = command(&mut s, Command::Back);
+    assert!(s.panel.is_none());
+    let ignored_close = update(&mut s, close_msg);
+    assert_eq!(ignored_close.units(), 0);
+    assert!(s.panel.is_none(), "stale Close actions click must not reopen panel");
+
+    // 7. Action-panel filter edits cancel in-flight Clear filter/Run presses and reject stale queued clicks.
+    let _ = command(&mut s, Command::OpenActions);
+    let _ = update(&mut s, Message::ActionQuery("copy pa".into()));
+    let stale_run = click_footer_label(&s, "Run");
+    let stale_clear_filter = click_footer_label(&s, "Clear filter");
+
+    let panel_labels = rendered_labels(view_content(&s), size).text;
+    let (_, clear_filter_rect) = panel_labels.iter().find(|(value, _)| value == "Clear filter").unwrap();
+    let mut clear_cache = Cache::default();
+    widget_batch_at(
+        &mut s,
+        &mut clear_cache,
+        std::slice::from_ref(&press),
+        false,
+        mouse::Cursor::Available(clear_filter_rect.center()),
+    );
+    let _ = update(&mut s, Message::ActionQuery("copy pat".into()));
+    widget_batch_at(
+        &mut s,
+        &mut clear_cache,
+        std::slice::from_ref(&release),
+        false,
+        mouse::Cursor::Available(clear_filter_rect.center()),
+    );
+    assert_eq!(s.panel.as_ref().unwrap().query, "copy pat");
+
+    let _ = update(&mut s, stale_clear_filter);
+    assert_eq!(s.panel.as_ref().unwrap().query, "copy pat");
+
+    let panel_labels = rendered_labels(view_content(&s), size).text;
+    let (_, run_rect) = panel_labels.iter().find(|(value, _)| value == "Run").unwrap();
+    let mut run_cache = Cache::default();
+    widget_batch_at(
+        &mut s,
+        &mut run_cache,
+        std::slice::from_ref(&press),
+        false,
+        mouse::Cursor::Available(run_rect.center()),
+    );
+    let _ = update(&mut s, Message::ActionQuery("copy path".into()));
+    widget_batch_at(
+        &mut s,
+        &mut run_cache,
+        std::slice::from_ref(&release),
+        false,
+        mouse::Cursor::Available(run_rect.center()),
+    );
+    assert!(s.panel.is_some(), "releasing Run after filter change must not execute");
+    let before_status = s.status.clone();
+    let _ = update(&mut s, stale_run);
+    assert!(s.panel.is_some() && s.status == before_status, "stale Run click must not execute");
+
+    // 8. Replacing a panel on the same result invalidates in-flight Run presses and stale queued panel clicks.
+    let target = s.selected().unwrap().target.clone();
+    let _ = update(&mut s, Message::ContextMenu(target.clone()));
+    let unfiltered_labels = rendered_labels(view_content(&s), size).text;
+    let (_, unfiltered_run_rect) = unfiltered_labels.iter().find(|(value, _)| value == "Run").unwrap();
+    let mut replace_cache = Cache::default();
+    widget_batch_at(
+        &mut s,
+        &mut replace_cache,
+        std::slice::from_ref(&press),
+        false,
+        mouse::Cursor::Available(unfiltered_run_rect.center()),
+    );
+    let _ = update(&mut s, Message::ContextMenu(target.clone()));
+    widget_batch_at(
+        &mut s,
+        &mut replace_cache,
+        std::slice::from_ref(&release),
+        false,
+        mouse::Cursor::Available(unfiltered_run_rect.center()),
+    );
+    assert!(s.opening.is_none() && s.panel.is_some(), "releasing Run after panel replacement must not open");
+
+    let _ = update(&mut s, Message::ActionQuery("copy pa".into()));
+    let old_panel_run = click_footer_label(&s, "Run");
+    let old_panel_clear = click_footer_label(&s, "Clear filter");
+    let old_panel_close = click_footer_label(&s, "Close actions");
+    let _ = update(&mut s, Message::ContextMenu(target));
+    let _ = update(&mut s, Message::ActionQuery("copy pa".into()));
+    let before_status = s.status.clone();
+    for msg in [old_panel_run, old_panel_clear, old_panel_close] {
+        let task = update(&mut s, msg);
+        assert_eq!(task.units(), 0);
+        assert!(s.opening.is_none());
+        assert_eq!(s.status, before_status);
+        assert_eq!(s.panel.as_ref().map(|p| p.query.as_str()), Some("copy pa"));
     }
 }

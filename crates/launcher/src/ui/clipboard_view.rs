@@ -7,8 +7,8 @@ use iced::widget::{Id, button, column, container, mouse_area, responsive, row, s
 use iced::{Element, Length, Task, Theme};
 
 use super::{
-    Launcher, Message, divider, field_style, footer_style, hint, keycap, label_for_width, page_header, palette,
-    primary_hint, status_button_style, surface_style, tab_style, update_content,
+    Launcher, Message, divider, field_style, footer_button, footer_style, hint, label_for_width, numbered_slot,
+    page_header, palette, primary_hint, primary_label, status_button_style, surface_style, tab_style, update_content,
 };
 use crate::clipboard_history::publish;
 use crate::clipboard_history::{Edit, Entry, Mode, Profile, Recorder, Snapshot};
@@ -556,11 +556,10 @@ impl Panel {
             _ => "Back",
         };
         let back_label = if width < 360 { text(label).size(12).into() } else { hint("Esc", label) };
-        let back = button(back_label).on_press(Event::Back).padding([4, 6]).style(status_button_style);
+        let back = footer_button(back_label, Some(Event::Back));
         let mut actions = row![back, space::horizontal()].spacing(4).align_y(iced::Center);
         if self.confirm {
-            actions = actions
-                .push(button(primary_hint("Ctrl+D", "Clear")).on_press(Event::Confirm).style(status_button_style));
+            actions = actions.push(footer_button(primary_hint("Ctrl+D", "Clear"), Some(Event::Confirm)));
         } else if let Some(entry) = self.viewed() {
             actions = actions.push(text(self.note).size(12)).push(copy_button(entry.id, true));
         } else if self.preview.is_none() {
@@ -575,7 +574,7 @@ impl Panel {
         let Some(entry) = self.selected().filter(|_| self.can_act()) else { return Vec::new() };
         let action = |key, label, event| {
             let content = if width < 600 { text(label).size(12).into() } else { hint(key, label) };
-            button(content).on_press(event).style(status_button_style).into()
+            footer_button(content, Some(event))
         };
         vec![
             action("Ctrl+Enter", "Preview", Event::Preview(entry.id)),
@@ -587,12 +586,8 @@ impl Panel {
 }
 
 fn copy_button(id: u64, shortcut: bool) -> Element<'static, Event> {
-    let label = if shortcut {
-        primary_hint("Enter", "Copy")
-    } else {
-        text("Copy").size(12).font(iced::Font { weight: iced::font::Weight::Semibold, ..iced::Font::DEFAULT }).into()
-    };
-    button(label).on_press(Event::Copy(id)).style(status_button_style).into()
+    let label = if shortcut { primary_hint("Enter", "Copy") } else { primary_label("Copy") };
+    footer_button(label, Some(Event::Copy(id)))
 }
 
 impl Shortcut {
@@ -639,8 +634,13 @@ fn history_row(entry: &Entry, slot: usize, selected: bool, enabled: bool) -> Ele
     })
     .height(Length::Shrink);
     let item = row![
-        column![title, text(subtitle).size(12)].width(Length::Fill).spacing(2),
-        keycap(format!("Ctrl+{}", slot + 1), selected),
+        column![
+            title,
+            text(subtitle).size(12).style(|theme: &Theme| text::Style { color: Some(palette::DIM.resolve(theme)) }),
+        ]
+        .width(Length::Fill)
+        .spacing(2),
+        numbered_slot(slot, selected, enabled),
     ]
     .spacing(8)
     .align_y(iced::Center);

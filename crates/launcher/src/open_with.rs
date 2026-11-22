@@ -2,7 +2,7 @@
 //! A secondary application chooser bound to one immutable file result.
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{self, Id, button, column, container, image, row, space, svg, text, text_input};
-use iced::{Background, Border, Element, Length};
+use iced::{Element, Length};
 
 use crate::backend::{ApplicationChoice, FileHit};
 use crate::icons::{Icon, Icons};
@@ -319,7 +319,7 @@ impl Panel {
                             ui::numbered_hint(slot, selected),
                         ]
                         .spacing(12)
-                        .padding(iced::padding::left(9).right(16))
+                        .padding(iced::padding::left(9).right(12))
                         .align_y(Vertical::Center)
                     ]
                     .align_y(Vertical::Center);
@@ -327,18 +327,7 @@ impl Panel {
                         .height(44)
                         .width(Length::Fill)
                         .padding(0)
-                        .style(move |theme, status| button::Style {
-                            background: if selected {
-                                Some(Background::Color(palette::SELECTED.resolve(theme)))
-                            } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                                Some(Background::Color(palette::FAINT.resolve(theme)))
-                            } else {
-                                None
-                            },
-                            text_color: palette::TEXT.resolve(theme),
-                            border: Border { radius: 9.0.into(), ..Default::default() },
-                            ..Default::default()
-                        });
+                        .style(move |theme, status| ui::list_row_button_style(theme, status, selected));
                     if can_open {
                         choice = choice.on_press(Event::Open(app.id.clone()));
                     }
@@ -351,18 +340,16 @@ impl Panel {
                 iced::widget::text::Style { color: Some(palette::ERROR.resolve(theme)) }
             }));
         }
-        let body = container(body).padding(iced::padding::left(if filtered.is_empty() { 16 } else { 0 }));
-        container(
-            column![
-                ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
-                ui::divider(),
-                container(self.file_context()).width(Length::Fill).clip(true).padding([4, 16]),
-                container(input).padding([0, 16]),
-                container(body).padding([4, 0]).height(Length::Fill),
-                self.footer(opening, can_open, &filtered)
-            ]
-            .spacing(3),
-        )
+        let body = container(body).padding(iced::padding::left(if filtered.is_empty() { 12 } else { 0 }));
+        container(column![
+            ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
+            ui::divider(),
+            container(self.file_context()).width(Length::Fill).clip(true).padding([6, 16]),
+            container(input).padding([0, 16]),
+            container(body).padding([6, 4]).height(Length::Fill),
+            ui::divider(),
+            self.footer(opening, can_open, &filtered)
+        ])
         .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -411,12 +398,11 @@ impl Panel {
                 } else {
                     ui::hint("Esc", if has_filter { "Clear filter" } else { "Back to search" })
                 };
-                controls = controls.push(button(back).on_press(Event::Back).style(ui::status_button_style));
+                controls = controls.push(ui::footer_button(back, Some(Event::Back)));
             }
             if let Some(app) = selected {
-                let open = if compact { text("Open").size(12).into() } else { ui::primary_hint("Enter", "Open") };
-                controls =
-                    controls.push(button(open).on_press(Event::Open(app.id.clone())).style(ui::status_button_style));
+                let open = if compact { ui::primary_label("Open") } else { ui::primary_hint("Enter", "Open") };
+                controls = controls.push(ui::footer_button(open, Some(Event::Open(app.id.clone()))));
             }
             container(controls).center_y(Length::Fill).into()
         });

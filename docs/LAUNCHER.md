@@ -60,14 +60,14 @@ shortcut shown next to its name when one is available.
 ![Settings grouped by launcher and file search](assets/launcher-settings.png)
 
 Settings and the README search screenshot were captured at 1× in isolated
-Labwc with tiny-skia. Search status was captured at 1× in isolated virtual
+virtual KWin 6.3.6 with tiny-skia. Search status was captured at 1× in isolated virtual
 KWin 5.27.11.
 
 ## Shortcuts
 
 ![Shortcut settings with a changed Actions binding ready to save](assets/launcher-shortcuts.png)
 
-Captured at 1× in isolated virtual KWin 5.27.11 with tiny-skia.
+Captured at 1× in isolated virtual KWin 6.3.6 with tiny-skia.
 
 Open **Settings → Shortcuts** or search for **Shortcuts**. Select a row and
 press Enter or click it, then press the new combination. Choose Ctrl+Shift
@@ -250,7 +250,7 @@ They use the owner-only `launcher-links` file beside the main configuration.
 
 ![Clipboard history with a selected pin and its copy and preview controls](assets/launcher-clipboard-history.png)
 
-The history view was captured in nested Labwc and the
+The history view was captured in virtual KWin 6.3.6 and the
 [full text preview](assets/launcher-clipboard-preview.png) in virtual KWin
 5.27.11, both at 1× with tiny-skia and synthetic clipboard text.
 
@@ -511,7 +511,7 @@ action buttons without their keycaps. The keyboard bindings still work.
 
 ![Searchable actions showing the selected file's parent folder](assets/launcher-actions.png)
 
-Captured at 1× in isolated Labwc with tiny-skia.
+Captured at 1× in isolated virtual KWin 6.3.6 with tiny-skia.
 
 Typing can follow Ctrl+K, Escape or a context click immediately. The launcher
 applies the command and focuses the current field before delivering later input
@@ -524,7 +524,14 @@ This applies to input received by the launcher. Before the compositor gives it
 keyboard focus, keystrokes still belong to the previously focused application.
 
 Click a result once to select it. Double-click, press Enter or click the
-selected result's primary action in the footer to run it.
+selected result's primary action in the footer to run it. On 640 px and wider
+windows, clickable secondary (**Show in folder**, **Use result**) and
+**Browse here** footer controls act on the displayed result as well; at 640 px
+folder-browser width, **Browse here** takes priority over the secondary action
+so the item count stays readable. With no selection, clicking the **Esc**
+control in the footer takes that Escape step. In **File details**, the footer
+**Esc** control is available on wider layouts; on narrow layouts, use the
+header **Back** control or the Esc key.
 Hover highlights the pointed row without moving the keyboard selection.
 Highlights are inset from the row edges; the surrounding padding stays clickable.
 Right-click a result to select it and open its actions, or click **Actions**
@@ -587,7 +594,7 @@ text on translucent surfaces to preserve contrast over bright backgrounds.
 
   ![Built-in commands with keyboard access](assets/launcher-commands.png)
 
-  Captured at 1× in isolated Labwc with tiny-skia.
+  Captured at 1× in isolated virtual KWin 6.3.6 with tiny-skia.
 
 - **Files and folders** come from the daemon's `io.github.ferroseek.Search1.Search`
   method; opening and revealing go through its `Open` method, which only
@@ -765,7 +772,8 @@ application; after a failure, Esc returns to search and refreshes its file resul
 
 ![Indexed folder contents](assets/launcher-folder-browser.png)
 
-Folder captures use a synthetic indexed tree at 1× in isolated Labwc with tiny-skia.
+Folder captures use a synthetic indexed tree at 1× in isolated virtual KWin 6.3.6
+(browser) and Labwc (search) with tiny-skia.
 
 Select a folder result and press **Alt+Right**, or choose **Browse folder** from
 Actions (Ctrl+K; `within` and `search in folder` remain aliases). The header shows
@@ -817,7 +825,7 @@ launcher and daemon versions are required.
 
 ![Application chooser](assets/launcher-open-with.png)
 
-Native Compact capture in a private virtual KWin 5.27.11 session at 1× with
+Native Compact capture in a private virtual KWin 6.3.6 session at 1× with
 synthetic document handlers and the tiny-skia renderer. Names, desktop IDs and
 the target path shorten to their actual available width, leaving room for
 numbered shortcuts. Hover over the filename or parent path to see the full location.
@@ -890,7 +898,7 @@ daemon versions are required.
 
 ![Text preview](assets/launcher-text-preview.png)
 
-Captured at 1× in isolated Labwc with tiny-skia and a synthetic file.
+Captured at 1× in isolated virtual KWin 6.3.6 with tiny-skia and a synthetic file.
 
 Choose **Preview text** from a regular file's Actions menu (Ctrl+K; search for
 `preview` or `contents`), or press Enter in **File details**. It enables a sidebar
