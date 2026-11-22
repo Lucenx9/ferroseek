@@ -51,6 +51,12 @@ impl Unit {
     }
 
     fn parse(text: &str) -> Option<&'static Self> {
+        // Accept an uppercase kilo prefix while preserving the bit/byte distinction.
+        let text = match text {
+            "Kb" => "kb",
+            "KB" => "kB",
+            other => other,
+        };
         UNITS.iter().find(|unit| unit.label == text || unit.names.iter().any(|name| text.eq_ignore_ascii_case(name)))
     }
 }
@@ -102,7 +108,7 @@ const UNITS: &[Unit] = &[
     Unit::linear("b", &["bit", "bits"], Data, 1.0),
     Unit::linear("B", &["byte", "bytes"], Data, 8.0),
     Unit::linear("kb", &["kbit", "kilobit", "kilobits"], Data, 1000.0),
-    Unit::linear("kB", &["KB", "kilobyte", "kilobytes"], Data, 8000.0),
+    Unit::linear("kB", &["kilobyte", "kilobytes"], Data, 8000.0),
     Unit::linear("Mb", &["Mbit", "megabit", "megabits"], Data, 1_000_000.0),
     Unit::linear("MB", &["megabyte", "megabytes"], Data, 8_000_000.0),
     Unit::linear("Gb", &["Gbit", "gigabit", "gigabits"], Data, 1_000_000_000.0),
