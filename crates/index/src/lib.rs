@@ -230,8 +230,19 @@ impl Reader {
 
     /// Ranked filename/path search; see [`Query`] for the syntax.
     pub fn search(&self, query: &Query, opts: &SearchOptions) -> Result<Vec<Hit>> {
+        self.search_with_alternate_scope(query, opts, None)
+    }
+
+    /// Search an optional second directory with the same filters. Rank and
+    /// limit the combined results from both scopes within one read snapshot.
+    pub fn search_with_alternate_scope(
+        &self,
+        query: &Query,
+        opts: &SearchOptions,
+        alternate: Option<PathBuf>,
+    ) -> Result<Vec<Hit>> {
         let tx = self.conn.unchecked_transaction()?;
-        let hits = search::run(&tx, query, opts)?;
+        let hits = search::run_with_alternate_scope(&tx, query, opts, alternate)?;
         tx.commit()?;
         Ok(hits)
     }

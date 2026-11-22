@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -128,6 +128,24 @@ fn kind_char(k: Kind) -> char {
     }
 }
 
+fn search_scope(reader: &Reader, path: &Path) -> (Option<PathBuf>, Option<PathBuf>) {
+    let lexical = normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
+    let Ok(canonical) = std::fs::canonicalize(path) else { return (Some(lexical), None) };
+    if lexical == canonical {
+        return (Some(lexical), None);
+    }
+    // A scope such as `link/..` can resolve to a different directory.
+    if std::fs::canonicalize(&lexical).ok().as_ref() != Some(&canonical) {
+        return (Some(canonical), None);
+    }
+    if reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir)) {
+        return (Some(lexical), None);
+    }
+    // Roots below this directory can use either spelling in the index.
+    let has_linked_root = reader.roots().is_ok_and(|roots| roots.iter().any(|root| root.starts_with(&lexical)));
+    (Some(canonical), has_linked_root.then_some(lexical))
+}
+
 #[derive(Serialize)]
 struct JsonHit<'a> {
     // Never turn a lossy display path into a path a client might open.
@@ -213,21 +231,7 @@ fn main() -> ExitCode {
                     ));
                 }
             };
-            // Roots are stored as configured, so a root below a linked ancestor
-            // only matches lexically. The lexical path must still be an indexed
-            // directory naming the same directory: indexed links and `link/..`
-            // resolve through the link's target.
-            let within = within.map(|w| {
-                let lexical = normalize(&std::path::absolute(&w).unwrap_or_else(|_| w.clone()));
-                let canonical = std::fs::canonicalize(&w).ok();
-                let indexed_dir =
-                    reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir));
-                if indexed_dir && std::fs::canonicalize(&lexical).ok() == canonical {
-                    lexical
-                } else {
-                    canonical.unwrap_or(lexical)
-                }
-            });
+            let (within, alternate) = within.as_deref().map(|path| search_scope(&reader, path)).unwrap_or_default();
             let opts = SearchOptions {
                 limit,
                 within,
@@ -241,7 +245,7 @@ fn main() -> ExitCode {
                 include_hidden: !no_hidden,
                 accept: None,
             };
-            let hits = match reader.search(&Query::parse(&query.join(" ")), &opts) {
+            let hits = match reader.search_with_alternate_scope(&Query::parse(&query.join(" ")), &opts, alternate) {
                 Ok(h) => h,
                 Err(e) => return die(e),
             };

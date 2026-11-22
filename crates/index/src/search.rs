@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Query parsing, candidate generation and ranking.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -273,10 +274,34 @@ fn short_name_filter(q: &Query) -> (String, &[String]) {
     (sql, remaining)
 }
 
-pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<Vec<Hit>> {
+fn hit_order(a: &Hit, b: &Hit) -> Ordering {
+    b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path))
+}
+
+pub(crate) fn run_with_alternate_scope(
+    conn: &Connection,
+    q: &Query,
+    opts: &SearchOptions,
+    alternate: Option<PathBuf>,
+) -> Result<Vec<Hit>> {
     if q.is_empty() || opts.limit == 0 {
         return Ok(Vec::new());
     }
+    let now_ns =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
+    let mut hits = run(conn, q, opts, now_ns)?;
+    if let Some(path) = alternate {
+        let scoped = SearchOptions { within: Some(path), ..opts.clone() };
+        hits.extend(run(conn, q, &scoped, now_ns)?);
+        hits.sort_by(hit_order);
+        let mut seen = HashSet::new();
+        hits.retain(|hit| seen.insert(hit.id));
+        hits.truncate(opts.limit);
+    }
+    Ok(hits)
+}
+
+fn run(conn: &Connection, q: &Query, opts: &SearchOptions, now_ns: i64) -> Result<Vec<Hit>> {
     let scope = directory_scope(conn, q, opts)?;
     let restriction = scope.map(|s| format!(" AND e.parent IN ({s})")).unwrap_or_default();
     let (name_filter, remaining_tokens) = short_name_filter(q);
@@ -387,8 +412,6 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
     let mut best: std::collections::BinaryHeap<std::cmp::Reverse<TotalF32>> = std::collections::BinaryHeap::new();
     // Reuse the directory paths resolved while collecting candidates.
     let mut paths = candidates.paths;
-    let now_ns =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0);
     let mut hits = Vec::with_capacity(ranked.len().min(opts.limit.saturating_mul(3)));
     for (id, c) in ranked {
         if bounded_ranking && best.len() >= opts.limit && best.peek().is_some_and(|k| c.score + MAX_BONUS < k.0.0) {
@@ -430,7 +453,7 @@ pub(crate) fn run(conn: &Connection, q: &Query, opts: &SearchOptions) -> Result<
         }
         hits.push(Hit { id, path, kind: c.kind, size: c.size, mtime_ns: c.mtime, score });
     }
-    hits.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.path.cmp(&b.path)));
+    hits.sort_by(hit_order);
     hits.truncate(opts.limit);
     Ok(hits)
 }

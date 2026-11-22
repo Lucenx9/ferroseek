@@ -550,6 +550,23 @@ fn candidates_from_an_earlier_stage_do_not_use_a_later_budget() {
 }
 
 #[test]
+fn overlapping_search_scopes_limit_unique_ranked_results() {
+    let (_t, db) = setup();
+    let (mut writer, _) = Writer::open(&db).unwrap();
+    let mut tx = writer.transaction().unwrap();
+    let root = tx.ensure_root(Path::new("/r"), dir(1)).unwrap();
+    let archive = tx.upsert(root, b"archive", dir(2)).unwrap().0;
+    tx.upsert(archive, b"report.txt", file(3)).unwrap();
+    tx.upsert(root, b"report-draft.txt", file(4)).unwrap();
+    tx.commit().unwrap();
+
+    let reader = Reader::open(&db).unwrap();
+    let opts = SearchOptions { limit: 2, within: Some("/r".into()), ..Default::default() };
+    let hits = reader.search_with_alternate_scope(&Query::parse("report"), &opts, Some("/r/archive".into())).unwrap();
+    assert_eq!(names(&hits), ["report.txt", "report-draft.txt"]);
+}
+
+#[test]
 fn path_only_queries_find_descendants_without_requiring_parent_name_in_filename() {
     let (_t, db) = setup();
     let (mut w, _) = Writer::open(&db).unwrap();
