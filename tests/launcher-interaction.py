@@ -406,6 +406,66 @@ def multimonitor(binary, out, helper):
                     p.wait()
 
 
+def owner(name="io.github.ferroseek.Launcher"):
+    result = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
+                             "--object-path", "/org/freedesktop/DBus", "--method",
+                             "org.freedesktop.DBus.NameHasOwner", name],
+                            check=True, capture_output=True, text=True, timeout=5)
+    return "true" in result.stdout
+
+
+def has_event(log, event, **fields):
+    return any(record.get("event") == event and all(record.get(k) == v for k, v in fields.items())
+               for record in records(log))
+
+
+def open_and_type(start_launcher, mode, send_report):
+    process, log = start_launcher(mode, f"input-burst-{mode}.jsonl")
+    wait_for(lambda: has_event(log, "keyboard_focus_enter"),
+             "burst launcher owns compositor focus", process=process)
+    send_report()
+    wait_for(lambda: has_event(log, "query_frame", generation=6, files=15),
+             "opening input burst reached search", process=process)
+    return process, log
+
+
+def optional_capture(capture, name):
+    try:
+        capture(name)
+    except (OSError, subprocess.SubprocessError, AssertionError) as error:
+        print(f"Screenshot unavailable: {error}", file=sys.stderr)
+
+
+def verify_opening_control(start_launcher):
+    # Check that the build reports focus and results for the fixture before
+    # interpreting a missing event as an immediate-input failure.
+    control, log = start_launcher("software", "opening-control.jsonl", "--query", "report")
+    wait_for(lambda: has_event(log, "keyboard_focus_enter") and has_event(log, "query_frame", files=15)
+             and observed_renderer(log) == "tiny_skia", "launcher control query", process=control)
+    control.terminate()
+    control.wait(timeout=5)
+    wait_for(lambda: not owner(), "control launcher name released")
+
+
+def fixture_running(processes):
+    return (all(p.poll() is None for p in processes)
+            and all(owner(name) for name in ("org.kde.KWin", "io.github.ferroseek.FerroSeek")))
+
+
+def opening_proof(start_launcher, send_report, fixture, capture):
+    verify_opening_control(start_launcher)
+    try:
+        open_and_type(start_launcher, "software", send_report)
+    except AssertionError as error:
+        if not fixture_running(fixture):
+            raise RuntimeError("opening-input fixture stopped") from error
+        print(f"ASSERTION FAILED: {error}", file=sys.stderr)
+        raise SystemExit(65) from error
+    # QPainter KWin can deliver real input without a screenshot effect.
+    optional_capture(capture, "opening-input.png")
+    print("OK: opening-input")
+
+
 def main():
     if (os.environ.get("FERROSEEK_SMOKE_ISOLATED") != "1"
             or not os.environ.get("WAYLAND_DISPLAY", "").startswith("wayland-ferroseek-smoke-")):
@@ -434,7 +494,8 @@ def main():
         "gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path", "/KWin",
         "--method", "org.kde.KWin.supportInformation"], text=True, timeout=5))[0]
     (out / "kwin-support.txt").write_text(support)
-    if not re.search(r"(?m)^Compositing Type: OpenGL\s*$", support):
+    opening_only = os.environ.get("FERROSEEK_SMOKE_SCENARIO") == "opening-input"
+    if not opening_only and not re.search(r"(?m)^Compositing Type: OpenGL\s*$", support):
         print("INCONCLUSIVE: material checks require OpenGL compositing; see kwin-support.txt", file=sys.stderr)
         raise SystemExit(77)
     screen_count = re.findall(r"(?m)^Number of Screens: (\d+)\s*$", support)
@@ -492,12 +553,16 @@ def main():
         assert struct.unpack(">II", png[16:24]) == (int(geometry[2] * observed_scale), int(geometry[3] * observed_scale)), \
             "screenshot must capture the configured output at native resolution"
 
-    def owner(name="io.github.ferroseek.Launcher"):
-        result = subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
-                                 "--object-path", "/org/freedesktop/DBus", "--method",
-                                 "org.freedesktop.DBus.NameHasOwner", name],
-                                check=True, capture_output=True, text=True, timeout=5)
-        return "true" in result.stdout
+    def start_launcher(mode, name, *args):
+        log = out / name
+        with log.open("w") as stream:
+            process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments, *args],
+                                       stdout=stream, stderr=stream, env=launcher_environment(mode))
+        processes.append(process)
+        return process, log
+
+    def send_report():
+        burst(*text_codes("report"))
 
     probe_process = subprocess.Popen([sys.executable, __file__, "--probe", str(probe_log)])
     processes.append(probe_process)
@@ -523,6 +588,9 @@ def main():
         chord(29, character_keys["a"])  # Logical Ctrl+A in the active layout
         tap(14)
         wait_for(lambda: {"text": ""} in records(probe_log), "probe cleared")
+
+        if opening_only:
+            return opening_proof(start_launcher, send_report, (probe_process, input_device), capture)
 
         if layout_only:
             import tomllib
@@ -844,16 +912,7 @@ def main():
         # widget-focus wait between a shortcut/click and the following text.
         input_cases = []
         for mode in mode_names:
-            log = out / f"input-burst-{mode}.jsonl"
-            with log.open("w") as stream:
-                process = subprocess.Popen([str(binary), "--private", *MODES[mode].arguments],
-                                           stdout=stream, stderr=stream, env=launcher_environment(mode))
-            processes.append(process)
-            wait_for(lambda: any(r.get("event") == "keyboard_focus_enter" for r in records(log)),
-                     "burst launcher owns compositor focus", process=process)
-            burst(*text_codes("report"))
-            wait_for(lambda: any(r.get("event") == "query_frame" and r["generation"] == 6 and r["files"] == 15
-                                 for r in records(log)), "opening input burst reached search", process=process)
+            process, log = open_and_type(start_launcher, mode, send_report)
             burst(*control_codes("k"), *text_codes("pin"))
             wait_for(lambda: len([r for r in records(log) if r.get("event") == "action_input"]) == 3,
                      "immediate action filter input", process=process)
@@ -1216,10 +1275,7 @@ def main():
         print(f"OK: {len(samples)} opens, typing, action-filter focus, Escape/toggle/click outside, background focus restoration")
     finally:
         if sys.exc_info()[0] is not None:
-            try:
-                capture("interaction-failure.png")
-            except (OSError, subprocess.SubprocessError):
-                pass
+            optional_capture(capture, "interaction-failure.png")
         for pid in {r["pid"] for r in records(activation_log) if r.get("event") == "started"}:
             try:
                 command = Path(f"/proc/{pid}/cmdline").read_bytes()

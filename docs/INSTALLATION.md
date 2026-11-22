@@ -169,6 +169,26 @@ configuration edits share the file transaction, but clients concurrently
 rewriting their configuration are not synchronized by the installer lock;
 close their configuration editors during registration.
 
+### Check a launcher against a running older daemon
+
+A current launcher can search and open indexed files against the daemon at
+`38b05d4`, the mainline revision before `ListDirectory`. Browsing an indexed
+folder reports “Folder navigation requires an updated daemon.” After the daemon
+restarts with the current executable, refreshing the same folder can list its
+entries.
+
+The following test builds that Git revision from its lockfile. It uses the
+current launcher's backend, two daemon processes, one private bus connection
+and one temporary index. A stub opener records the path it receives. The test
+covers the D-Bus boundary and leaves graphical interaction and installer file
+replacement to their respective smoke tests.
+
+Run from a Git checkout with the fixture commit in its history.
+
+```sh
+scripts/check upgrade
+```
+
 ## Uninstall
 
 ```sh

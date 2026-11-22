@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Compare immediate typing on two launcher builds in disposable KWin sessions."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SCENARIO = "opening-input"
+PROFILE = "us-1x"
+MODE = "software"
+
+
+def checksums(directory, names):
+    hashes = {}
+    for name in names:
+        with (directory / name).open("rb") as stream:
+            hashes[name] = hashlib.file_digest(stream, "sha256").hexdigest()
+    return hashes
+
+
+def run_build(label, build, output):
+    revision, directory = build
+    directory = Path(directory).resolve()
+    artifacts = output / label
+    log = output / f"{label}.log"
+    # Replays must always enter the harness's private-bus branch, even if
+    # invoked from a desktop or a shell carrying an earlier test's overrides.
+    command = ["env", "-i", f"PATH={os.environ['PATH']}", "HOME=/nonexistent",
+               "PYTHONNOUSERSITE=1", "LANG=C.UTF-8",
+               "LIBGL_ALWAYS_SOFTWARE=1", "FERROSEEK_SMOKE_INTERACTION=1",
+               f"FERROSEEK_SMOKE_SCENARIO={SCENARIO}", f"FERROSEEK_SMOKE_PROFILE={PROFILE}",
+               f"FERROSEEK_SMOKE_MODE={MODE}", "tests/launcher-smoke.sh", str(directory), str(artifacts)]
+    result = dict(revision=revision, command=command, cwd=str(ROOT), binaries=str(directory),
+                  log=log.name, artifacts=[], status="inconclusive")
+    artifacts.mkdir()
+    binaries = ("ferroseek-launcher", "ferroseekd")
+    with log.open("w") as stream:
+        try:
+            result["commit"] = subprocess.check_output(
+                ["git", "rev-parse", "--verify", "--end-of-options", revision + "^{commit}"],
+                cwd=ROOT, text=True, stderr=stream).strip()
+            result["sha256"] = checksums(directory, binaries)
+            run = subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT)
+            result["exit_code"] = run.returncode
+            result["artifacts"] = sorted(str(p.relative_to(output)) for p in artifacts.iterdir())
+            if checksums(directory, binaries) != result["sha256"]:
+                raise ValueError("build changed during the run")
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            print(error, file=stream)
+            return result
+
+    lines = log.read_text(errors="replace").splitlines()
+    if run.returncode == 0 and f"OK: {SCENARIO}" in lines:
+        result["status"] = "passed"
+    elif run.returncode == 65 and any(line.startswith("ASSERTION FAILED: ") for line in lines):
+        result["status"] = "assertion_failed"
+    return result
+
+
+def compare(base, head):
+    statuses = base["status"], head["status"]
+    if "inconclusive" in statuses:
+        return "inconclusive", 77
+    if statuses == ("passed", "passed"):
+        return "both passed, no regression proved", 0
+    if base["sha256"] == head["sha256"] and statuses[0] != statuses[1]:
+        return "inconclusive (identical binaries gave different results)", 77
+    if statuses == ("assertion_failed", "passed"):
+        return "base assertion failed, head passed", 0
+    if statuses == ("passed", "assertion_failed"):
+        return "regression (base passed, head assertion failed)", 1
+    return "assertion failed on both builds", 1
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for label in ("base", "head"):
+        parser.add_argument("--" + label, nargs=2, metavar=("REV", "BIN_DIR"), required=True)
+    parser.add_argument("--out", type=Path, required=True, help="new evidence directory")
+    args = parser.parse_args()
+    output = args.out.resolve()
+    try:
+        output.mkdir(parents=True)
+    except OSError as error:
+        parser.error(str(error))
+    base = run_build("base", args.base, output)
+    head = run_build("head", args.head, output)
+    verdict, code = compare(base, head)
+    harness = checksums(ROOT, ["tests/launcher-smoke.sh", "tests/launcher-interaction.py", "tests/launcher-input.c"])
+    report = dict(scenario=SCENARIO, profile=PROFILE, mode=MODE, harness_sha256=harness,
+                  base=base, head=head, verdict=verdict)
+    path = output / "comparison.json"
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"{verdict} ({path})")
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

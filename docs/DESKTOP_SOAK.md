@@ -1,9 +1,10 @@
 # Desktop reliability trial
 
-Use a normal per-user installation with D-Bus activation (no `--enable` is
-needed): KRunner starts FerroSeek on first use, then it keeps watching until
-the session ends. Baloo and KDE preferences need not be changed. Start with
-explicit document/download/desktop/picture roots, not a whole-machine scan.
+Use a normal per-user installation with D-Bus activation (`--enable` is optional).
+Open the FerroSeek launcher and configure the folders to index. File search activates the daemon,
+which keeps watching those folders for the rest of the session. Start with
+explicit document, download, desktop or picture folders. Leave Baloo and KDE
+preferences unchanged.
 
 ## Independent comparison
 
@@ -45,13 +46,32 @@ FerroSeek installed if it is useful; uninstall normally without `--purge` if not
 ## Acceptance evidence
 
 Collect at least three days of ordinary desktop work, including saves, renames,
-moves, deletions, suspension/resume, logout/login and KRunner use. Record actual
-elapsed coverage, check counts, stable discrepancies and inconclusive scans.
+moves, deletions, suspension/resume, logout/login and launcher file searches.
+Record actual elapsed coverage, check counts, stable discrepancies and inconclusive scans.
 Keep results as local counts; never publish filesystem names or screenshots.
 Persistent discrepancies need investigation, not an unconditional rebuild.
 A single successful initial comparison does not establish multi-day reliability.
 
 ## Recovery regressions
+
+Run the seeded restart check with the release CLI and daemon.
+
+```sh
+python3 tests/index-recovery.py target/release
+```
+
+The test builds a synthetic tree on a private D-Bus session, verifies the initial
+index, then creates, moves, renames and deletes files. It kills the daemon with
+SIGKILL, makes further changes while it is down and requires the oracle to
+detect drift. It restarts the daemon with the same index, waits for that process
+to report idle and runs the oracle again. The check passes only on a stable match
+after automatic recovery. The script prints the seed. Use `--seed NUMBER` to
+repeat the filesystem operations. The kernel determines which live events have
+reached the index when the daemon stops. This workload exercises directory
+listing changes. An in-place edit while the daemon is stopped can leave cached
+file size and modification time stale because the parent directory keeps its
+mtime. A full reconciliation refreshes those fields. The engine test
+`offline_changes_quick_vs_full_reconcile` covers that distinction.
 
 Deterministic tests inject EIO, ESTALE and EACCES at stat boundaries and EIO
 inside directory iteration, exercising the real reconciliation code with real

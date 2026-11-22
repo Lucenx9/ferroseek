@@ -90,22 +90,17 @@ to confirm the result. Before finishing code changes, run
 `pre_commit_code_health_safeguard` and resolve any reported degradation.
 Report unavailable checks and distinguish staged-file coverage from unstaged work.
 
-```sh
-cargo fmt --all --check
-cargo test -p ferroseek-launcher --locked  # replace the package for other modules
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cargo +1.89.0 check --workspace --all-targets --locked
-cargo build --release --workspace --locked
-tests/dbus-smoke.sh target/release/ferroseekd
-python3 tests/mcp-smoke.py target/release/ferroseek-mcp target/release/ferroseek
-tests/launcher-smoke.sh target/release target/launcher-smoke
-```
+Run `scripts/check quick PACKAGE` for a focused Rust change and
+`scripts/check workspace` for workspace integration. Use `scripts/check msrv`
+for minimum Rust compatibility and `scripts/check packaging` for installer
+or archive changes. The graphical check is
+`scripts/check launcher us-1x OUTPUT` with a new or empty output directory.
+See [launcher tests](docs/LAUNCHER.md#tests) for profiles and prerequisites.
 
-Rust minimum is declared in `Cargo.toml`; CI toolchains and checks are in
-`.github/workflows/ci.yml`. CI runs Clippy on `stable`; use that toolchain
-locally too. If the default differs, run `cargo +stable clippy` with the flags
-above instead of pinning a historical version.
+For PRs, record the command, outcome and any unverified behavior. Explain
+changes to test exclusions, suppressions or acceptance criteria in the PR.
+For a graphical change, link the relevant CI artifact and identify the tested
+revision and profile. Review the recorded evidence against the design contract.
 
 ## Safety and shared invariants
 

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -Eeuo pipefail
+trap 'printf "Check failed at %s:%s: %s\n" "$0" "$LINENO" "$BASH_COMMAND" >&2' ERR
+invocation_dir=$PWD
+cd "$(dirname "$0")/.."
+
+usage() {
+    echo 'Usage: scripts/check {quick PACKAGE|workspace|packaging|upgrade|msrv|launcher PROFILE OUTPUT|launcher-needed BASE HEAD}' >&2
+}
+
+# The installer and smoke tests consume binaries from this checkout.
+release_build() {
+    cargo +stable build --release --locked --target-dir target "$@"
+}
+
+packaging() {
+    python3 tests/install-smoke.py
+    python3 tests/package-smoke.py
+}
+
+# Test the current launcher backend against the last daemon before ListDirectory.
+upgrade() (
+    fixture=$(mktemp -d)
+    trap 'rm -rf -- "$fixture"' EXIT
+    git archive 38b05d404f2c9fa6c4665592ac1da02d694aa02c | tar -x -C "$fixture"
+    cargo +stable build --locked --manifest-path "$fixture/Cargo.toml" --target-dir target/compatibility -p ferroseek-daemon
+    cargo +stable build --locked --target-dir target -p ferroseek-daemon
+    FERROSEEK_OLD_DAEMON="$PWD/target/compatibility/debug/ferroseekd" \
+        FERROSEEK_CURRENT_DAEMON="$PWD/target/debug/ferroseekd" \
+        cargo +stable test --locked -p ferroseek-launcher --bin ferroseek-launcher \
+        backend::tests::upgrade::launcher_recovers_after_daemon_upgrade -- --ignored --exact --color never | tee "$fixture/results"
+    grep -Fq 'test result: ok. 1 passed;' "$fixture/results"
+)
+
+workspace() {
+    cargo +stable fmt --all --check
+    local deps
+    deps=$(cargo +stable tree --locked -p ferroseek-launcher --edges normal,build --prefix none)
+    if grep -Eq '^ferroseek-(engine|index) ' <<< "$deps"; then
+        echo "Launcher production dependencies must access files through the daemon." >&2
+        return 1
+    fi
+    cargo +stable clippy --workspace --all-targets --locked -- -D warnings
+    cargo +stable test --workspace --locked
+    release_build --workspace
+    packaging
+    python3 tests/benchmark-smoke.py
+    python3 tests/verify-index-smoke.py
+    python3 tests/index-recovery.py target/release
+    python3 tests/mcp-smoke.py target/release/ferroseek-mcp target/release/ferroseek
+    python3 tests/mcp-discovery-smoke.py
+    tests/dbus-smoke.sh target/release/ferroseekd
+    (
+        bench_dir=$(mktemp -d)
+        trap 'rm -rf -- "$bench_dir"' EXIT
+        target/release/ferroseek-bench --files 10000 --work "$bench_dir"
+    )
+}
+
+launcher() {
+    local profile=$1 output=$2
+    [[ "$output" == /* ]] || output=$invocation_dir/$output
+    release_build -p ferroseek-launcher -p ferroseek-daemon
+    unset FERROSEEK_SMOKE_ISOLATED FERROSEEK_SMOKE_SCENARIO
+    export FERROSEEK_SMOKE_INTERACTION=1 FERROSEEK_SMOKE_MODE=all
+    export FERROSEEK_SMOKE_PROFILE="$profile" LIBGL_ALWAYS_SOFTWARE=1 QT_LOGGING_RULES='*.debug=false'
+    echo "Launcher artifacts: $output"
+    command -v xvfb-run >/dev/null || { echo "INCONCLUSIVE: xvfb-run is missing" >&2; return 77; }
+    xvfb-run -a tests/launcher-smoke.sh target/release "$output"
+    case "$profile" in
+        us-1x|fr-1x|us-1.5x)
+            python3 scripts/verify-launcher-report.py "$output" --binary target/release/ferroseek-launcher ;;
+        *) return 0 ;;
+    esac
+    if [[ "$profile" == us-* ]]; then
+        FERROSEEK_SMOKE_PROFILE="us-layout-${profile#us-}" xvfb-run -a tests/launcher-smoke.sh target/release "$output/layout"
+    fi
+    if [[ "$profile" == us-1x ]]; then
+        FERROSEEK_SMOKE_PROFILE=us-short-1x xvfb-run -a tests/launcher-smoke.sh target/release "$output/short"
+    fi
+    FERROSEEK_SMOKE_INTERACTION=0 xvfb-run -a tests/launcher-smoke.sh target/release "$output/screenshots"
+    if [[ ! -s "$output/screenshots/query-1.png" ]]; then
+        echo "INCONCLUSIVE: screenshot smoke produced no capture" >&2
+        return 77
+    fi
+}
+
+launcher_needed() {
+    # Include both sides of a rename when a launcher input moves out of scope.
+    local status=0
+    git diff --quiet --no-ext-diff --no-renames "$1" "$2" -- \
+        crates ':(exclude)crates/cli' ':(exclude)crates/bench' ':(exclude)crates/mcp' \
+        Cargo.toml Cargo.lock .cargo data \
+        'tests/launcher-*' scripts/{check,prove-launcher,verify-launcher-report.py} \
+        .github/workflows/{ci,launcher-interaction}.yml || status=$?
+    case "$status" in
+        0) echo false ;;
+        1) echo true ;;
+        *) return "$status" ;;
+    esac
+}
+
+profile=${1:-}
+if [[ $# -gt 0 ]]; then shift; fi
+case "$profile:$#" in
+    quick:1) cargo +stable test --locked -p "$1" ;;
+    workspace:0) workspace ;;
+    upgrade:0) upgrade ;;
+    msrv:0) cargo +1.89.0 check --workspace --all-targets --locked ;;
+    packaging:0)
+        release_build --workspace
+        packaging ;;
+    launcher:2) launcher "$1" "$2" ;;
+    launcher-needed:2) launcher_needed "$1" "$2" ;;
+    --help:0|-h:0) usage ;;
+    *) usage; exit 2 ;;
+esac

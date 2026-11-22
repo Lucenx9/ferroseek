@@ -900,3 +900,28 @@ real desktop catalog. No discovery optimization is justified by this workload.
 Most observed time precedes the first redraw inside the graphical runtime,
 which needs finer profiling before any change. The dataset separates first
 processes, redraw and focus; neither callback measures physical presentation.
+
+## 19. Launcher queue under a stalled daemon request — 2026-11-22
+
+With a status call stalled on a private bus, the launcher queued **258 folder
+reads and one explicit Run**. The service received **three calls** from that
+queue, in order: the last listing before Run, one `Open` for the captured file
+URL with the `open-parent` action, and the last scoped search after Run. The
+test kept all reply receivers alive and checked that the 256 obsolete reads
+were superseded.
+
+Run took **3.005 s and 3.008 s** from enqueue to observed confirmation in two
+local runs. Each interval includes the remainder of the running status call's production
+three-second deadline. The test asserts delivery, target and order. It prints
+elapsed time for diagnosis and uses a separate watchdog for hangs.
+
+Measured with the production backend from `e7d89af`, Rust 1.94.0 test profile
+(debug info disabled), Debian 13, Intel N95 and D-Bus 1.16.2. The fixture waits
+for the private service to receive the status call before submitting the burst.
+The service records opens in memory. The interval excludes compositor input,
+rendering and application startup.
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 cargo test --locked -p ferroseek-launcher --bin ferroseek-launcher \
+  backend::tests::queued_searches_and_lists_coalesce_without_crossing_open_requests -- --exact --nocapture
+```
