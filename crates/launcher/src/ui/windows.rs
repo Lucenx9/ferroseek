@@ -8,9 +8,9 @@ use iced::{Element, Length, Task, Theme};
 use iced_layershell::reexport::KeyboardInteractivity;
 
 use super::{
-    ICON_SIZE, Launcher, Message, divider, field_style, footer_style, hint, label_for_width, numbered_slot,
-    page_header, palette, primary_hint, search_id, selectable_result_row, status_button_style, surface_style,
-    update_content,
+    ICON_SIZE, Launcher, Message, divider, field_style, footer_button, footer_style, hint, label_for_width,
+    numbered_slot, page_header, palette, primary_hint, search_id, selectable_result_row, status_button_style,
+    surface_style, update_content,
 };
 use crate::apps::App;
 use crate::icons::{Icon, Icons};
@@ -450,10 +450,7 @@ impl Panel {
     }
 
     fn footer(&self, action_key: String) -> Element<'_, Event> {
-        let back = button(hint("Esc", "Back"))
-            .on_press_maybe((!self.retains_focus()).then_some(Event::Back))
-            .padding([4, 6])
-            .style(status_button_style);
+        let back = footer_button(hint("Esc", "Back"), (!self.retains_focus()).then_some(Event::Back));
         let mut actions = row![back, space::horizontal()].align_y(iced::Center);
         if let Some(id) = self.selected().filter(|_| self.interactive()) {
             actions = actions.extend(self.footer_actions(id, action_key));
@@ -462,8 +459,7 @@ impl Panel {
     }
 
     fn footer_actions(&self, id: u64, action_key: String) -> Vec<Element<'_, Event>> {
-        let control =
-            |label, event| button(label).on_press_maybe(event).padding([4, 6]).style(status_button_style).into();
+        let control = |label, event| footer_button(label, event);
         match self.menu {
             Some(choice) => vec![control(primary_hint("Enter", "Apply"), self.menu_action(choice))],
             None => vec![

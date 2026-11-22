@@ -129,7 +129,7 @@ to duplicate in each screen:
 | Result slot | 48 high, including clickable padding |
 | Result highlight | 44 high; inset 2 vertically and 4 horizontally |
 | Result content gap / selection bar | 12 / 3 |
-| Corner radii | Shell 14, actions panel 10, results 9, fields 6, keycaps 4 |
+| Corner radii | Shell 14, actions panel 10, results 9, footer/action rows/fields 6, keycaps 4 |
 
 Prefer the existing 4/8/12/16 spacing rhythm for new groups; optical adjustments
 belong in the owning component. Align icons, text starts and shortcut columns
@@ -234,8 +234,10 @@ the result's description. Preserve the final path component when space is tight.
 Command hover uses the same neutral fill as result hover and preserves keyboard
 selection. The panel footer offers a clickable Run control with its Enter hint
 and a clickable control for the current Escape step. An empty filter result
-offers a next step and omits Run. The launcher footer offers a clickable primary
-action for the selected result and Close actions while the panel is open.
+offers a next step and omits Run. The launcher footer offers clickable primary,
+secondary, folder-browsing, and empty-selection Escape controls, and Close actions
+while the panel is open. At 640 px folder-browser width, prioritize Browse here over
+the secondary action so status text remains unclipped.
 Footer clicks operate on the target and action shown when clicked.
 
 Local command results use Run as their primary action. When confirmation is

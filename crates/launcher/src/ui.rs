@@ -17,7 +17,13 @@ mod windows;
 mod workflow_editor;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+static NEXT_PANEL_ID: AtomicU64 = AtomicU64::new(1);
+
+use iced::advanced::layout::{self as widget_layout, Layout};
+use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::{Clipboard, Shell, Widget, overlay, renderer};
 use iced::alignment::{Horizontal, Vertical};
 use iced::event::{self, Event};
 use iced::futures::channel::mpsc::UnboundedReceiver;
@@ -27,7 +33,9 @@ use iced::mouse::{self, ScrollDelta};
 use iced::widget::{
     self, Id, button, column, container, image, mouse_area, row, scrollable, space, stack, svg, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Font, Length, Subscription, Task, Theme, padding};
+use iced::{
+    Background, Border, Color, Element, Font, Length, Rectangle, Size, Subscription, Task, Theme, Vector, padding,
+};
 use iced_layershell::reexport::{Anchor, KeyboardInteractivity, Layer};
 use iced_layershell::settings::{LayerShellSettings, Settings, StartMode};
 use iced_layershell::to_layer_message;
@@ -115,22 +123,26 @@ enum SearchStatusPanel {
 }
 
 struct Panel {
+    id: u64,
     title: String,
     context: String,
     actions: Vec<Action>,
     desktop_labels: Vec<String>,
     query: String,
+    filter_revision: u64,
     cursor: Cursor,
 }
 
 impl Panel {
     fn new(item: &Item, favorite: bool) -> Self {
         Self {
+            id: NEXT_PANEL_ID.fetch_add(1, Ordering::Relaxed),
             title: item.title.clone(),
             context: item.subtitle.clone(),
             actions: model::actions_for(&item.target, favorite),
             desktop_labels: Vec::new(),
             query: String::new(),
+            filter_revision: 0,
             cursor: Cursor::new(VISIBLE_ROWS),
         }
     }
@@ -180,6 +192,9 @@ impl Panel {
     }
 
     fn filter(&mut self, query: String) {
+        if self.query != query {
+            self.filter_revision += 1;
+        }
         self.query = query;
         self.cursor.reset();
     }
@@ -336,15 +351,49 @@ pub enum Message {
     ResultsWheel(f32),
     Selected(Target),
     Clicked(Target),
-    ResultPrimary(Target),
+    ResultAction { target: Target, action: Action, query: String },
+    ToggleActionsButton { target: Target, open: bool, panel_id: Option<u64> },
+    EmptyBack { step: EmptyBack, generation: u64 },
     ContextMenu(Target),
-    PanelBack { target: Target, filtering: bool },
+    PanelBack { target: Target, filtering: bool, panel_id: u64, filter_revision: u64 },
+    PanelRun { target: Target, action: Action, panel_id: u64, filter_revision: u64 },
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
     InputClipboard(Option<Box<Message>>),
     FocusGained,
     FocusLost,
     Ui(UiEvent),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmptyBack {
+    HidePreview,
+    ClearSearch,
+    PreviousSearch,
+    Close,
+}
+
+impl EmptyBack {
+    fn label(self) -> &'static str {
+        match self {
+            Self::HidePreview => "Hide preview",
+            Self::ClearSearch => "Clear search",
+            Self::PreviousSearch => "Previous search",
+            Self::Close => "Close",
+        }
+    }
+}
+
+fn empty_back(s: &Launcher) -> EmptyBack {
+    if s.preview_visible() {
+        EmptyBack::HidePreview
+    } else if !s.query.is_empty() {
+        EmptyBack::ClearSearch
+    } else if s.search_folder.is_some() {
+        EmptyBack::PreviousSearch
+    } else {
+        EmptyBack::Close
+    }
 }
 
 fn search_id() -> Id {
@@ -1522,8 +1571,15 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
             s.panel = s.selected().map(|item| s.panel_for(item));
             crate::input::focus(actions_id())
         }
-        Message::ResultPrimary(_) | Message::PanelBack { .. } | Message::PanelClicked { .. } => {
-            update_action_click(s, message)
+        Message::ResultAction { .. }
+        | Message::ToggleActionsButton { .. }
+        | Message::PanelBack { .. }
+        | Message::PanelRun { .. }
+        | Message::PanelClicked { .. } => update_action_click(s, message),
+        Message::EmptyBack { step, generation }
+            if s.panel.is_none() && s.selected().is_none() && s.generation == generation && empty_back(s) == step =>
+        {
+            command(s, Command::Back)
         }
         Message::ApplicationOpened { id, result } => application_opened(s, id, result),
         Message::Opened(result) => finish_open(s, result, Some(Kind::File)),
@@ -1551,23 +1607,53 @@ fn update_content(s: &mut Launcher, message: Message) -> Task<Message> {
 
 fn update_action_click(s: &mut Launcher, message: Message) -> Task<Message> {
     let target = match &message {
-        Message::ResultPrimary(target) | Message::PanelBack { target, .. } | Message::PanelClicked { target, .. } => {
-            target
-        }
+        Message::ResultAction { target, .. }
+        | Message::ToggleActionsButton { target, .. }
+        | Message::PanelBack { target, .. }
+        | Message::PanelRun { target, .. }
+        | Message::PanelClicked { target, .. } => target,
         _ => return Task::none(),
     };
     // A filter or a late result can change rows after they were drawn.
     // Resolve the displayed identities instead of using the current row number.
-    if !s.selected().is_some_and(|item| item.target.same_identity(target)) {
+    let Some(selected) = s.selected() else {
+        return Task::none();
+    };
+    if !selected.target.same_identity(target) {
         return Task::none();
     }
-    let panel = s.panel.as_ref();
+    let actions = s.actions_for(&selected.target);
     match message {
-        Message::ResultPrimary(_) if panel.is_none() => command(s, Command::Activate),
-        Message::PanelBack { filtering, .. } if panel.is_some_and(|p| p.query.is_empty() != filtering) => {
+        Message::ResultAction { action, query, .. }
+            if s.panel.is_none() && query == s.query && actions.contains(&action) =>
+        {
+            s.perform(action)
+        }
+        Message::ToggleActionsButton { open: true, panel_id: None, .. } if s.panel.is_none() => {
+            command(s, Command::ToggleActions)
+        }
+        Message::ToggleActionsButton { open: false, panel_id: Some(panel_id), .. }
+            if s.panel.as_ref().is_some_and(|p| p.id == panel_id) =>
+        {
+            command(s, Command::ToggleActions)
+        }
+        Message::PanelBack { filtering, panel_id, filter_revision, .. }
+            if s.panel.as_ref().is_some_and(|p| {
+                p.id == panel_id && p.filter_revision == filter_revision && p.query.is_empty() != filtering
+            }) =>
+        {
             command(s, Command::Back)
         }
-        Message::PanelClicked { action, .. } if panel.is_some_and(|p| p.filtered_actions().contains(&action)) => {
+        Message::PanelRun { action, panel_id, filter_revision, .. }
+            if s.panel.as_ref().is_some_and(|p| {
+                p.id == panel_id && p.filter_revision == filter_revision && p.filtered_actions().contains(&action)
+            }) =>
+        {
+            s.perform(action)
+        }
+        Message::PanelClicked { action, .. }
+            if s.panel.as_ref().is_some_and(|p| p.filtered_actions().contains(&action)) =>
+        {
             s.perform(action)
         }
         _ => Task::none(),
@@ -1724,9 +1810,12 @@ fn blocks_search_input(s: &Launcher, message: &Message) -> bool {
         | Message::FolderBack { .. }
         | Message::Selected(_)
         | Message::Clicked(_)
-        | Message::ResultPrimary(_)
+        | Message::ResultAction { .. }
+        | Message::ToggleActionsButton { .. }
+        | Message::EmptyBack { .. }
         | Message::ContextMenu(_)
         | Message::PanelBack { .. }
+        | Message::PanelRun { .. }
         | Message::PanelClicked { .. } => s.search_suspended(),
         Message::ShowSearchStatus => file_panel || s.folder_settings.is_some(),
         Message::ShowFolders | Message::ResultsWheel(_) => file_panel,
@@ -2135,6 +2224,7 @@ pub(crate) fn field_style(theme: &Theme, status: text_input::Status) -> text_inp
         border: Border {
             color: match status {
                 text_input::Status::Focused { .. } => palette::ACCENT.resolve(theme),
+                text_input::Status::Hovered => Color { a: 0.32, ..palette::TEXT.resolve(theme) },
                 _ => palette::BORDER.resolve(theme),
             },
             width: 1.0,
@@ -2178,6 +2268,21 @@ pub(crate) fn tab_style(
             .map(|role| Background::Color(role.resolve(theme))),
         text_color: if selected { palette::TEXT.resolve(theme) } else { palette::DIM.resolve(theme) },
         border: Border { radius: 5.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+pub(crate) fn list_row_button_style(theme: &Theme, status: button::Status, selected: bool) -> button::Style {
+    button::Style {
+        background: if selected {
+            Some(Background::Color(palette::SELECTED.resolve(theme)))
+        } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            Some(Background::Color(palette::FAINT.resolve(theme)))
+        } else {
+            None
+        },
+        text_color: palette::TEXT.resolve(theme),
+        border: Border { radius: 9.0.into(), ..Default::default() },
         ..Default::default()
     }
 }
@@ -2280,7 +2385,7 @@ fn search_status_view(status: &SearchStatusPanel) -> Element<'_, Message> {
             text("Refresh to check for changes").size(12).width(Length::Fill).style(move |theme: &iced::Theme| {
                 iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
             }),
-            button(hint("Esc", "Back")).on_press(Message::CloseSearchStatus).padding([4, 8]).style(status_button_style),
+            footer_button(hint("Esc", "Back"), Some(Message::CloseSearchStatus)),
         ]
         .align_y(Vertical::Center),
     )
@@ -2526,34 +2631,55 @@ fn footer_status(message: String, color: palette::Role) -> Element<'static, Mess
 
 fn search_hints(s: &Launcher, compact: bool) -> Element<'_, Message> {
     let shortcut = s.shortcuts.bindings.get(Shortcut::Actions).to_string();
-    if s.panel.is_some() {
+    if let Some(panel) = &s.panel
+        && let Some(item) = s.selected()
+    {
         let close = search_hint(shortcut, "Close actions", compact, true);
-        return footer_button(close, Message::Cmd(Command::ToggleActions));
+        let panel_id = Some(panel.id);
+        return keyed_footer_button(
+            FooterKey::Toggle { target: item.target.clone(), open: false, panel_id },
+            close,
+            Message::ToggleActionsButton { target: item.target.clone(), open: false, panel_id },
+        );
     }
     let Some(item) = s.selected() else {
-        // Same inset as the Actions button, so the last hint keeps the right edge.
-        let label = match (s.preview_visible(), s.query.is_empty(), s.search_folder.is_some()) {
-            (true, _, _) => "Hide preview",
-            (_, false, _) => "Clear search",
-            (_, _, true) => "Previous search",
-            _ => "Close",
-        };
-        return container(hint("Esc", label)).padding([3, 6]).into();
+        let step = empty_back(s);
+        let generation = s.generation;
+        return keyed_footer_button(
+            FooterKey::Empty { step, generation },
+            hint("Esc", step.label()),
+            Message::EmptyBack { step, generation },
+        );
     };
     let acts = s.actions_for(&item.target);
     let primary = search_hint("Enter", acts[0].label(), compact, true);
-    let mut hints =
-        row![footer_button(primary, Message::ResultPrimary(item.target.clone()))].spacing(8).align_y(Vertical::Center);
+    let result_button = |label, action| {
+        let query = s.query.clone();
+        keyed_footer_button(
+            FooterKey::Result { target: item.target.clone(), action, query: query.clone() },
+            label,
+            Message::ResultAction { target: item.target.clone(), action, query },
+        )
+    };
+    let mut hints = row![result_button(primary, acts[0])].spacing(4).align_y(Vertical::Center);
     if s.window_width >= 640 {
-        if let Some(action) = model::secondary_action(&acts) {
-            hints = hints.push(hint("Ctrl+Enter", action.label()));
+        let browse = acts.contains(&Action::BrowseFolder);
+        let omit_secondary = browse && s.search_folder.is_some() && s.window_width < 720;
+        if !omit_secondary && let Some(action) = model::secondary_action(&acts) {
+            hints = hints.push(result_button(hint("Ctrl+Enter", action.label()), action));
         }
-        if acts.contains(&Action::BrowseFolder) {
-            hints = hints.push(hint("Alt+→", "Browse here"));
+        if browse {
+            hints = hints.push(result_button(hint("Alt+→", "Browse here"), Action::BrowseFolder));
         }
     }
     let actions = search_hint(shortcut, "Actions", compact, false);
-    hints.push(footer_button(actions, Message::Cmd(Command::ToggleActions))).into()
+    hints
+        .push(keyed_footer_button(
+            FooterKey::Toggle { target: item.target.clone(), open: true, panel_id: None },
+            actions,
+            Message::ToggleActionsButton { target: item.target.clone(), open: true, panel_id: None },
+        ))
+        .into()
 }
 
 fn search_hint<'a>(
@@ -2563,7 +2689,7 @@ fn search_hint<'a>(
     primary: bool,
 ) -> Element<'a, Message> {
     if compact {
-        text(label).size(12).into()
+        if primary { primary_label(label) } else { text(label).size(12).into() }
     } else if primary {
         primary_hint(shortcut, label)
     } else {
@@ -2571,14 +2697,177 @@ fn search_hint<'a>(
     }
 }
 
-fn footer_button(content: Element<'_, Message>, message: Message) -> Element<'_, Message> {
-    button(content).on_press(message).padding([3, 6]).height(24).style(status_button_style).into()
+#[derive(Clone)]
+enum FooterKey {
+    Result { target: Target, action: Action, query: String },
+    Empty { step: EmptyBack, generation: u64 },
+    Panel { target: Target, action: Option<Action>, filtering: bool, panel_id: u64, filter_revision: u64 },
+    Toggle { target: Target, open: bool, panel_id: Option<u64> },
+}
+
+impl PartialEq for FooterKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Result { target: a, action: act_a, query: q_a },
+                Self::Result { target: b, action: act_b, query: q_b },
+            ) => a.same_identity(b) && act_a == act_b && q_a == q_b,
+            (Self::Empty { step: s_a, generation: g_a }, Self::Empty { step: s_b, generation: g_b }) => {
+                s_a == s_b && g_a == g_b
+            }
+            (
+                Self::Panel { target: a, action: act_a, filtering: f_a, panel_id: id_a, filter_revision: r_a },
+                Self::Panel { target: b, action: act_b, filtering: f_b, panel_id: id_b, filter_revision: r_b },
+            ) => a.same_identity(b) && act_a == act_b && f_a == f_b && id_a == id_b && r_a == r_b,
+            (
+                Self::Toggle { target: a, open: o_a, panel_id: id_a },
+                Self::Toggle { target: b, open: o_b, panel_id: id_b },
+            ) => a.same_identity(b) && o_a == o_b && id_a == id_b,
+            _ => false,
+        }
+    }
+}
+
+/// Resets child widget state (such as an in-flight pointer press) when the
+/// captured key changes across redraws.
+struct Keyed<'a, K, M> {
+    key: K,
+    child: Element<'a, M>,
+}
+
+impl<'a, K: Clone + PartialEq + 'static, M: 'a> Widget<M, Theme, iced::Renderer> for Keyed<'a, K, M> {
+    fn tag(&self) -> tree::Tag {
+        tree::Tag::of::<K>()
+    }
+
+    fn state(&self) -> tree::State {
+        tree::State::new(self.key.clone())
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.child)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        let current = tree.state.downcast_mut::<K>();
+        if *current != self.key {
+            *current = self.key.clone();
+            tree.children = vec![Tree::new(&self.child)];
+        } else {
+            tree.children[0].diff(self.child.as_widget());
+        }
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.child.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.child.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &widget_layout::Limits,
+    ) -> widget_layout::Node {
+        self.child.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.child.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.child.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, M>,
+        viewport: &Rectangle,
+    ) {
+        self.child.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.child.as_widget().mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, M, Theme, iced::Renderer>> {
+        self.child.as_widget_mut().overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+    }
+}
+
+fn keyed_footer_button<'a>(
+    key: FooterKey,
+    content: impl Into<Element<'a, Message>>,
+    message: Message,
+) -> Element<'a, Message> {
+    Element::new(Keyed { key, child: footer_button(content, Some(message)) })
+}
+
+pub(crate) fn footer_button<'a, M: Clone + 'a>(
+    content: impl Into<Element<'a, M>>,
+    message: Option<M>,
+) -> Element<'a, M> {
+    button(container(content).height(Length::Fill).align_y(Vertical::Center))
+        .on_press_maybe(message)
+        .padding([0, 6])
+        .height(24)
+        .style(status_button_style)
+        .into()
 }
 
 pub(crate) fn footer_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(palette::FAINT.resolve(theme))),
-        border: Border { radius: 9.0.into(), ..Default::default() },
+        border: Border { radius: 6.0.into(), ..Default::default() },
         ..Default::default()
     }
 }
@@ -2595,17 +2884,16 @@ pub(crate) fn hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) 
     .into()
 }
 
+pub(crate) fn primary_label<'a, M: 'a>(label: &'a str) -> Element<'a, M> {
+    text(label)
+        .size(12)
+        .font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT })
+        .style(|theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) })
+        .into()
+}
+
 pub(crate) fn primary_hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) -> Element<'a, M> {
-    row![
-        keycap(key, true),
-        text(label)
-            .size(12)
-            .font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT })
-            .style(|theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) }),
-    ]
-    .spacing(6)
-    .align_y(Vertical::Center)
-    .into()
+    row![keycap(key, true), primary_label(label)].spacing(6).align_y(Vertical::Center).into()
 }
 
 fn keycap<'a, M: 'a>(key: impl text::IntoFragment<'a>, prominent: bool) -> Element<'a, M> {
@@ -2708,6 +2996,8 @@ fn action_footer(p: &Panel, target: &Target, actions: &[Action]) -> Element<'sta
     });
     let action = actions.get(p.cursor.selected).copied();
     let filtering = !p.query.is_empty();
+    let panel_id = p.id;
+    let filter_revision = p.filter_revision;
     let target = target.clone();
     widget::responsive(move |size| {
         let mut run = row![].spacing(12).align_y(Vertical::Center);
@@ -2720,14 +3010,22 @@ fn action_footer(p: &Panel, target: &Target, actions: &[Action]) -> Element<'sta
             );
         }
         if let Some(action) = action {
-            run = run.push(footer_button(
+            run = run.push(keyed_footer_button(
+                FooterKey::Panel {
+                    target: target.clone(),
+                    action: Some(action),
+                    filtering: false,
+                    panel_id,
+                    filter_revision,
+                },
                 primary_hint("Enter", "Run"),
-                Message::PanelClicked { target: target.clone(), action },
+                Message::PanelRun { target: target.clone(), action, panel_id, filter_revision },
             ));
         }
-        let back = footer_button(
+        let back = keyed_footer_button(
+            FooterKey::Panel { target: target.clone(), action: None, filtering, panel_id, filter_revision },
             hint("Esc", if filtering { "Clear filter" } else { "Close actions" }),
-            Message::PanelBack { target: target.clone(), filtering },
+            Message::PanelBack { target: target.clone(), filtering, panel_id, filter_revision },
         );
         row![back, space::horizontal(), run].align_y(Vertical::Center).padding([2, 6]).into()
     })
@@ -2774,12 +3072,12 @@ fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element
             .align_y(Vertical::Center)
             .style(move |theme| container::Style {
                 background: selected.then_some(Background::Color(palette::SELECTED.resolve(theme))),
-                border: Border { radius: 7.0.into(), ..Default::default() },
+                border: Border { radius: 6.0.into(), ..Default::default() },
                 ..Default::default()
             });
         let hover = container(space()).width(Length::Fill).height(Length::Fill).style(move |theme| container::Style {
             background: (!selected).then_some(Background::Color(palette::FAINT.resolve(theme))),
-            border: Border { radius: 7.0.into(), ..Default::default() },
+            border: Border { radius: 6.0.into(), ..Default::default() },
             ..Default::default()
         });
         list = list.push(
@@ -2794,7 +3092,7 @@ fn action_list<'a>(p: &'a Panel, target: &Target, actions: &[Action]) -> Element
     container(list).height(list_height).into()
 }
 
-fn text_width(content: &str, size: f32) -> f32 {
+pub(crate) fn text_width(content: &str, size: f32) -> f32 {
     measure_text(content, size, iced::Size::INFINITE, text::Wrapping::None).width
 }
 

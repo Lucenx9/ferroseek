@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use ferroseek_config::folders::Document;
 use ferroseek_config::shortcuts::{Action, Chord, Preferences};
 use iced::widget::operation::{self, RelativeOffset};
-use iced::widget::{button, column, container, keyed_column, row, scrollable, space, text};
-use iced::{Element, Length, Task, Theme};
+use iced::widget::{button, column, container, keyed_column, responsive, row, scrollable, space, text};
+use iced::{Element, Length, Task, Theme, padding};
 
 use super::{
-    Launcher, Message, divider, footer_style, hint, keycap, page_header, palette, primary_hint, status_button_style,
-    surface_style, tab_style, update_content,
+    Launcher, Message, divider, footer_button, footer_style, hint, keycap, list_row_button_style, page_header, palette,
+    primary_hint, selection_bar, status_button_style, surface_style, update_content,
 };
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{ClickTracker, Command};
@@ -220,24 +220,37 @@ impl Panel {
 
     fn row(&self, slot: usize, label: &'static str, detail: Option<String>) -> Element<'static, Event> {
         let selected = slot == self.selected;
-        let content = row![text(label).size(15), space::horizontal()].spacing(8).align_y(iced::Center);
-        let content = if let Some(label) = detail { content.push(keycap(label, selected)) } else { content };
+        let row_body = row![text(label).size(15), space::horizontal()].spacing(8).align_y(iced::Center);
+        let row_body = if let Some(label) = detail { row_body.push(keycap(label, selected)) } else { row_body };
+        let content =
+            row![selection_bar(selected, 18.0), row_body.padding(padding::left(9).right(10))].align_y(iced::Center);
         button(content)
             .width(Length::Fill)
-            .padding([6, 10])
+            .padding([6, 0])
             .on_press_maybe((self.mode == Mode::Editing && self.document.is_some()).then_some(Event::Select(slot)))
-            .style(move |theme, status| tab_style(theme, status, selected, Some(palette::SELECTED)))
+            .style(move |theme, status| list_row_button_style(theme, status, selected))
             .into()
     }
 
     fn view(&self) -> Element<'static, Event> {
-        let back = button(text("Back").size(12)).on_press(Event::Back).padding([6, 8]).style(status_button_style);
-        let reload = button(text("Reload").size(12))
-            .on_press_maybe((self.mode == Mode::Editing).then_some(Event::Reload))
-            .padding([6, 8])
-            .style(status_button_style);
+        let reload_event = (self.mode == Mode::Editing).then_some(Event::Reload);
         let header = page_header(
-            row![back, text("Shortcuts").size(20), space::horizontal(), reload].spacing(12).align_y(iced::Center),
+            responsive(move |size| {
+                let back =
+                    button(text("Back").size(12)).on_press(Event::Back).padding([6, 8]).style(status_button_style);
+                let reload_label: Element<'static, Event> =
+                    if size.width >= 360.0 { hint("Ctrl+R", "Reload") } else { text("Reload").size(12).into() };
+                let reload = button(reload_label)
+                    .on_press_maybe(reload_event.clone())
+                    .padding([6, 8])
+                    .style(status_button_style);
+                row![back, text("Shortcuts").size(20), space::horizontal(), reload]
+                    .spacing(12)
+                    .align_y(iced::Center)
+                    .height(Length::Fill)
+                    .into()
+            })
+            .height(Length::Fill),
         )
         .height(56);
         let choices = Action::ALL.into_iter().enumerate().fold(column![].spacing(4), |column, (slot, action)| {
@@ -250,7 +263,13 @@ impl Panel {
         });
         let notice = if self.notice.is_empty() { "Shortcuts apply while the launcher is open." } else { &self.notice };
         let color = if self.error { palette::ERROR } else { palette::DIM };
-        let list = scrollable(choices.push(self.row(RESET, "Restore defaults", None)).padding(8)).id(SCROLL);
+        let list = scrollable(
+            choices
+                .push(container(divider()).padding([4, 8]))
+                .push(self.row(RESET, "Restore defaults", None))
+                .padding(8),
+        )
+        .id(SCROLL);
         let status = container(
             text(notice.to_owned())
                 .size(13)
@@ -273,19 +292,15 @@ impl Panel {
             Mode::Discard => "Keep editing",
             _ => "Back",
         };
-        let back = button(hint("Esc", back_label)).on_press(Event::Back).padding([4, 6]).style(status_button_style);
+        let back = footer_button(hint("Esc", back_label), Some(Event::Back));
         let mut actions = row![back, space::horizontal()].spacing(4).align_y(iced::Center);
         if self.mode == Mode::Discard {
-            actions = actions
-                .push(button(primary_hint("Ctrl+D", "Discard")).on_press(Event::Discard).style(status_button_style));
+            actions = actions.push(footer_button(primary_hint("Ctrl+D", "Discard"), Some(Event::Discard)));
         } else if self.mode == Mode::Editing && self.draft != self.original {
-            actions =
-                actions.push(button(primary_hint("Ctrl+S", "Save")).on_press(Event::Save).style(status_button_style));
+            actions = actions.push(footer_button(primary_hint("Ctrl+S", "Save"), Some(Event::Save)));
         } else if self.mode == Mode::Editing && self.document.is_some() {
             let label = if self.selected == RESET { "Restore defaults" } else { "Record" };
-            actions = actions.push(
-                button(primary_hint("Enter", label)).on_press(Event::Select(self.selected)).style(status_button_style),
-            );
+            actions = actions.push(footer_button(primary_hint("Enter", label), Some(Event::Select(self.selected))));
         }
         container(actions).height(FOOTER_HEIGHT).padding([0.0, PAD]).align_y(iced::Center).style(footer_style).into()
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Current metadata for one captured file; never opens the index or file contents.
 use iced::alignment::Vertical;
-use iced::widget::{Id, button, column, container, responsive, row, scrollable, text};
+use iced::widget::{Id, column, container, responsive, row, scrollable, text};
 use iced::{Element, Length};
 
 use crate::backend::{FileDetails, FileHit};
@@ -163,14 +163,14 @@ impl Panel {
             .spacing(8)
             .align_y(Vertical::Center);
             let (copy, preview) = if size.width >= 560.0 {
-                controls = controls.push(ui::hint("Esc", "Back to search"));
+                controls = controls.push(ui::footer_button(ui::hint("Esc", "Back to search"), Some(Event::Back)));
                 (ui::hint("Ctrl+Shift+C", copy_label), ui::primary_hint("Enter", "Preview text"))
             } else {
-                (text(copy_label).size(12).into(), text("Preview text").size(12).into())
+                (text(copy_label).size(12).into(), ui::primary_label("Preview text"))
             };
             let controls = controls
-                .push(button(copy).on_press(Event::CopyLocation).padding([4, 6]).style(ui::status_button_style))
-                .push(button(preview).on_press(Event::Preview).padding([4, 6]).style(ui::status_button_style));
+                .push(ui::footer_button(copy, Some(Event::CopyLocation)))
+                .push(ui::footer_button(preview, Some(Event::Preview)));
             container(controls).center_y(Length::Fill).into()
         });
         container(content)

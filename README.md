@@ -10,7 +10,7 @@ Rust file search engine and keeps launch history locally.
 
 ![FerroSeek showing application and indexed file results](docs/assets/launcher.png)
 
-Captured at 1× in isolated Labwc with tiny-skia and synthetic files.
+Captured at 1× in isolated virtual KWin 6.3.6 with tiny-skia and synthetic files.
 
 **Status: experimental, 0.1 development.** Requires Wayland with
 `wlr-layer-shell` and session D-Bus. Graphical testing uses isolated KWin

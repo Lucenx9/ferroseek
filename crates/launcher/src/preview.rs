@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Explicit, read-only text preview of one captured indexed file.
 use iced::alignment::Vertical;
-use iced::widget::{Id, button, column, container, row, scrollable, space, text};
+use iced::widget::{Id, button, column, container, responsive, row, scrollable, space, text};
 use iced::{Element, Font, Length};
 
 use crate::backend::{FileHit, PreviewData, TextPreview};
@@ -96,7 +96,7 @@ impl Panel {
     }
 
     pub fn view(&self) -> Element<'_, Event> {
-        let mut refresh = button(ui::hint("Ctrl+R", "Refresh")).style(ui::status_button_style);
+        let mut refresh = button(ui::hint("Ctrl+R", "Refresh")).padding([3, 6]).style(ui::status_button_style);
         if !matches!(self.state, State::Loading) {
             refresh = refresh.on_press(Event::Refresh);
         }
@@ -106,7 +106,7 @@ impl Panel {
             }),
             space::horizontal(),
             refresh,
-            button(ui::hint("Esc", "Hide")).on_press(Event::Back).style(ui::status_button_style)
+            button(ui::hint("Esc", "Hide")).on_press(Event::Back).padding([3, 6]).style(ui::status_button_style)
         ]
         .spacing(6)
         .align_y(Vertical::Center);
@@ -122,20 +122,28 @@ impl Panel {
                 .map_or_else(|| model::home_relative(location), model::home_relative)
         };
         let copy = if url { "Copy file URL" } else { "Copy path" };
-        let identity = column![
-            text(ui::ellipsize_middle(&self.file.name, 65)).size(15),
-            iced::widget::tooltip(
-                text(ui::ellipsize_middle(&display, 75)).size(11).style(move |theme: &iced::Theme| {
-                    iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
-                }),
-                container(text(location).size(12).wrapping(text::Wrapping::WordOrGlyph))
-                    .padding(8)
-                    .max_width(560)
-                    .style(ui::surface_style),
-                iced::widget::tooltip::Position::Bottom
-            ),
-        ]
-        .spacing(4);
+        let name = self.file.name.clone();
+        let full_location = location.to_owned();
+        let identity = responsive(move |size| {
+            let title = ui::label_for_width(&name, size.width, 15.0, true);
+            let parent = ui::label_for_width(&display, size.width, 11.0, true);
+            column![
+                text(title).size(15).wrapping(text::Wrapping::None),
+                iced::widget::tooltip(
+                    text(parent).size(11).wrapping(text::Wrapping::None).style(move |theme: &iced::Theme| {
+                        iced::widget::text::Style { color: Some(palette::DIM.resolve(theme)) }
+                    }),
+                    container(text(full_location.clone()).size(12).wrapping(text::Wrapping::WordOrGlyph))
+                        .padding(8)
+                        .max_width(560)
+                        .style(ui::surface_style),
+                    iced::widget::tooltip::Position::Bottom,
+                ),
+            ]
+            .spacing(4)
+            .into()
+        })
+        .height(Length::Shrink);
         let mut body = column![].spacing(12).width(Length::Fill);
         let mut truncated = false;
         match &self.state {
@@ -190,7 +198,10 @@ impl Panel {
                     color: Some(palette::DIM.resolve(theme)),
                 }),
                 space::horizontal(),
-                button(ui::hint("Ctrl+Shift+C", copy)).on_press(Event::CopyLocation).style(ui::status_button_style)
+                button(ui::hint("Ctrl+Shift+C", copy))
+                    .on_press(Event::CopyLocation)
+                    .padding([3, 6])
+                    .style(ui::status_button_style)
             ]
             .align_y(Vertical::Center)
         ]
@@ -255,8 +266,9 @@ pub fn empty_view() -> Element<'static, Event> {
                     color: Some(palette::DIM.resolve(theme)),
                 }),
                 space::horizontal(),
-                button(ui::hint("Esc", "Hide")).on_press(Event::Back).style(ui::status_button_style)
-            ],
+                button(ui::hint("Esc", "Hide")).on_press(Event::Back).padding([3, 6]).style(ui::status_button_style)
+            ]
+            .align_y(Vertical::Center),
             space::vertical(),
             text("Select a file to preview").size(16),
             text("Applications and folders have no text preview.").size(12).style(move |theme: &iced::Theme| {

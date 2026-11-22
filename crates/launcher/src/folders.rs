@@ -465,13 +465,24 @@ impl Panel {
                     .align_y(Vertical::Center),
                 )
                 .padding([12, 0])
+                .width(Length::Fill)
                 .align_y(Vertical::Center)
                 .style(move |theme| container::Style {
                     background: selected.then_some(iced::Background::Color(palette::SELECTED.resolve(theme))),
                     border: iced::Border { radius: 9.0.into(), ..Default::default() },
                     ..Default::default()
                 });
-                body = body.push(mouse_area(content).on_press(Event::Select(path.clone())));
+                let hover =
+                    container(space()).width(Length::Fill).height(Length::Fill).style(move |theme| container::Style {
+                        background: (!selected).then_some(iced::Background::Color(palette::FAINT.resolve(theme))),
+                        border: iced::Border { radius: 9.0.into(), ..Default::default() },
+                        ..Default::default()
+                    });
+                body = body.push(
+                    mouse_area(widget::hover(content, hover))
+                        .on_press(Event::Select(path.clone()))
+                        .interaction(iced::mouse::Interaction::Pointer),
+                );
             }
             if self.roots.len() > 4 {
                 let window = self.cursor.window(self.roots.len());
@@ -523,16 +534,12 @@ impl Panel {
                 .spacing(12),
             );
         }
-        let mut save = button(ui::hint("Ctrl+S", "Save & apply")).padding([4, 8]).style(ui::status_button_style);
-        let mut back = button(ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" }))
-            .padding([4, 8])
-            .style(ui::status_button_style);
-        if self.phase == Phase::Ready && self.document.is_some() && self.pending.is_none() {
-            save = save.on_press(Event::Save);
-        }
-        if !self.busy() {
-            back = back.on_press(Event::Back);
-        }
+        let can_save = self.phase == Phase::Ready && self.document.is_some() && self.pending.is_none();
+        let save = ui::footer_button(ui::primary_hint("Ctrl+S", "Save & apply"), can_save.then_some(Event::Save));
+        let back = ui::footer_button(
+            ui::hint("Esc", if self.exit_on_cancel { "Close" } else { "Back" }),
+            (!self.busy()).then_some(Event::Back),
+        );
         let footer = container(row![back, space::horizontal(), save].align_y(Vertical::Center))
             .height(34)
             .padding([0, 8])

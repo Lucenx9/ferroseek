@@ -4,11 +4,11 @@
 use ferroseek_config::shortcuts::{Action as Shortcut, Preferences as Bindings};
 use iced::widget::operation::{self, RelativeOffset};
 use iced::widget::{button, column, container, row, scrollable, space, text, tooltip};
-use iced::{Element, Length, Task, Theme};
+use iced::{Element, Font, Length, Task, Theme, padding};
 
 use super::{
-    Launcher, Message, divider, footer_style, hint, keycap, page_header, palette, search_id, status_button_style,
-    surface_style, tab_style,
+    Launcher, Message, divider, footer_button, footer_style, hint, keycap, list_row_button_style, page_header, palette,
+    primary_hint, search_id, selection_bar, status_button_style, surface_style,
 };
 use crate::commands::Builtin;
 use crate::layout::{FOOTER_HEIGHT, PAD};
@@ -26,8 +26,8 @@ pub enum Entry {
 const ENTRIES: [Entry; 5] =
     [Entry::Appearance, Entry::Shortcuts, Entry::GlobalShortcuts, Entry::SearchFolders, Entry::SearchStatus];
 const SCROLL_ID: &str = "settings-scroll";
-pub(super) const HEIGHT: u32 = 400;
-pub(super) const SHORTCUTS_HEIGHT: u32 = 368;
+pub(super) const HEIGHT: u32 = 448;
+pub(super) const SHORTCUTS_HEIGHT: u32 = 396;
 
 impl Entry {
     fn open(self, launcher: &mut Launcher) -> Task<Message> {
@@ -52,19 +52,21 @@ impl Entry {
                 (Builtin::SearchStatus, Builtin::SearchStatus.description(), Some(Shortcut::SearchStatus))
             }
         };
-        let content = row![column![text(name.title()).size(15), dim(help)].spacing(2), space::horizontal()]
+        let row_body = row![column![text(name.title()).size(15), dim(help)].spacing(2), space::horizontal()]
             .align_y(iced::Center)
             .spacing(6);
-        let content = if let Some(shortcut) = shortcut {
-            content.push(keycap(bindings.get(shortcut).to_string(), selected))
+        let row_body = if let Some(shortcut) = shortcut {
+            row_body.push(keycap(bindings.get(shortcut).to_string(), selected))
         } else {
-            content
+            row_body
         };
+        let content =
+            row![selection_bar(selected, 24.0), row_body.padding(padding::left(9).right(10))].align_y(iced::Center);
         button(content)
             .width(Length::Fill)
-            .padding([4, 10])
+            .padding([5, 0])
             .on_press(Message::SettingsSelected(self))
-            .style(move |theme, status| tab_style(theme, status, selected, Some(palette::SELECTED)))
+            .style(move |theme, status| list_row_button_style(theme, status, selected))
             .into()
     }
 }
@@ -143,27 +145,22 @@ pub(super) fn header_button(bindings: Bindings, compact: bool) -> Element<'stati
 pub(super) fn view(selected: Entry, bindings: Bindings) -> Element<'static, Message> {
     let header = page_header(text("Settings").size(20)).height(56);
     let entries = |section: &'static str, items: &[Entry]| {
-        items.iter().fold(column![container(dim(section)).padding([0, 10])].spacing(4), |column, &entry| {
+        let heading = dim(section).font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT });
+        items.iter().fold(column![container(heading).padding([0, 16])].spacing(4), |column, &entry| {
             column.push(entry.item(entry == selected, bindings))
         })
     };
     // A distinct widget tree keeps this scroll position out of the child pages.
     let body = column![
         scrollable(
-            column![entries("Launcher", &ENTRIES[..3]), entries("File search", &ENTRIES[3..])].spacing(8).padding(8),
+            column![entries("Launcher", &ENTRIES[..3]), entries("File search", &ENTRIES[3..])].spacing(12).padding(8),
         )
         .id(SCROLL_ID)
         .height(Length::Fill),
     ]
     .height(Length::Fill);
-    let back = button(hint("Esc", "Back to search"))
-        .on_press(Message::ShowSettings)
-        .padding([4, 8])
-        .style(status_button_style);
-    let open = button(hint("Enter", "Open"))
-        .on_press(Message::SettingsSelected(selected))
-        .padding([4, 8])
-        .style(status_button_style);
+    let back = footer_button(hint("Esc", "Back to search"), Some(Message::ShowSettings));
+    let open = footer_button(primary_hint("Enter", "Open"), Some(Message::SettingsSelected(selected)));
     let footer = container(row![back, space::horizontal(), open].align_y(iced::Center))
         .height(FOOTER_HEIGHT)
         .padding([0.0, PAD])

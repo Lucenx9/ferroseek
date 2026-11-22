@@ -5,7 +5,10 @@ use iced::widget::operation::{self, RelativeOffset};
 use iced::widget::{Id, button, column, container, row, scrollable, space, text, text_editor, text_input};
 use iced::{Element, Length, Task};
 
-use super::{Launcher, Message, Scope, Status, divider, field_style, footer_style, hint, page_header, primary_hint};
+use super::{
+    Launcher, Message, Scope, Status, divider, field_style, footer_button, footer_style, hint, page_header,
+    primary_hint,
+};
 use super::{search_id, status_button_style, surface_style, update, update_content};
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::links::{self, Link, LinkFields};
@@ -364,23 +367,20 @@ impl Editor {
     fn controls(&self) -> Element<'_, Event> {
         let pending = matches!(self.mode, Mode::Discard | Mode::Delete);
         let editing = self.mode == Mode::Editing;
-        let back = button(hint("Esc", if pending { "Keep editing" } else { "Back" }))
-            .on_press_maybe((self.mode != Mode::Writing).then_some(Event::Back))
-            .padding([4, 6])
-            .style(status_button_style);
+        let back = footer_button(
+            hint("Esc", if pending { "Keep editing" } else { "Back" }),
+            (self.mode != Mode::Writing).then_some(Event::Back),
+        );
         let apply = if pending {
-            button(hint("Ctrl+D", if self.mode == Mode::Delete { "Delete" } else { "Discard" }))
-                .on_press(Event::Confirm)
+            footer_button(
+                hint("Ctrl+D", if self.mode == Mode::Delete { "Delete" } else { "Discard" }),
+                Some(Event::Confirm),
+            )
         } else {
             let key = if self.kind == Kind::Snippet { "Ctrl+S" } else { "Enter" };
-            button(primary_hint(key, "Save")).on_press_maybe(editing.then_some(Event::Save))
-        }
-        .padding([4, 6])
-        .style(status_button_style);
-        let remove = button(hint("Ctrl+D", "Delete"))
-            .on_press_maybe(editing.then_some(Event::Remove))
-            .padding([4, 6])
-            .style(status_button_style);
+            footer_button(primary_hint(key, "Save"), editing.then_some(Event::Save))
+        };
+        let remove = footer_button(hint("Ctrl+D", "Delete"), editing.then_some(Event::Remove));
         let mut controls = row![back].spacing(4).align_y(iced::Center);
         if editing && self.original.is_some() {
             controls = controls.push(remove);
@@ -441,6 +441,7 @@ impl Editor {
 fn multiline_style(theme: &iced::Theme, status: text_editor::Status) -> text_editor::Style {
     let status = match status {
         text_editor::Status::Focused { is_hovered } => text_input::Status::Focused { is_hovered },
+        text_editor::Status::Hovered => text_input::Status::Hovered,
         _ => text_input::Status::Active,
     };
     let style = field_style(theme, status);

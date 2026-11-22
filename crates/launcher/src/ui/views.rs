@@ -12,29 +12,32 @@ use crate::model::{ClickTracker, Item, Scope, Section, Target};
 use crate::shortcuts::Routing;
 use crate::usage;
 use crate::{appearance, details, folders, open_with, preview, timing};
-use iced::alignment::Vertical;
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::{button, column, container, responsive, row, space, text};
-use iced::{Background, Border, Element, Length, Task, Theme};
+use iced::{Background, Border, Element, Length, Task, Theme, padding};
 
 pub(super) fn search_navigation(launcher: &Launcher) -> Element<'static, Message> {
     let compact = launcher.window_width < NARROW_SEARCH_WIDTH;
+    let horizontal = if compact { 3.0 } else { 5.0 };
     let scopes = Scope::ALL.into_iter().fold(row![].spacing(if compact { 1 } else { 4 }), |choices, scope| {
         let selected = launcher.scope == scope;
         let label = if compact && scope == Scope::Applications { "Apps".into() } else { scope.to_string() };
+        let underline_width = if selected { super::text_width(&label, 12.0).ceil() } else { 0.0 };
         choices.push(
             button(
                 column![
                     text(label).size(12).wrapping(text::Wrapping::None),
-                    container(space().width(14)).height(2).style(move |theme| container::Style {
+                    container(space().width(underline_width)).height(2).style(move |theme| container::Style {
                         background: selected.then_some(Background::Color(palette::ACCENT.resolve(theme))),
                         border: Border { radius: 1.0.into(), ..Default::default() },
                         ..Default::default()
                     })
                 ]
-                .spacing(2),
+                .spacing(2)
+                .align_x(Horizontal::Center),
             )
             .on_press(Message::Scope(scope))
-            .padding([3, if compact { 3 } else { 5 }])
+            .padding(padding::top(4).bottom(0).left(horizontal).right(horizontal))
             .style(move |theme, status| tab_style(theme, status, selected, None)),
         )
     });

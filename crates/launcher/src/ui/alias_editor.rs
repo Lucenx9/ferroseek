@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Editing a durable alias and resolving exact alias searches.
 
-use iced::widget::{Id, button, column, container, responsive, row, space, text, text_input};
+use iced::widget::{Id, column, container, responsive, row, space, text, text_input};
 use iced::{Element, Length, Task, Theme};
 
 use super::{
-    Launcher, Message, Scope, Status, divider, field_style, footer_style, hint, label_for_width, page_header, palette,
-    primary_hint, status_button_style, surface_style, update_content,
+    Launcher, Message, Scope, Status, divider, field_style, footer_button, footer_style, hint, label_for_width,
+    page_header, palette, primary_hint, primary_label, surface_style, update_content,
 };
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{self, ClickTracker, Command, Item, Target};
@@ -128,24 +128,22 @@ impl Editor {
         let label = |key, name| if compact { text(name).size(12).into() } else { hint(key, name) };
         let confirm = matches!(self.mode, Mode::Discard | Mode::Remove);
         let editing = self.mode == Mode::Editing;
-        let back = button(label("Esc", if confirm { "Keep editing" } else { "Back" }))
-            .on_press_maybe((editing || confirm).then_some(Event::Back))
-            .padding([4, 6])
-            .style(status_button_style);
+        let back = footer_button(
+            label("Esc", if confirm { "Keep editing" } else { "Back" }),
+            (editing || confirm).then_some(Event::Back),
+        );
         let accept = if confirm {
-            button(label("Ctrl+D", if self.mode == Mode::Remove { "Remove" } else { "Discard" }))
-                .on_press(Event::Remove)
+            footer_button(
+                label("Ctrl+D", if self.mode == Mode::Remove { "Remove" } else { "Discard" }),
+                Some(Event::Remove),
+            )
         } else {
-            let save = if compact { text("Save").size(12).into() } else { primary_hint("Enter", "Save") };
-            button(save).on_press_maybe(editing.then_some(Event::Save))
-        }
-        .padding([4, 6])
-        .style(status_button_style);
+            let save = if compact { primary_label("Save") } else { primary_hint("Enter", "Save") };
+            footer_button(save, editing.then_some(Event::Save))
+        };
         let mut controls = row![back].spacing(4).align_y(iced::Center);
         if editing && self.previous.is_some() {
-            controls = controls.push(
-                button(label("Ctrl+D", "Remove")).on_press(Event::Remove).padding([4, 6]).style(status_button_style),
-            );
+            controls = controls.push(footer_button(label("Ctrl+D", "Remove"), Some(Event::Remove)));
         }
         container(controls.push(space::horizontal()).push(accept)).center_y(Length::Fill).into()
     }

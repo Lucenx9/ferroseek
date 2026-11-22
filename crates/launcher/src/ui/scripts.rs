@@ -12,7 +12,7 @@ use iced::{Element, Font, Length, Task, Theme};
 use super::script_prompt::Prompt;
 use super::workflow_editor;
 use super::{Launcher, Message, Status, divider, footer_button, footer_style, hint, label_for_width, page_header};
-use super::{palette, primary_hint, search_id, surface_style, update, update_content};
+use super::{palette, primary_hint, primary_label, search_id, surface_style, update, update_content};
 use crate::backend::UiEvent;
 use crate::layout::{FOOTER_HEIGHT, PAD};
 use crate::model::{Action, Command, Scope, Target};
@@ -165,18 +165,20 @@ impl Panel {
 
     fn controls(&self, generation: u64, compact: bool) -> Element<'static, Message> {
         let crowded = compact && matches!(&self.stage, Stage::Finished(report) if !report.output.is_empty());
-        let control = |label: &'static str, full, event| {
-            let content = if crowded { text(label).size(12).into() } else { full };
-            footer_button(content, Message::Script { generation, event })
+        let control = |label: &'static str, primary, full, event| {
+            let content =
+                if crowded { if primary { primary_label(label) } else { text(label).size(12).into() } } else { full };
+            footer_button(content, Some(Message::Script { generation, event }))
         };
         let back = if matches!(self.stage, Stage::Running { .. }) { "Cancel" } else { "Back" };
-        let mut actions =
-            row![control(back, hint("Esc", back), Event::Back), space::horizontal()].align_y(iced::Center).spacing(4);
+        let mut actions = row![control(back, false, hint("Esc", back), Event::Back), space::horizontal()]
+            .align_y(iced::Center)
+            .spacing(4);
         if matches!(self.stage, Stage::Finished(_)) {
-            actions = actions.push(control("Run again", hint("Ctrl+R", "Run again"), Event::RunAgain));
+            actions = actions.push(control("Run again", false, hint("Ctrl+R", "Run again"), Event::RunAgain));
         }
         if let Some((key, label, action)) = self.primary() {
-            actions = actions.push(control(label, primary_hint(key, label), action));
+            actions = actions.push(control(label, true, primary_hint(key, label), action));
         }
         container(actions).center_y(Length::Fill).into()
     }
