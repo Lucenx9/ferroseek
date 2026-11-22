@@ -25,6 +25,16 @@ enum Temperature {
     Kelvin,
 }
 
+impl Temperature {
+    const fn absolute_zero(self) -> f64 {
+        match self {
+            Self::Celsius => -273.15,
+            Self::Fahrenheit => -459.67,
+            Self::Kelvin => 0.0,
+        }
+    }
+}
+
 struct Unit {
     label: &'static str,
     names: &'static [&'static str],
@@ -140,13 +150,10 @@ fn split_amount(source: &str) -> Option<(&str, &'static Unit)> {
 }
 
 fn convert_temperature(value: f64, source: Temperature, destination: Temperature) -> Option<f64> {
-    let absolute_zero = match source {
-        Celsius => -273.15,
-        Fahrenheit => -459.67,
-        Kelvin => 0.0,
-    };
-    if value < absolute_zero {
-        return None;
+    let absolute_zero = source.absolute_zero();
+    if value <= absolute_zero {
+        // Keep the boundary reusable even when the conversion formula rounds below it.
+        return (value == absolute_zero).then(|| destination.absolute_zero());
     }
     // Use per-pair offsets to keep common fixed points such as 32 °F exact.
     Some(match (source, destination) {

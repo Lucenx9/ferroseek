@@ -367,6 +367,18 @@ mod tests {
     }
 
     #[test]
+    fn temperature_conversion_reuses_absolute_zero_in_each_scale() {
+        for (query, expected) in [
+            ("-459.67 F to C", "= (-273.15)"),
+            ("-273.15 C to F", "= (-459.67)"),
+            ("0 K to C", "= (-273.15)"),
+            ("0 K to F", "= (-459.67)"),
+        ] {
+            assert_eq!(continuation(query).as_deref(), Some(expected), "{query}");
+        }
+    }
+
+    #[test]
     fn conversion_rejects_unknown_units_incompatible_units_and_invalid_values() {
         for query in [
             "reports in m",
