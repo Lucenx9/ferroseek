@@ -72,9 +72,11 @@ published release or verified compatibility with every Linux desktop.
   [recorded profiles](BENCHMARKS.md#13-launcher-desktop-profiles).
 - [ ] Publish a scoped launcher beta after desktop and packaging validation.
 
-Delivery order: verify desktop focus/activation and measure end-to-end latency;
-then quicklinks and keyword commands. Each interaction change needs keyboard, pointer, long-label and
-asynchronous/error checks, plus inspection of rendered UI.
+Validate focus, activation and shortcut assignment on physical desktops.
+Measure startup and typing-to-results latency, then validate packaging before
+publishing a scoped launcher beta. For interaction changes, check keyboard and
+pointer behavior, long labels, asynchronous updates and error states. Inspect
+the rendered UI.
 
 See [launcher setup and current limits](LAUNCHER.md).
 
@@ -166,7 +168,8 @@ See [comparisons](COMPARISONS.md), [source-level Baloo research](RESEARCH.md) an
 ## Non-goals
 
 - Replacing KDE Plasma or silently disabling other search engines.
-- Expanding into a general plugin platform or clipboard manager before the
-  application/file launcher is reliable for daily use.
+- Expanding into a general plugin platform before the application and file
+  launcher is reliable for daily use.
+- Clipboard management beyond opt-in text history.
 - Mandatory agent tooling, embeddings, remote indexing services or telemetry.
 - Claiming feature parity or universal platform support before verification.

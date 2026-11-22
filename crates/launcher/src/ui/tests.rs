@@ -1154,7 +1154,7 @@ fn moving_a_favorite_keeps_the_selected_command_and_allows_moving_it_back() {
 }
 
 #[test]
-fn leaving_local_command_confirmation_restores_the_selected_result() {
+fn local_command_confirmation_tracks_appearance_and_restores_selection() {
     let dir = tempfile::tempdir().unwrap();
     let settings = dir.path().join("config.toml");
     std::fs::write(
@@ -1164,6 +1164,7 @@ fn leaving_local_command_confirmation_restores_the_selected_result() {
     .unwrap();
     let mut s = search_state();
     s.scripts = scripts::State::load(&settings);
+    let _ = update(&mut s, Message::Ui(UiEvent::DesktopAppearance(Some(false))));
     let _ = update(&mut s, Message::Scope(Scope::Commands));
     let _ = update(&mut s, Message::Query("launch check".into()));
     let saved_target = s.selected().unwrap().target.clone();
@@ -1174,9 +1175,12 @@ fn leaving_local_command_confirmation_restores_the_selected_result() {
     assert!(s.scripts.panel.is_some());
     assert!(s.search_suspended());
     let _ = update(&mut s, Message::Query("queued text".into()));
+    let _ = update(&mut s, Message::Ui(UiEvent::DesktopAppearance(Some(true))));
+    assert_eq!(s.system_dark, Some(true));
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert_eq!((s.query.as_str(), s.selected().map(|item| &item.target)), ("launch check", Some(&saved_target)));
     assert!(s.scripts.panel.is_none());
+    assert!(s.appearance_theme(false).palette().background.r < 0.2);
 }
 
 #[test]

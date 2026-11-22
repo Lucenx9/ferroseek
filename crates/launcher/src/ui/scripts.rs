@@ -408,7 +408,7 @@ impl Launcher {
                 self.scripts.panel = None;
                 update_content(self, message)
             }
-            Message::Files { .. } | Message::InputClipboard(_) => update_content(self, message),
+            Message::Ui(_) | Message::Files { .. } | Message::InputClipboard(_) => update_content(self, message),
             _ => Task::none(),
         }
     }
