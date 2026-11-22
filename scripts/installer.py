@@ -18,11 +18,13 @@ import tomllib
 from install_transaction import InstallError, Transaction, digest, read, safe_path
 
 ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER_ID = 'io.github.ferroseek.Launcher'
+LAUNCHER_ICON = f'data/{LAUNCHER_ID}.png'
 SHORTCUTS_UNIT = 'app-io.github.ferroseek.Launcher.service'
 SHORTCUTS_BUS = 'io.github.ferroseek.LauncherShortcuts'
 PLASMA_HELPER = 'ferroseek-plasma-windows'
 COMPONENT_FILES = {'core': ['daemon', 'cli', 'unit', 'bus'],
-                   'launcher': ['launcher', 'desktop', 'shortcuts_unit', 'plasma_helper', 'plasma_desktop'],
+                   'launcher': ['launcher', 'desktop', 'icon', 'shortcuts_unit', 'plasma_helper', 'plasma_desktop'],
                    'mcp': ['mcp']}
 BINARIES = {'daemon': 'ferroseekd', 'cli': 'ferroseek', 'launcher': 'ferroseek-launcher',
             'plasma_helper': PLASMA_HELPER, 'mcp': 'ferroseek-mcp'}
@@ -61,7 +63,8 @@ def paths():
     claude = Path(os.environ['CLAUDE_CONFIG_DIR']) / '.claude.json' if os.environ.get('CLAUDE_CONFIG_DIR') else home / '.claude.json'
     targets = dict(daemon=home / '.local/bin/ferroseekd', cli=home / '.local/bin/ferroseek',
                    launcher=home / '.local/bin/ferroseek-launcher',
-                   desktop=data / 'applications/io.github.ferroseek.Launcher.desktop',
+                   desktop=data / 'applications' / f'{LAUNCHER_ID}.desktop',
+                   icon=data / 'icons/hicolor/256x256/apps' / f'{LAUNCHER_ID}.png',
                    plasma_helper=home / '.local/bin' / PLASMA_HELPER,
                    plasma_desktop=data / 'applications/io.github.ferroseek.PlasmaWindows.desktop',
                    shortcuts_unit=config / 'systemd/user' / SHORTCUTS_UNIT,
@@ -103,7 +106,7 @@ def render_shortcuts(launcher, environment):
             f'[Service]\n{environment}\n{start}\n'
             '# The listener may have opened a launcher window with unsaved edits.\nKillMode=process\n'
             '[Install]\nWantedBy=graphical-session.target\n')
-    desktop = ('[Desktop Entry]\nType=Application\nName=FerroSeek\nIcon=system-search\nNoDisplay=true\n'
+    desktop = (f'[Desktop Entry]\nType=Application\nName=FerroSeek\nIcon={LAUNCHER_ID}\nNoDisplay=true\n'
                f'Exec={desktop_exec(launcher)}\n')
     return dict(desktop=desktop.encode(), shortcuts_unit=unit.encode())
 
@@ -152,6 +155,23 @@ def component_binaries(components):
             for key in COMPONENT_FILES[component] if key in BINARIES}
 
 
+def archive_files(components):
+    return ARCHIVE_FILES + ([LAUNCHER_ICON] if 'launcher' in components else [])
+
+
+def component_payload(keys, binary_dir):
+    files = {}
+    for key in keys:
+        if key in BINARIES:
+            path = binary_dir / BINARIES[key]
+            if not path.is_file() or not os.access(path, os.X_OK):
+                raise InstallError(f'missing executable: {path}; build first or use the matching archive')
+            files[key] = path.read_bytes()
+    if 'icon' in keys:
+        files['icon'] = (ROOT / LAUNCHER_ICON).read_bytes()
+    return files
+
+
 def archive_info():
     path = ROOT / 'package.json'
     if not path.exists():
@@ -160,7 +180,7 @@ def archive_info():
     components = set(package['components'])
     if package.get('format') != 1 or 'core' not in components or not components <= set(COMPONENT_FILES):
         raise InstallError('unsupported archive manifest')
-    expected = set(ARCHIVE_FILES) | {f'bin/{binary}' for binary in component_binaries(components)}
+    expected = set(archive_files(components)) | {f'bin/{binary}' for binary in component_binaries(components)}
     if set(package['sha256']) != expected:
         raise InstallError('archive checksum manifest is incomplete or unexpected')
     if package['os'] != 'linux' or package['arch'] != platform.machine():
@@ -414,12 +434,7 @@ def install(args, env, layout):
             cmd += ['-p', package_name]
         subprocess.run(cmd, cwd=ROOT, check=True)
     content = render(targets, home, data, config, env['manager'])
-    for key in keys:
-        if key in BINARIES:
-            p = source / BINARIES[key]
-            if not p.is_file() or not os.access(p, os.X_OK):
-                raise InstallError(f'missing executable: {p}; build first or use the matching archive')
-            content[key] = p.read_bytes()
+    content.update(component_payload(keys, source))
     transaction = Transaction(state, targets)
     with transaction.locked():
         manifest = load_manifest(targets)

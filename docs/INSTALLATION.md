@@ -56,6 +56,8 @@ D-Bus-activates it on its first file query. Bind `ferroseek-launcher` in
 desktop settings or enable the optional
 [global shortcut listener](LAUNCHER.md#desktop-portal-shortcuts). Launcher
 installation supplies the listener's user service and desktop identity.
+The launcher desktop entry uses the FerroSeek magnet icon from the user's
+`hicolor` theme and stays hidden from application menus.
 It also installs a small helper with its own desktop entry for
 [Switch windows on Plasma](LAUNCHER.md#switch-windows). The entry grants
 only the Plasma window-management interface to the helper.
