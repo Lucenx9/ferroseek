@@ -1,18 +1,6 @@
 name: Launcher interaction
 on:
-  pull_request:
-    paths:
-      - 'crates/launcher/**'
-      - 'crates/daemon/**'
-      - 'crates/index/**'
-      - 'crates/engine/**'
-      - 'crates/config/**'
-      - 'crates/desktop/**'
-      - 'tests/launcher-*'
-      - 'scripts/verify-launcher-report.py'
-      - '.github/workflows/launcher-interaction.yml'
-      - 'Cargo.lock'
-      - 'Cargo.toml'
+  workflow_call:
   workflow_dispatch:
 jobs:
   keyboard-and-latency:
@@ -33,19 +21,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: cargo build --release --locked -p ferroseek-launcher -p ferroseek-daemon
       - name: Exercise real keyboard input in virtual KWin
-        run: |
-          export XDG_RUNTIME_DIR=$(mktemp -d)
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QT_LOGGING_RULES='*.debug=false'
-          export FERROSEEK_SMOKE_INTERACTION=1
-          export FERROSEEK_SMOKE_MODE=all
-          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
-          xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction"
-      - name: Verify samples against original process logs
-        if: matrix.profile != 'us-multi'
-        run: python3 scripts/verify-launcher-report.py "$RUNNER_TEMP/launcher-interaction" --binary target/release/ferroseek-launcher
+        run: scripts/check launcher "${{ matrix.profile }}" "$RUNNER_TEMP/launcher-interaction"
       - name: Exercise constrained layout in virtual KWin
         if: matrix.profile == 'us-1x' || matrix.profile == 'us-1.5x'
         run: |
