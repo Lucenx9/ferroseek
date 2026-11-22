@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -21,6 +23,7 @@ jobs:
       - name: Install test dependencies (D-Bus for the smoke test; xkbcommon for the launcher build)
         run: sudo apt-get update && sudo apt-get install -y dbus libglib2.0-bin libxkbcommon-dev
       - run: scripts/check workspace
+      - run: scripts/check upgrade
 
   msrv:
     runs-on: ubuntu-latest

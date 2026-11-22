@@ -183,19 +183,10 @@ and one temporary index. A stub opener records the path it receives. The test
 covers the D-Bus boundary and leaves graphical interaction and installer file
 replacement to their respective smoke tests.
 
+Run from a Git checkout with the fixture commit in its history.
+
 ```sh
-(
-  set -e
-  fixture=$(mktemp -d)
-  trap 'rm -rf "$fixture"' EXIT
-  git archive 38b05d404f2c9fa6c4665592ac1da02d694aa02c | tar -x -C "$fixture"
-  cargo build --locked --manifest-path "$fixture/Cargo.toml" --target-dir "$fixture/build" -p ferroseek-daemon
-  cargo build --locked --target-dir target -p ferroseek-daemon
-  FERROSEEK_OLD_DAEMON="$fixture/build/debug/ferroseekd" \
-    FERROSEEK_CURRENT_DAEMON="$PWD/target/debug/ferroseekd" \
-    cargo test --locked -p ferroseek-launcher --bin ferroseek-launcher \
-      backend::tests::upgrade::launcher_recovers_after_daemon_upgrade -- --ignored --exact
-)
+scripts/check upgrade
 ```
 
 ## Uninstall
