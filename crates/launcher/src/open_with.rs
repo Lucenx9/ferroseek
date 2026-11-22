@@ -402,7 +402,7 @@ impl Panel {
             }
             if let Some(app) = selected {
                 let open = if compact { ui::primary_label("Open") } else { ui::primary_hint("Enter", "Open") };
-                controls = controls.push(ui::footer_button(open, Some(Event::Open(app.id.clone()))));
+                controls = controls.push(ui::keyed_footer_button(app.id.clone(), open, Event::Open(app.id.clone())));
             }
             container(controls).center_y(Length::Fill).into()
         });

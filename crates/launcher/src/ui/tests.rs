@@ -2921,6 +2921,28 @@ fn picker_back_button_returns_to_the_captured_search_with_a_filter() {
 }
 
 #[test]
+fn picker_footer_cancels_open_when_the_selected_app_changes() {
+    let mut state = picker_state();
+    let generation = state.application_generation;
+    let _ = update(&mut state, Message::ApplicationsLoaded { generation, result: Ok(picker_choices(2)) });
+    let size = iced::Size::new(state.window_width as f32, full_height() as f32);
+    let labels = rendered_labels(view_content(&state), size).text;
+    let (_, open) = labels.iter().find(|(text, _)| text == "Open").unwrap();
+    let cursor = mouse::Cursor::Available(open.center());
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+    let mut cache = iced_runtime::user_interface::Cache::default();
+
+    widget_batch_at(&mut state, &mut cache, std::slice::from_ref(&press), false, cursor);
+    let _ = command(&mut state, Command::Down);
+    widget_batch_at(&mut state, &mut cache, std::slice::from_ref(&release), false, cursor);
+    assert!(state.opening.is_none(), "releasing Open must not launch the replacement app");
+
+    widget_batch_at(&mut state, &mut cache, &[press, release], false, cursor);
+    assert!(state.opening.is_some(), "a fresh click opens the selected app");
+}
+
+#[test]
 fn picker_reload_keeps_selection_across_read_errors() {
     for failures in [0, 1, 2] {
         let mut s = picker_state();
