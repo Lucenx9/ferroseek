@@ -426,6 +426,12 @@ impl State {
         root.map(|r| path.components().count().saturating_sub(r) as u32).unwrap_or(0)
     }
 
+    fn move_changes_listing_policy(&self, old: &Path, new: &Path) -> bool {
+        self.depth(old) != self.depth(new)
+            || self.rules.has_exclusions_below(old)
+            || self.rules.has_exclusions_below(new)
+    }
+
     fn is_foreign_mount(&self, parent_dev: u64, md: &fs::Metadata, path: &Path) -> bool {
         self.rules.stay_on_filesystem
             && md.dev() != parent_dev
@@ -681,6 +687,9 @@ impl State {
             dirty.push((fdir, fname));
             return Ok(());
         };
+        let new_path = tdpath.join(OsStr::from_bytes(&tname));
+        // A scan can already have indexed a replacement at the source name.
+        let src = src.filter(|c| self.metadata(&new_path).is_ok_and(|live| live.ino() == c.meta.ino));
         match src {
             Some(c) if !self.rules.excluded(&tdpath, &tname) => {
                 if let Some(dst) = tx.child(tdir, &tname)?
@@ -690,17 +699,12 @@ impl State {
                 }
                 if c.meta.kind == Kind::Dir
                     && let Some(old_path) = tx.path(c.id)?
+                    && self.move_changes_listing_policy(&old_path, &new_path)
                 {
-                    let new_path = tdpath.join(OsStr::from_bytes(&tname));
-                    if self.depth(&old_path) != self.depth(&new_path)
-                        || self.rules.has_exclusions_below(&old_path)
-                        || self.rules.has_exclusions_below(&new_path)
-                    {
-                        // A move changes path policy without changing listing mtimes.
-                        // Persist invalidation in the same transaction as the rename.
-                        tx.invalidate_subtree_listings(c.id)?;
-                        self.work.push((c.id, Mode::Quick));
-                    }
+                    // A move changes path policy without changing listing mtimes.
+                    // Persist invalidation in the same transaction as the rename.
+                    tx.invalidate_subtree_listings(c.id)?;
+                    self.work.push((c.id, Mode::Quick));
                 }
                 tx.rename(c.id, tdir, &tname)?;
                 // Refresh metadata (cheap) and pick up anything unusual.

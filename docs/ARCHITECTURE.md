@@ -104,8 +104,10 @@ it is idempotent, and races between the scan and events converge.
   Watches are installed only on selected indexed directories; inside one
   debounce window:
   - `IN_MOVED_FROM`/`IN_MOVED_TO` pairs with the same cookie become a tree
-    rename. That is O(1), and the watch stays valid because inotify follows
-    the inode.
+    rename when the live destination has the cached source inode. That is
+    O(1), and the watch stays valid because inotify follows the inode. If
+    the inode differs or cannot be read, both names are resolved from current
+    filesystem state.
   - An unpaired `MOVED_FROM` is a delete. An unpaired `MOVED_TO` is a create,
     plus a subtree scan if the entry is a directory.
   - A directory move that changes depth or intersects a path exclusion

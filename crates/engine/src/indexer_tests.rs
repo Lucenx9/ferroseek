@@ -383,7 +383,8 @@ fn rename_file_and_directory_keeps_subtree_and_watches() {
     touch(&f.p("proj/src/lib.rs"));
     f.scan(Mode::Quick);
     fs::rename(f.p("proj"), f.p("project-renamed")).unwrap();
-    f.settle();
+    f.ix.pump_events().unwrap();
+    assert!(!f.ix.has_work(), "an inode-matched rename preserves the subtree without rescanning");
     assert_eq!(f.find("lib.rs"), vec!["project-renamed/src/lib.rs"]);
     assert!(f.find("proj/").iter().all(|p| p.starts_with("project-renamed")));
     // Watch on the renamed subtree still delivers events.
@@ -394,6 +395,22 @@ fn rename_file_and_directory_keeps_subtree_and_watches() {
     f.settle();
     assert_eq!(f.find("app.rs"), vec!["project-renamed/app.rs"]);
     assert!(f.find("main.rs").is_empty());
+}
+
+#[test]
+fn queued_rename_keeps_rescanned_source_and_destination() {
+    let mut f = fx();
+    touch(&f.p("source/original-document.txt"));
+    f.scan(Mode::Full);
+
+    fs::rename(f.p("source"), f.p("destination")).unwrap();
+    touch(&f.p("source/replacement-document.txt"));
+    f.scan(Mode::Full);
+    let expected = ["destination/original-document.txt", "source/replacement-document.txt"];
+    assert_eq!(f.find("document"), expected);
+
+    f.ix.pump_events().unwrap();
+    assert_eq!(f.find("document"), expected, "replaying a queued rename must preserve both live directories");
 }
 
 #[test]
