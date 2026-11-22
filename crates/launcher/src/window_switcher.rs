@@ -173,6 +173,7 @@ type Reply = std::sync::Mutex<Option<oneshot::Sender<Result<(), &'static str>>>>
 enum Wake {
     Stop,
     Request(u64, Action, Reply),
+    ActivationChecked,
 }
 
 struct Toplevel {
@@ -185,6 +186,7 @@ struct Pending {
     id: u64,
     action: Action,
     reply: oneshot::Sender<Result<(), &'static str>>,
+    activation_barrier: Option<ObjectId>,
 }
 
 #[derive(Default)]
@@ -328,6 +330,9 @@ impl Catalog {
 
     fn confirm_change(&mut self) {
         let Some(pending) = &self.pending else { return };
+        if pending.activation_barrier.is_some() {
+            return;
+        }
         let result = match self.windows.get(&pending.id).and_then(|window| window.visible.as_ref()) {
             Some(entry) => pending.action.reached(entry).then_some(Ok(())),
             None => Some(Err(CLOSED)),
@@ -370,25 +375,42 @@ impl Catalog {
         self.confirm_change();
     }
 
-    fn wake(&mut self, wake: &Wake) {
+    fn wake(&mut self, wake: &Wake, callback: &ObjectId, check_activation: impl FnOnce() -> ObjectId) {
         match wake {
             Wake::Stop => self.stop(),
-            Wake::Request(id, action, send) => self.window_request(*id, *action, send),
+            Wake::Request(id, action, send) => {
+                if let Some(mut pending) = self.window_request(*id, *action, send) {
+                    if *action == Action::Switch {
+                        // Process the activation request and preceding state events before checking focus.
+                        pending.activation_barrier = Some(check_activation());
+                    }
+                    self.pending = Some(pending);
+                    self.confirm_change();
+                }
+            }
+            Wake::ActivationChecked => self.activation_checked(callback),
         }
     }
 
-    fn window_request(&mut self, id: u64, action: Action, send: &Reply) {
-        let Some(send) = send.lock().ok().and_then(|mut slot| slot.take()) else { return };
+    fn activation_checked(&mut self, callback: &ObjectId) {
+        if let Some(pending) = &mut self.pending
+            && pending.activation_barrier.as_ref() == Some(callback)
+        {
+            pending.activation_barrier = None;
+            self.confirm_change();
+        }
+    }
+
+    fn window_request(&self, id: u64, action: Action, send: &Reply) -> Option<Pending> {
+        let send = send.lock().ok()?.take()?;
         if send.is_canceled() || self.stopping {
-            return;
+            return None;
         }
         match self.request(id, action) {
-            Ok(()) => {
-                self.pending = Some(Pending { id, action, reply: send });
-                self.confirm_change();
-            }
+            Ok(()) => Some(Pending { id, action, reply: send, activation_barrier: None }),
             Err(error) => {
                 let _ = send.send(Err(error));
+                None
             }
         }
     }
@@ -455,7 +477,11 @@ catalog_dispatch!(WlrWindow, (), |state, window, event, _, _, _| state.window_ev
 catalog_dispatch!(plasma::Manager, (), |state, manager, event, _, _, queue| state
     .plasma_manager_event(manager, event, queue));
 catalog_dispatch!(plasma::Handle, (), |state, window, event, _, _, _| state.plasma_window_event(window, event));
-catalog_dispatch!(wl_callback::WlCallback, Wake, |state, _, _, wake, _, _| state.wake(wake));
+catalog_dispatch!(wl_callback::WlCallback, Wake, |state, callback, _, wake, conn, queue| state.wake(
+    wake,
+    &callback.id(),
+    || conn.display().sync(queue, Wake::ActivationChecked).id()
+));
 
 #[cfg(test)]
 mod tests {
@@ -467,5 +493,17 @@ mod tests {
         assert!(!Action::Switch.reached(&entry));
         entry.activated = true;
         assert!(Action::Switch.reached(&entry));
+    }
+
+    #[test]
+    fn activation_confirmation_waits_for_its_post_request_sync() {
+        let (reply, mut result) = oneshot::channel();
+        let callback = ObjectId::null();
+        let pending = Pending { id: 1, action: Action::Switch, reply, activation_barrier: Some(callback.clone()) };
+        let mut catalog = Catalog { pending: Some(pending), ..Catalog::default() };
+        catalog.confirm_change();
+        assert_eq!(result.try_recv().unwrap(), None);
+        catalog.activation_checked(&callback);
+        assert_eq!(result.try_recv().unwrap(), Some(Err(CLOSED)));
     }
 }

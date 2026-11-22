@@ -25,6 +25,8 @@ const APP_ID: &str = "io.github.ferroseek.Launcher";
 const SERVICE: &str = "io.github.ferroseek.LauncherShortcuts";
 const SERVICE_UNIT: &str = "app-io.github.ferroseek.Launcher.service";
 const PORTAL: &str = "org.freedesktop.portal.Desktop";
+const KDE_BACKEND: &str = "org.freedesktop.impl.portal.desktop.kde";
+const BACKEND_SESSION: &str = "org.freedesktop.impl.portal.Session";
 const ROOT: &str = "/org/freedesktop/portal/desktop";
 const SHORTCUTS: &str = "org.freedesktop.portal.GlobalShortcuts";
 const REGISTRY: &str = "org.freedesktop.host.portal.Registry";
@@ -185,8 +187,8 @@ impl Portal<'_> {
         let events = self.0.receive_signal("Activated").await.map_err(|error| error.to_string())?;
         let changes = self.0.receive_signal("ShortcutsChanged").await.map_err(|error| error.to_string())?;
         let monitor = async {
-            let version = self.0.get_property::<u32>("version").await.unwrap_or(1).max(1);
-            let shortcuts = self.bind_shortcuts(session).await?;
+            let version = self.0.get_property::<u32>("version").await.ok();
+            let shortcuts = self.prepare_shortcuts(session, version).await?;
             let labels = binding_labels(shortcuts);
             if labels.is_empty() {
                 println!("No shortcut labels were reported. Choose FerroSeek shortcuts in desktop settings.");
@@ -194,7 +196,7 @@ impl Portal<'_> {
             state.ready(control::Session {
                 portal: portal_owner.clone(),
                 handle: session.clone(),
-                version,
+                version: version.unwrap_or(1).max(1),
                 bindings: labels,
             });
             println!("Listening for FerroSeek global shortcuts.");
@@ -226,6 +228,18 @@ impl Portal<'_> {
         decode_shortcuts(properties)
     }
 
+    async fn prepare_shortcuts(&self, session: &OwnedObjectPath, version: Option<u32>) -> Result<Shortcuts, String> {
+        // KDE v1 restores actions at CreateSession and opens settings on every bind.
+        // A KDE service running on the bus need not own this particular session.
+        if version == Some(1) && kde_restored_session(self.0.connection(), session).await.unwrap_or(false) {
+            let saved = self.list_shortcuts(session).await?;
+            if saved.iter().any(|(id, _)| Target::from_id(id).is_some()) {
+                return Ok(saved);
+            }
+        }
+        self.bind_shortcuts(session).await
+    }
+
     async fn bind_shortcuts(&self, session: &OwnedObjectPath) -> Result<Shortcuts, String> {
         // ListShortcuts can report prior assignments before this session binds its actions.
         let bind = RequestToken::new()?;
@@ -233,6 +247,14 @@ impl Portal<'_> {
             self.request("BindShortcuts", &bind, &(session, shortcut_definitions(), "", bind.options())).await?;
         decode_shortcuts(properties)
     }
+}
+
+async fn kde_restored_session(conn: &Connection, session: &OwnedObjectPath) -> zbus::Result<bool> {
+    let dbus = DBusProxy::new(conn).await?;
+    let name = WellKnownName::try_from(KDE_BACKEND).expect("valid backend name");
+    let owner = dbus.get_name_owner(name.into()).await?;
+    let backend = Proxy::new(conn, owner, session.clone(), BACKEND_SESSION).await?;
+    Ok(backend.introspect().await?.contains(&format!("interface name=\"{BACKEND_SESSION}\"")))
 }
 
 struct RequestToken(String);

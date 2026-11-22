@@ -321,6 +321,7 @@ impl Launcher {
         matches: impl Fn(&Target) -> bool,
         notice: &str,
     ) -> Task<Message> {
+        self.leave_folder_search();
         self.scope = Scope::Commands;
         let refresh = update(self, Message::Query(String::new()));
         if let Some(index) = self.items.iter().position(|item| matches(&item.target) && item.title == title) {

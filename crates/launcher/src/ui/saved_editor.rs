@@ -581,10 +581,7 @@ impl Launcher {
     }
 
     fn select_saved_entry(&mut self, kind: Kind, name: &str) -> Task<Message> {
-        if self.search_folder.take().is_some() {
-            self.folder_search_history.clear();
-            self.scope_generation += 1;
-        }
+        self.leave_folder_search();
         self.scope = Scope::Commands;
         let changed = update(self, Message::Query(String::new()));
         if let Some(index) = self.items.iter().position(|item| kind.contains(&item.target) && item.title == name) {

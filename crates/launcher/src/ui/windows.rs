@@ -20,7 +20,7 @@ use crate::window_switcher::{Action, Entry, Update, client::Client};
 
 const LIST_CHROME: u32 = 172;
 pub(super) const HEIGHT: u32 = LIST_CHROME + ROW_HEIGHT as u32 * 5;
-const RELEASE_TIMEOUT: Duration = Duration::from_millis(750);
+const KEYBOARD_TIMEOUT: Duration = Duration::from_millis(750);
 const RELEASE_FAILED: &str = "Could not release keyboard focus. Try switching again.";
 
 #[derive(Debug, Clone)]
@@ -32,6 +32,7 @@ pub enum Event {
     OpenActions(u64),
     Run(u64, Action),
     ReleaseTimedOut(u64),
+    RestoreTimedOut(u64),
     Finished(Result<(), String>),
     Back,
 }
@@ -72,6 +73,7 @@ pub(super) struct Panel {
 enum Pending {
     Releasing(u64),
     Applying(Action),
+    Restoring,
 }
 
 impl Pending {
@@ -225,8 +227,14 @@ impl Panel {
         self.confirmation = None;
     }
 
-    fn switching(&self) -> bool {
-        self.pending.is_some_and(Pending::switching)
+    fn retains_focus(&self) -> bool {
+        self.pending.is_some_and(|pending| pending.switching() || pending == Pending::Restoring)
+    }
+
+    fn keyboard_restored(&mut self) {
+        if self.pending == Some(Pending::Restoring) {
+            self.pending = None;
+        }
     }
 
     fn interactive(&self) -> bool {
@@ -248,14 +256,8 @@ impl Panel {
         let attempt = self.switch_attempt;
         // The helper uses a separate Wayland connection. Wait for keyboard
         // leave before sending it an activation request.
-        Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None)).chain(Task::perform(
-            async {
-                if let Ok(runtime) = zruntime::SharedRuntime::current() {
-                    runtime.sleep(RELEASE_TIMEOUT).await;
-                }
-            },
-            move |()| Message::Windows { generation, event: Event::ReleaseTimedOut(attempt) },
-        ))
+        Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::None))
+            .chain(keyboard_timeout(generation, Event::ReleaseTimedOut(attempt)))
     }
 
     fn keyboard_released(&mut self, generation: u64) -> Task<Message> {
@@ -267,7 +269,7 @@ impl Panel {
         let Some(session) = &mut self.session else {
             let error =
                 self.error.clone().unwrap_or_else(|| "Could not read open windows. Reopen Switch windows.".into());
-            return self.finish(Err(error));
+            return self.finish(Err(error), generation);
         };
         self.pending = Some(Pending::Applying(action));
         Task::perform(session.perform(id, action), move |result| Message::Windows {
@@ -278,13 +280,17 @@ impl Panel {
 
     fn event(&mut self, event: Event, generation: u64) -> Task<Message> {
         match event {
-            Event::Finished(result) => self.finish(result),
+            Event::Finished(result) if self.pending != Some(Pending::Restoring) => self.finish(result, generation),
             Event::ReleaseTimedOut(attempt)
                 if self.switch_attempt == attempt && matches!(self.pending, Some(Pending::Releasing(_))) =>
             {
-                self.finish(Err(RELEASE_FAILED.into()))
+                self.finish(Err(RELEASE_FAILED.into()), generation)
             }
-            Event::Back if !self.switching() => {
+            Event::RestoreTimedOut(attempt) if self.switch_attempt == attempt => {
+                self.keyboard_restored();
+                Task::none()
+            }
+            Event::Back if !self.retains_focus() => {
                 self.menu = None;
                 crate::input::focus(self.input())
             }
@@ -312,7 +318,7 @@ impl Panel {
         Task::none()
     }
 
-    fn finish(&mut self, result: Result<(), String>) -> Task<Message> {
+    fn finish(&mut self, result: Result<(), String>, generation: u64) -> Task<Message> {
         let Some(pending) = self.pending.take() else { return Task::none() };
         match result {
             Ok(()) => {
@@ -323,8 +329,11 @@ impl Panel {
             Err(error) => self.error = Some(error),
         }
         if pending.switching() {
+            // A leave for the release request may still be queued when its timer fires.
+            self.pending = Some(Pending::Restoring);
             return Task::done(Message::KeyboardInteractivityChange(KeyboardInteractivity::Exclusive))
-                .chain(crate::input::focus(self.input()));
+                .chain(crate::input::focus(self.input()))
+                .chain(keyboard_timeout(generation, Event::RestoreTimedOut(self.switch_attempt)));
         }
         Task::none()
     }
@@ -362,7 +371,7 @@ impl Panel {
     }
 
     pub(super) fn view(&self, generation: u64, action_key: String) -> Element<'_, Message> {
-        let back = button(text("Back").size(12)).on_press_maybe((!self.switching()).then_some(Event::Back));
+        let back = button(text("Back").size(12)).on_press_maybe((!self.retains_focus()).then_some(Event::Back));
         let heading = if self.menu.is_some() { "Window actions" } else { "Switch windows" };
         let title = row![back.padding([6, 8]).style(status_button_style), text(heading).size(20)]
             .align_y(iced::Center)
@@ -442,7 +451,7 @@ impl Panel {
 
     fn footer(&self, action_key: String) -> Element<'_, Event> {
         let back = button(hint("Esc", "Back"))
-            .on_press_maybe((!self.switching()).then_some(Event::Back))
+            .on_press_maybe((!self.retains_focus()).then_some(Event::Back))
             .padding([4, 6])
             .style(status_button_style);
         let mut actions = row![back, space::horizontal()].align_y(iced::Center);
@@ -547,6 +556,17 @@ fn row_label<'a>(label: impl Into<std::borrow::Cow<'a, str>>, size: u32, role: p
     .into()
 }
 
+fn keyboard_timeout(generation: u64, event: Event) -> Task<Message> {
+    Task::perform(
+        async {
+            if let Ok(runtime) = zruntime::SharedRuntime::current() {
+                runtime.sleep(KEYBOARD_TIMEOUT).await;
+            }
+        },
+        move |()| Message::Windows { generation, event: event.clone() },
+    )
+}
+
 impl Launcher {
     pub(super) fn show_windows(&mut self) -> Task<Message> {
         self.panel = None;
@@ -575,11 +595,16 @@ impl Launcher {
         if panel.routes_to_parent(&message) {
             return update_content(self, message);
         }
-        if matches!(message, Message::FocusLost) {
-            return panel.keyboard_released(generation);
+        match message {
+            Message::FocusLost => return panel.keyboard_released(generation),
+            Message::FocusGained => {
+                panel.keyboard_restored();
+                return Task::none();
+            }
+            _ => {}
         }
         match panel.input_event(message, generation) {
-            Some(Event::Back) if panel.menu.is_none() && !panel.switching() => {
+            Some(Event::Back) if panel.menu.is_none() && !panel.retains_focus() => {
                 self.window_switcher.panel = None;
                 Task::batch([self.resize(), crate::input::focus(search_id())])
             }
@@ -595,7 +620,7 @@ impl Panel {
     fn routes_to_parent(&self, message: &Message) -> bool {
         match message {
             Message::Files { .. } | Message::Ui(_) | Message::InputClipboard(_) => true,
-            Message::FocusLost => !self.switching(),
+            Message::FocusLost => !self.retains_focus(),
             _ => false,
         }
     }
@@ -603,7 +628,7 @@ impl Panel {
     fn input_event(&mut self, message: Message, generation: u64) -> Option<Event> {
         match message {
             Message::Windows { generation: current, event } if current == generation => Some(event),
-            Message::Cmd(Command::Back) if !self.switching() => Some(Event::Back),
+            Message::Cmd(Command::Back) if !self.retains_focus() => Some(Event::Back),
             Message::Cmd(command) if self.interactive() => self.command(command),
             Message::Wheel(delta) if self.interactive() && self.menu.is_none() => {
                 self.move_by(-(delta.signum() as isize));
@@ -693,7 +718,7 @@ mod tests {
             panel.switch_attempt = 1;
             let stale = panel.event(Event::ReleaseTimedOut(0), 1);
             assert!(iced_runtime::task::into_stream(stale).is_none());
-            assert!(panel.switching());
+            assert!(panel.retains_focus());
 
             let restore = panel.event(event, 1);
             let mut actions = iced_runtime::task::into_stream(restore).unwrap();
@@ -702,11 +727,24 @@ mod tests {
                 Some(RuntimeAction::Output(Message::KeyboardInteractivityChange(KeyboardInteractivity::Exclusive)))
             ));
             assert!(matches!(block_on(actions.next()), Some(RuntimeAction::Widget(_))));
-            assert!(panel.pending.is_none());
+            assert!(panel.pending == Some(Pending::Restoring));
             assert_eq!(panel.query, "notes");
             assert_eq!(panel.selected(), Some(2));
             assert!(panel.error.is_some());
         }
+    }
+
+    #[test]
+    fn a_late_keyboard_leave_after_release_timeout_keeps_the_panel_open() {
+        let mut panel = Panel::new();
+        panel.pending = Some(Pending::Releasing(2));
+        panel.switch_attempt = 1;
+        let _ = panel.event(Event::ReleaseTimedOut(1), 1);
+        assert!(!panel.routes_to_parent(&Message::FocusLost));
+        let _ = panel.event(Event::RestoreTimedOut(0), 1);
+        assert!(!panel.routes_to_parent(&Message::FocusLost));
+        panel.keyboard_restored();
+        assert!(panel.routes_to_parent(&Message::FocusLost));
     }
 
     #[test]

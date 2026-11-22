@@ -342,6 +342,7 @@ pub enum Message {
     PanelClicked { target: Target, action: Action },
     Opened(Result<(), RunError>),
     InputClipboard(Option<Box<Message>>),
+    FocusGained,
     FocusLost,
     Ui(UiEvent),
 }
@@ -507,6 +508,7 @@ fn on_event(event: Event, _status: event::Status, _window: iced::window::Id) -> 
         Event::Window(iced::window::Event::RedrawRequested(at)) if timing::needs_frame() => {
             Some(Message::TimingFrame(at))
         }
+        Event::Window(iced::window::Event::Focused) => Some(Message::FocusGained),
         Event::Window(iced::window::Event::Unfocused) => Some(Message::FocusLost),
         _ => None,
     }
@@ -1008,6 +1010,13 @@ impl Launcher {
         self.scope = Scope::Files;
         let query = update(self, Message::Query(String::new()));
         Task::batch([query, crate::input::focus(search_id())])
+    }
+
+    fn leave_folder_search(&mut self) {
+        if self.search_folder.take().is_some() {
+            self.folder_search_history.clear();
+            self.scope_generation += 1;
+        }
     }
 
     fn restore_folder_search(&mut self, frame: FolderSearchFrame) {

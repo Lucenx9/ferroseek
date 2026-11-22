@@ -47,20 +47,25 @@ pub fn send(output: &mut impl Write, message: &impl Serialize, limit: u64) -> io
 }
 
 pub fn send_windows(output: &mut impl Write, entries: &[Entry], limit: u64) -> io::Result<()> {
-    let empty = Response::Windows { entries: &entries[..0], complete: false };
-    let overhead = serde_json::to_vec(&empty)?.len() as u64 + 1;
+    let overhead = |complete| {
+        serde_json::to_vec(&Response::Windows { entries: &entries[..0], complete })
+            .map(|encoded| encoded.len() as u64 + 1)
+    };
+    let continuation_overhead = overhead(false)?;
+    let final_overhead = overhead(true)?;
     let mut start = 0;
-    let mut bytes = overhead;
+    let mut bytes = 0;
     for (index, entry) in entries.iter().enumerate() {
+        let frame_overhead = if index + 1 == entries.len() { final_overhead } else { continuation_overhead };
         let size = serde_json::to_vec(entry)?.len() as u64;
-        if overhead + size > limit {
+        if frame_overhead + size > limit {
             return Err(frame_too_large());
         }
         let joined = bytes + size + u64::from(index > start);
-        if joined > limit {
+        if frame_overhead + joined > limit {
             send(output, &Response::Windows { entries: &entries[start..index], complete: false }, limit)?;
             start = index;
-            bytes = overhead + size;
+            bytes = size;
         } else {
             bytes = joined;
         }
@@ -98,6 +103,18 @@ mod tests {
             }
         }
         assert!(receive::<Response>(&mut input, &mut line, limit).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_exact_size_final_window_record_fits() {
+        let windows = [Entry { id: 1, title: "Report".into(), ..Entry::default() }];
+        let frame = Response::Windows { entries: &windows, complete: true };
+        let limit = serde_json::to_vec(&frame).unwrap().len() as u64 + 1;
+        let mut output = Vec::new();
+        send_windows(&mut output, &windows, limit).unwrap();
+        assert_eq!(output.len() as u64, limit);
+        let decoded: Response = receive(&mut output.as_slice(), &mut Vec::new(), limit).unwrap().unwrap();
+        assert!(matches!(decoded, Response::Windows { entries, complete: true } if entries == windows));
     }
 
     #[test]

@@ -2046,6 +2046,24 @@ fn saving_a_snippet_from_folder_search_selects_it_in_commands() {
 }
 
 #[test]
+fn saving_a_local_command_leaves_folder_search() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("launcher-scripts.toml"),
+        "[[command]]\ntitle = 'Check status'\nexecutable = '/synthetic/check'\n",
+    )
+    .unwrap();
+    let mut s = search_state();
+    s.scripts = scripts::State::load(&dir.path().join("config.toml"));
+    let _ = s.enter_folder_search(search_folder_hit("/synthetic/Reports"));
+    let generation = s.generation;
+    let _ = s.select_saved_local("Check status", |target| matches!(target, Target::Script(_)), "Command saved");
+    let _ = update(&mut s, Message::FolderListed { generation, result: Ok((file_hits(), true)) });
+    assert!(s.search_folder.is_none() && s.folder_search_history.is_empty() && s.files.is_empty());
+    assert_eq!(s.selected().map(|item| item.title.as_str()), Some("Check status"));
+}
+
+#[test]
 fn empty_commands_reports_catalog_errors() {
     let mut s = search_state();
     s.scripts.catalog.error = Some("invalid manifest".into());

@@ -114,8 +114,11 @@ On a desktop that supports the XDG GlobalShortcuts portal, the optional
 listener registers **Open FerroSeek** and the built-in commands for
 assignment by the desktop. Open **Settings → Global shortcuts**, or search
 for **Global shortcuts**. Choose **Start** (Enter) to run the listener for the
-current session. The desktop handles assignment. The page shows the key labels
-reported by the desktop and updates them when assignments change.
+current session. The desktop handles assignment. KDE's version 1 shortcuts
+portal restores saved assignments when it creates the session. If it restores
+FerroSeek shortcuts, the listener reuses them without reopening System Settings.
+The page shows the key labels reported by the desktop and updates them when
+assignments change.
 
 From a built-in command result, use **Actions → Global shortcut** to see its
 binding. **Configure** opens the desktop's shortcut settings when supported.
