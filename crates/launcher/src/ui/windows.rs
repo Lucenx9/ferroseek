@@ -8,9 +8,9 @@ use iced::{Element, Length, Task, Theme};
 use iced_layershell::reexport::KeyboardInteractivity;
 
 use super::{
-    ICON_SIZE, Launcher, Message, divider, field_style, footer_button, footer_style, hint, label_for_width,
-    numbered_slot, page_header, palette, primary_hint, search_id, selectable_result_row, status_button_style,
-    surface_style, update_content,
+    ICON_SIZE, Launcher, Message, divider, field_style, footer_button, footer_style, hint, keyed_footer_button,
+    label_for_width, numbered_slot, page_header, palette, primary_hint, search_id, selectable_result_row,
+    status_button_style, surface_style, update_content,
 };
 use crate::apps::App;
 use crate::icons::{Icon, Icons};
@@ -31,6 +31,7 @@ pub enum Event {
     DoubleClick(u64),
     OpenActions(u64),
     Run(u64, Action),
+    Apply(u64, Action),
     ReleaseTimedOut(u64),
     RestoreTimedOut(u64),
     Finished(Result<(), String>),
@@ -301,21 +302,33 @@ impl Panel {
 
     fn apply_input(&mut self, event: Event, generation: u64) -> Task<Message> {
         match event {
-            Event::OpenActions(id) if self.select(id) => {
-                self.menu = Some(0);
-                self.press = None;
-                self.confirmation = None;
-                self.error = None;
-            }
+            Event::OpenActions(id) => self.open_actions(id),
             Event::Query(query) if self.menu.is_none() => self.change_query(query),
             Event::Press(id) if self.menu.is_none() => self.press(id),
             Event::DoubleClick(id) if self.press.take() == Some((id, true)) => {
                 return self.run(id, Action::Switch, generation);
             }
+            Event::Apply(id, action)
+                if matches!(
+                    self.menu.and_then(|choice| self.menu_action(choice)),
+                    Some(Event::Run(target, current)) if target == id && current == action
+                ) =>
+            {
+                return self.run(id, action, generation);
+            }
             Event::Run(id, action) => return self.run(id, action, generation),
             _ => {}
         }
         Task::none()
+    }
+
+    fn open_actions(&mut self, id: u64) {
+        if self.select(id) {
+            self.menu = Some(0);
+            self.press = None;
+            self.confirmation = None;
+            self.error = None;
+        }
     }
 
     fn finish(&mut self, result: Result<(), String>, generation: u64) -> Task<Message> {
@@ -459,12 +472,18 @@ impl Panel {
     }
 
     fn footer_actions(&self, id: u64, action_key: String) -> Vec<Element<'_, Event>> {
-        let control = |label, event| footer_button(label, event);
         match self.menu {
-            Some(choice) => vec![control(primary_hint("Enter", "Apply"), self.menu_action(choice))],
+            Some(choice) => {
+                let Some(Event::Run(id, action)) = self.menu_action(choice) else { return Vec::new() };
+                vec![keyed_footer_button((id, Some(action)), primary_hint("Enter", "Apply"), Event::Apply(id, action))]
+            }
             None => vec![
-                control(hint(action_key, "Actions"), Some(Event::OpenActions(id))),
-                control(primary_hint("Enter", "Switch"), Some(Event::Run(id, Action::Switch))),
+                keyed_footer_button((id, None::<Action>), hint(action_key, "Actions"), Event::OpenActions(id)),
+                keyed_footer_button(
+                    (id, Some(Action::Switch)),
+                    primary_hint("Enter", "Switch"),
+                    Event::Run(id, Action::Switch),
+                ),
             ],
         }
     }
@@ -685,6 +704,61 @@ mod tests {
         refresh(&mut panel, vec![window(1, "Report")]);
         assert!(panel.menu.is_none());
         assert!(panel.command(Command::Activate).is_none());
+    }
+
+    #[test]
+    fn window_footer_cancels_a_press_when_its_target_or_action_changes() {
+        use iced::{Event as Input, Point, Size, mouse};
+        use iced_runtime::{UserInterface, user_interface::Cache};
+
+        let mut panel = Panel::new();
+        refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
+        let press = Input::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let release = Input::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left));
+        let mut cache = Cache::default();
+        let mut renderer =
+            iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)));
+        let mut send = |panel: &Panel, events: &[Input]| {
+            let footer = row![space::horizontal()]
+                .extend(panel.footer_actions(panel.selected().unwrap(), "Ctrl+K".into()))
+                .align_y(iced::Center)
+                .height(FOOTER_HEIGHT);
+            let mut ui = UserInterface::build(
+                footer,
+                Size::new(400.0, FOOTER_HEIGHT),
+                std::mem::take(&mut cache),
+                &mut renderer,
+            );
+            let mut messages = Vec::new();
+            ui.update(
+                events,
+                mouse::Cursor::Available(Point::new(380.0, FOOTER_HEIGHT / 2.0)),
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+            cache = ui.into_cache();
+            messages
+        };
+
+        assert!(send(&panel, std::slice::from_ref(&press)).is_empty());
+        assert!(panel.command(Command::Down).is_none());
+        assert_eq!(panel.selected(), Some(2));
+        let switched = send(&panel, std::slice::from_ref(&release));
+        assert!(matches!(send(&panel, &[press.clone(), release.clone()]).as_slice(), [Event::Run(2, Action::Switch)]));
+
+        panel.menu = Some(0);
+        assert!(send(&panel, std::slice::from_ref(&press)).is_empty());
+        refresh(&mut panel, vec![window(1, "Report"), Entry { maximized: true, ..window(2, "Notes") }]);
+        let applied = send(&panel, std::slice::from_ref(&release));
+        let mut queued = send(&panel, &[press, release]);
+        assert!(matches!(queued.as_slice(), [Event::Apply(2, Action::Maximize(false))]));
+        assert!(switched.is_empty() && applied.is_empty(), "stale releases dispatched {switched:?} and {applied:?}");
+        // A live update may also be delivered ahead of an already queued click.
+        refresh(&mut panel, vec![window(1, "Report"), window(2, "Notes")]);
+        panel.confirmation = Some("Window size restored");
+        let _ = panel.apply_input(queued.remove(0), 1);
+        assert_eq!(panel.notice(), "Window size restored", "the queued inverse action must not run");
     }
 
     #[test]
