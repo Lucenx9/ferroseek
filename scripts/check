@@ -61,7 +61,8 @@ launcher_needed() {
     # Include both sides of a rename when a launcher input moves out of scope.
     local status=0
     git diff --quiet --no-ext-diff --no-renames "$1" "$2" -- \
-        crates/{launcher,daemon,index,engine,config,desktop} Cargo.toml Cargo.lock .cargo data \
+        crates ':(exclude)crates/cli' ':(exclude)crates/bench' ':(exclude)crates/mcp' \
+        Cargo.toml Cargo.lock .cargo data \
         'tests/launcher-*' scripts/{check,prove-launcher,verify-launcher-report.py} \
         .github/workflows/{ci,launcher-interaction}.yml || status=$?
     case "$status" in
