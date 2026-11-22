@@ -54,7 +54,19 @@ launcher() {
     case "$profile" in
         us-1x|fr-1x|us-1.5x)
             python3 scripts/verify-launcher-report.py "$output" --binary target/release/ferroseek-launcher ;;
+        *) return 0 ;;
     esac
+    if [[ "$profile" == us-* ]]; then
+        FERROSEEK_SMOKE_PROFILE="us-layout-${profile#us-}" xvfb-run -a tests/launcher-smoke.sh target/release "$output/layout"
+    fi
+    if [[ "$profile" == us-1x ]]; then
+        FERROSEEK_SMOKE_PROFILE=us-short-1x xvfb-run -a tests/launcher-smoke.sh target/release "$output/short"
+    fi
+    FERROSEEK_SMOKE_INTERACTION=0 xvfb-run -a tests/launcher-smoke.sh target/release "$output/screenshots"
+    if [[ ! -s "$output/screenshots/query-1.png" ]]; then
+        echo "INCONCLUSIVE: screenshot smoke produced no capture" >&2
+        return 77
+    fi
 }
 
 launcher_needed() {

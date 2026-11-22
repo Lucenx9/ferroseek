@@ -66,7 +66,8 @@ SIGKILL, makes further changes while it is down and requires the oracle to
 detect drift. It restarts the daemon with the same index, waits for that process
 to report idle and runs the oracle again. The check passes only on a stable match
 after automatic recovery. The script prints the seed. Use `--seed NUMBER` to
-replay another run.
+repeat the filesystem operations. The kernel determines which live events have
+reached the index when the daemon stops.
 
 Deterministic tests inject EIO, ESTALE and EACCES at stat boundaries and EIO
 inside directory iteration, exercising the real reconciliation code with real

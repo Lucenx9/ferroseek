@@ -38,14 +38,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - id: scope
         env:
           EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          needed=false
+          needed=true
           if [[ "$EVENT" == pull_request ]]; then
             needed=$(scripts/check launcher-needed HEAD^1 HEAD)
+          elif git cat-file -e "$BEFORE^{commit}"; then
+            needed=$(scripts/check launcher-needed "$BEFORE" HEAD)
           fi
           echo "needed=$needed" >> "$GITHUB_OUTPUT"
 

@@ -24,30 +24,6 @@ jobs:
       - name: Exercise real keyboard input in virtual KWin
         id: interaction
         run: scripts/check launcher "${{ matrix.profile }}" "$RUNNER_TEMP/launcher-interaction"
-      - name: Exercise constrained layout in virtual KWin
-        if: matrix.profile == 'us-1x' || matrix.profile == 'us-1.5x'
-        run: |
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QT_LOGGING_RULES='*.debug=false'
-          export FERROSEEK_SMOKE_INTERACTION=1
-          export FERROSEEK_SMOKE_MODE=all
-          if [[ '${{ matrix.profile }}' == 'us-1x' ]]; then
-            export FERROSEEK_SMOKE_PROFILE=us-layout-1x
-          else
-            export FERROSEEK_SMOKE_PROFILE=us-layout-1.5x
-          fi
-          xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/layout"
-          if [[ '${{ matrix.profile }}' == 'us-1x' ]]; then
-            FERROSEEK_SMOKE_PROFILE=us-short-1x xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/short"
-          fi
-      - name: Exercise screenshot-only smoke mode
-        if: matrix.profile != 'us-multi'
-        run: |
-          export LIBGL_ALWAYS_SOFTWARE=1
-          export QT_LOGGING_RULES='*.debug=false'
-          export FERROSEEK_SMOKE_INTERACTION=0
-          export FERROSEEK_SMOKE_PROFILE=${{ matrix.profile }}
-          xvfb-run -a tests/launcher-smoke.sh target/release "$RUNNER_TEMP/launcher-interaction/screenshots"
       - uses: actions/upload-artifact@v4
         id: evidence
         if: always()
