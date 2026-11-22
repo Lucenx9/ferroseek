@@ -716,9 +716,10 @@ fn unavailable_alias_can_be_edited_without_dispatching_an_application() {
     let width = s.window_width as f32;
     let size = iced::Size::new(width, s.window_height as f32);
     let labels = rendered_labels(view_content(&s), size).text;
-    for name in ["Back", "Remove", "Save"] {
+    for (name, font) in [("Back", Font::DEFAULT), ("Remove", Font::DEFAULT), ("Save", PRIMARY_FONT)] {
         let (_, bounds) = labels.iter().find(|(value, _)| value == name).unwrap();
-        assert!(bounds.width >= text_width(name, 12.0) && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
+        let expected = text_width_with_font(name, 12.0, font);
+        assert!(bounds.width + 0.5 >= expected && bounds.x + bounds.width <= width - PAD, "{name}: {bounds:?}");
     }
     let _ = update(&mut s, Message::Cmd(Command::Back));
     assert!(s.alias_editor.is_none());

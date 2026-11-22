@@ -2884,10 +2884,12 @@ pub(crate) fn hint<'a, M: 'a>(key: impl text::IntoFragment<'a>, label: &'a str) 
     .into()
 }
 
+const PRIMARY_FONT: Font = Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT };
+
 pub(crate) fn primary_label<'a, M: 'a>(label: &'a str) -> Element<'a, M> {
     text(label)
         .size(12)
-        .font(Font { weight: iced::font::Weight::Semibold, ..Font::DEFAULT })
+        .font(PRIMARY_FONT)
         .style(|theme: &Theme| text::Style { color: Some(palette::TEXT.resolve(theme)) })
         .into()
 }
@@ -3096,17 +3098,32 @@ pub(crate) fn text_width(content: &str, size: f32) -> f32 {
     measure_text(content, size, iced::Size::INFINITE, text::Wrapping::None).width
 }
 
+#[cfg(test)]
+fn text_width_with_font(content: &str, size: f32, font: Font) -> f32 {
+    measure_text_with_font(content, size, font, iced::Size::INFINITE, text::Wrapping::None).width
+}
+
 fn measure_text(content: &str, size: f32, bounds: iced::Size, wrapping: text::Wrapping) -> iced::Size {
+    measure_text_with_font(content, size, iced::Font::DEFAULT, bounds, wrapping)
+}
+
+fn measure_text_with_font(
+    content: &str,
+    size: f32,
+    font: Font,
+    bounds: iced::Size,
+    wrapping: text::Wrapping,
+) -> iced::Size {
     use iced::advanced::text::{Paragraph, Renderer};
 
-    // Measure the same default font and shaping as the labels; character counts
+    // Measure the same font and shaping as the labels; character counts
     // cannot predict wide glyphs or the space left by icons, tags and the sidebar.
     <iced::Renderer as Renderer>::Paragraph::with_text(iced::advanced::text::Text {
         content,
         bounds,
         size: iced::Pixels(size),
         line_height: Default::default(),
-        font: iced::Font::DEFAULT,
+        font,
         align_x: Default::default(),
         align_y: Vertical::Top,
         shaping: Default::default(),
