@@ -3121,6 +3121,32 @@ fn picker_numbered_commands_resolve_current_filtered_and_scrolled_app_ids() {
     assert!(
         matches!(panel.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == "editor-07.desktop")
     );
+    for (height, first_id, visible_rows) in [(419, "editor-03.desktop", 3..7), (515, "editor-01.desktop", 1..7)] {
+        let mut sized = open_with::Panel::new(file_hits().remove(0));
+        sized.resize(height, false);
+        sized.loaded(Ok(picker_choices(7)), &mut Icons::disabled());
+        let _ = sized.command(Command::Last);
+        assert!(
+            matches!(sized.command(Command::ActivateVisible(0)), open_with::Effect::Open(id) if id == first_id),
+            "height {height} must dispatch {first_id} as the first visible row"
+        );
+        let labels = rendered_labels(sized.view(false, false), iced::Size::new(608.0, height as f32)).text;
+        let body_bottom = height as f32 - PAD - FOOTER_HEIGHT - 1.0;
+        for index in visible_rows {
+            for expected in [format!("Editor {index:02}"), format!("editor-{index:02}.desktop")] {
+                let (_, bounds) = labels.iter().find(|(value, _)| value == &expected).unwrap();
+                assert!(
+                    bounds.y + bounds.height <= body_bottom,
+                    "height {height} clipped {expected} into divider/footer: {bounds:?}"
+                );
+            }
+        }
+        let (_, open) = labels.iter().find(|(value, _)| value == "Open").unwrap();
+        assert!(
+            open.y >= height as f32 - PAD - FOOTER_HEIGHT && open.y + open.height <= height as f32 - PAD,
+            "height {height} pushed footer Open out of bounds: {open:?}"
+        );
+    }
 }
 
 #[test]

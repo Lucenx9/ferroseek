@@ -192,7 +192,7 @@ impl Panel {
     /// Fit rows after reserving the header, input, footer and feedback headroom.
     /// Error text can wrap.
     pub fn resize(&mut self, height: u32, opening: bool) {
-        let reserved = 232
+        let reserved = 228
             + if self.error.is_some() {
                 100
             } else if opening {
@@ -341,18 +341,15 @@ impl Panel {
             }));
         }
         let body = container(body).padding(iced::padding::left(if filtered.is_empty() { 12 } else { 0 }));
-        container(
-            column![
-                ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
-                ui::divider(),
-                container(self.file_context()).width(Length::Fill).clip(true).padding([4, 16]),
-                container(input).padding([0, 16]),
-                container(body).padding([4, 4]).height(Length::Fill),
-                ui::divider(),
-                self.footer(opening, can_open, &filtered)
-            ]
-            .spacing(3),
-        )
+        container(column![
+            ui::back_refresh_header("Open with…", Event::ReturnToSearch, reload),
+            ui::divider(),
+            container(self.file_context()).width(Length::Fill).clip(true).padding([6, 16]),
+            container(input).padding([0, 16]),
+            container(body).padding([6, 4]).height(Length::Fill),
+            ui::divider(),
+            self.footer(opening, can_open, &filtered)
+        ])
         .padding(8)
         .width(Length::Fill)
         .height(Length::Fill)
