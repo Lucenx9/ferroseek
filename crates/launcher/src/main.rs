@@ -34,7 +34,7 @@ mod ui;
 
 use std::process::ExitCode;
 
-use commands::Builtin;
+use commands::DirectCommand;
 use ferroseek_launcher::{clipboard_history, favorites, matcher, uri, usage, window_switcher};
 
 const USAGE: &str = "\
@@ -46,7 +46,7 @@ Opens the launcher, or closes it when it is already open. Bind the command
 to a global shortcut in the desktop settings.
 
   --query TEXT       start with TEXT already typed
-  --command ID       open a built-in command directly
+  --command ID       open a built-in command or review a local command or workflow
   --list-commands    print built-in command IDs and titles
   --global-shortcuts listen for shortcuts assigned through the desktop portal
   --opaque           use a solid surface without background blur
@@ -71,13 +71,13 @@ struct LaunchOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Destination {
     Search(String),
-    Command(Builtin),
+    Command(DirectCommand),
 }
 
 impl Destination {
-    fn command(&self) -> Option<Builtin> {
+    fn command(&self) -> Option<&DirectCommand> {
         match self {
-            Self::Command(command) => Some(*command),
+            Self::Command(command) => Some(command),
             Self::Search(_) => None,
         }
     }
@@ -155,9 +155,9 @@ fn parse_destination(
         return Err(usage_error("choose either --query or --command"));
     }
     if flag == "--command" {
-        return Builtin::from_id(&value)
+        return DirectCommand::parse(&value)
             .map(Destination::Command)
-            .ok_or_else(|| usage_error("unknown built-in command ID. Use --list-commands to list them."));
+            .ok_or_else(|| usage_error("invalid command ID. Use --list-commands or Copy launch command."));
     }
     Ok(Destination::Search(value))
 }
@@ -167,14 +167,16 @@ fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> E
     let scan =
         std::thread::spawn(|| apps::scan(&apps::data_dirs(), &apps::current_locales(), &apps::current_desktops()));
     let activation = activation::Activation::default();
-    let (backend, events) = match backend::start(activation.clone(), destination.command(), private) {
-        Ok(backend::Startup::Primary(b, ev)) => (b, ev),
-        Ok(backend::Startup::Forwarded) => return ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("ferroseek-launcher: {e}");
-            return ExitCode::from(1);
-        }
-    };
+    let settings_path = ferroseek_config::Paths::from_env().config_file;
+    let (backend, events) =
+        match backend::start(activation.clone(), destination.command().cloned(), private, settings_path.clone()) {
+            Ok(backend::Startup::Primary(b, ev)) => (b, ev),
+            Ok(backend::Startup::Forwarded) => return ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("ferroseek-launcher: {e}");
+                return ExitCode::from(1);
+            }
+        };
     if let Err(error) = clipboard_history::launcher_started(private) {
         eprintln!("ferroseek-launcher: cannot pause clipboard recording: {error}");
         return ExitCode::from(1);
@@ -189,7 +191,6 @@ fn launch_ui(LaunchOptions { destination, private, opaque }: LaunchOptions) -> E
     } else {
         favorites::Favorites::load(favorites::Favorites::default_path())
     };
-    let settings_path = ferroseek_config::Paths::from_env().config_file;
     let config = ferroseek_config::Config::load(&settings_path).unwrap_or_default();
     timing::event("ui_starting");
     match ui::run(

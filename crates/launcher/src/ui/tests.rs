@@ -2,6 +2,7 @@
 //! Launcher window tests: input routing, view state and rendering helpers.
 
 use super::*;
+use crate::commands::{DirectCommand, Invocation};
 
 fn typed(value: &str, modifiers: Modifiers) -> Event {
     Event::Keyboard(keyboard::Event::KeyPressed {
@@ -3318,7 +3319,7 @@ fn first_run_defers_file_queries_until_folders_are_applied() {
 #[test]
 fn direct_command_waits_for_first_run_setup() {
     let mut s = search_state();
-    s.deferred_destination = Some(Destination::Command(crate::commands::Builtin::Settings));
+    s.deferred_destination = Some(Destination::Command(DirectCommand::Builtin(crate::commands::Builtin::Settings)));
     let _ = s.show_folders(true);
     assert!(s.settings.is_none());
     let _ = s.finish_folders(Task::none(), folders::Effect::Applied);
@@ -3334,12 +3335,12 @@ fn forwarded_commands_keep_parent_search_and_respect_the_active_view() {
 
     let mut s = search_state();
     let _ = update(&mut s, Message::Query("report".into()));
-    let (request, mut reply) = CommandRequest::new(Builtin::Shortcuts);
+    let (request, mut reply) = CommandRequest::new(Ok(Invocation::Builtin(Builtin::Shortcuts)));
     let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
     assert_eq!(reply.try_recv().unwrap(), Some(Ok(())));
     assert_eq!((s.shortcuts.panel.is_some(), s.query.as_str()), (true, "report"));
 
-    let (request, mut reply) = CommandRequest::new(Builtin::Appearance);
+    let (request, mut reply) = CommandRequest::new(Ok(Invocation::Builtin(Builtin::Appearance)));
     let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
     assert!(matches!(reply.try_recv().unwrap(), Some(Err(_))));
     assert_eq!((s.shortcuts.panel.is_some(), s.appearance.is_none(), s.query.as_str()), (true, true, "report"));
@@ -3348,10 +3349,66 @@ fn forwarded_commands_keep_parent_search_and_respect_the_active_view() {
 #[test]
 fn a_command_whose_caller_timed_out_never_opens_a_view() {
     let mut s = search_state();
-    let (request, reply) = crate::backend::CommandRequest::new(crate::commands::Builtin::Settings);
+    let (request, reply) =
+        crate::backend::CommandRequest::new(Ok(Invocation::Builtin(crate::commands::Builtin::Settings)));
     drop(reply);
     let _ = update(&mut s, Message::Ui(UiEvent::OpenCommand(request)));
     assert!(s.settings.is_none());
+}
+
+#[test]
+fn local_shortcuts_preserve_search_and_require_review_before_running() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path().join("launcher-scripts.toml");
+    std::fs::write(
+        &manifest,
+        r#"
+[[command]]
+title = "Daily check"
+executable = "/synthetic/daily-check"
+
+[[workflow]]
+title = "Daily review"
+steps = ["Daily check", "Daily check"]
+"#,
+    )
+    .unwrap();
+    let mut state = search_state();
+    state.settings_path = dir.path().join("config.toml");
+    state.scripts = scripts::State::load(&state.settings_path);
+    state.output_bounds = Some((320, 332));
+
+    for title in ["Daily check", "Daily review"] {
+        let _ = update(&mut state, Message::Query(title.into()));
+        let target = state.selected().unwrap().target.clone();
+        let _ = command(&mut state, Command::OpenActions);
+        let _ = update(&mut state, Message::ActionQuery("global shortcut".into()));
+        let _ = command(&mut state, Command::Activate);
+        assert!(state.global_shortcuts.panel.is_some());
+
+        let key = state.scripts.history_key(&target).unwrap().to_owned();
+        let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+        let labels = rendered_labels(view_content(&state), size).text;
+        assert!(labels.iter().any(|(label, _)| label == &format!("ferroseek-launcher --command {key}")));
+        assert!(labels.iter().any(|(label, _)| label == "Copy launch command"));
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+
+        let invocation = Invocation::local(&state.scripts.catalog, key);
+        let (request, mut reply) = crate::backend::CommandRequest::new(invocation);
+        let _ = update(&mut state, Message::Ui(UiEvent::OpenCommand(request)));
+        assert_eq!(reply.try_recv().unwrap(), Some(Ok(())));
+        assert!(state.scripts.panel.as_ref().unwrap().prompt().is_some());
+        let _ = update(&mut state, Message::Cmd(Command::Back));
+        assert_eq!(state.query, title);
+        assert_eq!(state.selected().unwrap().target, target);
+    }
+    let _ = update(&mut state, Message::Query(String::new()));
+    let missing = DirectCommand::Local(format!("script-v1:{}", "0".repeat(64)));
+    let _ = state.open_startup_destination(Destination::Command(missing));
+    assert!(state.scripts.panel.is_none());
+    let size = iced::Size::new(state.window_width as f32, state.window_height as f32);
+    let labels = rendered_labels(view_content(&state), size).text;
+    assert!(labels.iter().any(|(label, _)| label == "Shortcut unavailable. Reassign it."));
 }
 
 #[test]

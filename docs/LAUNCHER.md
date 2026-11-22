@@ -84,7 +84,7 @@ to edit the latest version.
 
 The bindings apply inside the launcher window. Set the global shortcut for
 launching FerroSeek through your [desktop configuration](#build-and-run).
-To bind an individual command, use its ID from `ferroseek-launcher --list-commands`.
+To bind a built-in command, use its ID from `ferroseek-launcher --list-commands`.
 For example, bind the following command to open **Clipboard history** directly.
 
 ```sh
@@ -96,6 +96,13 @@ window and Back returns to the previous search. Return to search first if
 another view is open. If folder setup is required, the command opens after
 setup is applied. Add `--private` to require a private session. Close an
 existing regular window first.
+
+For a local command or workflow, choose **Actions → Global shortcut** and
+**Copy launch command** (Ctrl+Shift+C). Assign that command to a key in your
+desktop settings. The shortcut opens a review with any required inputs. Use
+**Run** (Ctrl+Enter) to execute it. If the runnable definition changes, copy
+and assign a new launch command. If you edit `launcher-scripts.toml` outside
+the launcher, reopen FerroSeek before copying the new launch command.
 
 ### Desktop portal shortcuts
 

@@ -52,6 +52,8 @@ published release or verified compatibility with every Linux desktop.
   conflict feedback, restore defaults and recovery controls.
 - [x] Direct built-in command entry points for desktop-assigned shortcuts,
   preserving the running search and protecting open edits.
+- [x] Desktop-assigned shortcuts for local commands and workflows that open
+  review for the bound runnable definition.
 - [x] Optional GlobalShortcuts portal listener with a managed desktop
   identity and user service for activation while the launcher is closed.
 - [x] Start, inspect, configure and stop desktop shortcuts in launcher settings.

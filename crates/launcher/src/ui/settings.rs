@@ -34,7 +34,7 @@ impl Entry {
         match self {
             Self::Appearance => super::update(launcher, Message::ShowAppearance),
             Self::Shortcuts => launcher.show_shortcuts(),
-            Self::GlobalShortcuts => launcher.show_global_shortcuts(None),
+            Self::GlobalShortcuts => launcher.show_global_shortcuts(),
             Self::SearchFolders => super::update(launcher, Message::ShowFolders),
             Self::SearchStatus => super::update(launcher, Message::ShowSearchStatus),
         }

@@ -23,6 +23,16 @@ pub use workflow::{Plan, Workflow};
 
 const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 const MAX_COMMANDS: usize = 128;
+const SCRIPT_KEY: &str = "script-v1";
+const WORKFLOW_KEY: &str = "workflow-v1";
+
+pub(crate) fn is_definition_key(key: &str) -> bool {
+    key.split_once(':').is_some_and(|(kind, digest)| {
+        matches!(kind, SCRIPT_KEY | WORKFLOW_KEY)
+            && digest.len() == 64
+            && digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +116,18 @@ impl Catalog {
         self.history.get(key)
     }
 
+    pub(crate) fn shortcut_plan(&self, key: &str) -> Result<Plan, &'static str> {
+        let mut plan = match self.history_entry(key) {
+            Some(HistoryEntry::Script(script)) => Plan::single(Arc::clone(script)),
+            Some(HistoryEntry::Workflow(workflow)) => self
+                .plan(workflow)
+                .map_err(|_| "This workflow is unavailable. Check its steps and update the shortcut.")?,
+            None => return Err("Shortcut unavailable. Reassign it."),
+        };
+        plan.confirm = true;
+        Ok(plan)
+    }
+
     pub(crate) fn history_key(&self, title: &str) -> Option<&str> {
         self.history.iter().find(|(_, entry)| entry.title() == title).map(|(key, _)| key.as_str())
     }
@@ -118,7 +140,7 @@ fn history_entries(commands: &[Arc<Script>], workflows: &[Arc<Workflow>]) -> Has
         .collect();
     let workflow_entries = workflows.iter().filter_map(|workflow| {
         let ordered = workflow.resolve_steps(|title| scripts.get(title).map(|(key, _)| key.as_str())).ok()?;
-        let key = history_key("workflow-v1", (&workflow.title, ordered))?;
+        let key = history_key(WORKFLOW_KEY, (&workflow.title, ordered))?;
         Some((key, HistoryEntry::Workflow(Arc::clone(workflow))))
     });
     scripts
@@ -221,7 +243,7 @@ fn validate(command: &Script, titles: &mut HashSet<String>) -> Result<(), &'stat
 
 impl Script {
     fn history_key(&self) -> Option<String> {
-        history_key("script-v1", (&self.title, &self.executable, &self.args, &self.parameters, self.confirm))
+        history_key(SCRIPT_KEY, (&self.title, &self.executable, &self.args, &self.parameters, self.confirm))
     }
 
     pub fn validate(&self) -> Result<(), &'static str> {

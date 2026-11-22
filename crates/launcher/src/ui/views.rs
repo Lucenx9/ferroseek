@@ -2,11 +2,12 @@
 //! Launcher navigation and secondary views.
 
 use super::{
-    Launcher, Message, NARROW_SEARCH_WIDTH, SearchStatusPanel, Shortcut, actions_id, hint, page_header, palette,
-    search_id, search_status_view, settings, status_button_style, tab_style, update,
+    Launcher, Message, NARROW_SEARCH_WIDTH, SearchStatusPanel, Shortcut, Status, actions_id, hint, page_header,
+    palette, search_id, search_status_view, settings, status_button_style, tab_style, update,
 };
+use crate::Destination;
 use crate::backend::{CommandRequest, FileHit, SearchStatus};
-use crate::commands::Builtin;
+use crate::commands::{Builtin, DirectCommand, Invocation};
 use crate::model::{ClickTracker, Item, Scope, Section, Target};
 use crate::shortcuts::Routing;
 use crate::usage;
@@ -395,7 +396,7 @@ impl Launcher {
             Builtin::CreateScript => self.open_script_editor(None),
             Builtin::CreateWorkflow => self.open_workflow_editor(None),
             Builtin::Shortcuts => self.show_shortcuts(),
-            Builtin::GlobalShortcuts => self.show_global_shortcuts(None),
+            Builtin::GlobalShortcuts => self.show_global_shortcuts(),
             Builtin::ClipboardHistory => self.show_clipboard_history(),
             Builtin::SwitchWindows => self.show_windows(),
         };
@@ -416,14 +417,46 @@ impl Launcher {
             let _ = reply.send(Err("Return to the launcher search before opening another command."));
             return Task::none();
         }
-        let open = self.open_direct_command(request.command);
-        let _ = reply.send(Ok(()));
-        open
+        let result = request.command.map(|command| self.open_direct_command(command));
+        let _ = reply.send(result.as_ref().map(|_| ()).map_err(|&error| error));
+        self.destination_task(result)
     }
 
-    pub(super) fn open_direct_command(&mut self, command: Builtin) -> Task<Message> {
+    pub(super) fn open_startup_destination(&mut self, destination: Destination) -> Task<Message> {
+        let result = self.open_destination(destination);
+        self.destination_task(result)
+    }
+
+    pub(super) fn open_setup_destination(&mut self, destination: Destination) -> Task<Message> {
+        let result = self.open_destination(destination);
+        if result.is_ok() {
+            self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
+        }
+        self.destination_task(result)
+    }
+
+    fn open_destination(&mut self, destination: Destination) -> Result<Task<Message>, &'static str> {
+        let command = match destination {
+            Destination::Search(query) => return Ok(update(self, Message::Query(query))),
+            Destination::Command(DirectCommand::Builtin(command)) => Invocation::Builtin(command),
+            Destination::Command(DirectCommand::Local(key)) => Invocation::local(&self.scripts.catalog, key)?,
+        };
+        Ok(self.open_direct_command(command))
+    }
+
+    fn destination_task(&mut self, result: Result<Task<Message>, &'static str>) -> Task<Message> {
+        result.unwrap_or_else(|error| {
+            self.status = Status::Error(error.into());
+            Task::none()
+        })
+    }
+
+    fn open_direct_command(&mut self, command: Invocation) -> Task<Message> {
         timing::event("direct_command_opened");
-        self.open_builtin(command)
+        match command {
+            Invocation::Builtin(command) => self.open_builtin(command),
+            Invocation::Local { key, plan } => self.show_plan(plan, Some(key)),
+        }
     }
 
     pub(super) fn show_appearance(&mut self, tab: appearance::Tab) -> Task<Message> {

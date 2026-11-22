@@ -1,7 +1,54 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Searchable destinations implemented by the launcher itself.
 
+use std::fmt;
+use std::sync::Arc;
+
 use crate::matcher;
+use crate::script_commands::{self, Catalog, Plan};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectCommand {
+    Builtin(Builtin),
+    Local(String),
+}
+
+impl DirectCommand {
+    pub(crate) fn parse(id: &str) -> Option<Self> {
+        Builtin::from_id(id)
+            .map(Self::Builtin)
+            .or_else(|| script_commands::is_definition_key(id).then(|| Self::Local(id.into())))
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            Self::Builtin(command) => command.id(),
+            Self::Local(key) => key,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum Invocation {
+    Builtin(Builtin),
+    Local { key: String, plan: Arc<Plan> },
+}
+
+impl Invocation {
+    pub(crate) fn local(catalog: &Catalog, key: String) -> Result<Self, &'static str> {
+        let plan = Arc::new(catalog.shortcut_plan(&key)?);
+        Ok(Self::Local { key, plan })
+    }
+}
+
+impl fmt::Debug for Invocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Builtin(command) => f.debug_tuple("Builtin").field(command).finish(),
+            Self::Local { key, .. } => f.debug_tuple("Local").field(key).finish(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {

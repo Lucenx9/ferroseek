@@ -115,10 +115,10 @@ pub(super) struct Panel {
 }
 
 impl Panel {
-    fn new(plan: Plan, history_key: Option<String>) -> Self {
+    fn new(plan: Arc<Plan>, history_key: Option<String>) -> Self {
         let prompt = Prompt::new(plan.parameters.len());
         Self {
-            plan: Arc::new(plan),
+            plan,
             history_key,
             stage: Stage::Confirm { prompt, previous: None },
             scroll: Id::unique(),
@@ -361,6 +361,10 @@ impl Launcher {
 
     fn open_plan(&mut self, plan: Plan) -> Task<Message> {
         let history_key = self.scripts.catalog.history_key(&plan.title).map(str::to_owned);
+        self.show_plan(Arc::new(plan), history_key)
+    }
+
+    pub(super) fn show_plan(&mut self, plan: Arc<Plan>, history_key: Option<String>) -> Task<Message> {
         let panel = Panel::new(plan, history_key);
         let initial = if panel.needs_review() { Event::Focus(0) } else { Event::Run };
         self.panel = None;

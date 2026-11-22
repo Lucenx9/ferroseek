@@ -14,7 +14,8 @@ use std::time::Duration;
 use ferroseek_config::Config;
 
 use crate::activation::Activation;
-use crate::commands::Builtin;
+use crate::commands::{DirectCommand, Invocation};
+use crate::script_commands::Catalog;
 use iced::futures::StreamExt;
 use iced::futures::channel::{mpsc, oneshot};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -177,12 +178,12 @@ type CommandReply = oneshot::Sender<Result<(), &'static str>>;
 
 #[derive(Debug, Clone)]
 pub struct CommandRequest {
-    pub command: Builtin,
+    pub command: Result<Invocation, &'static str>,
     reply: Arc<Mutex<Option<CommandReply>>>,
 }
 
 impl CommandRequest {
-    pub fn new(command: Builtin) -> (Self, oneshot::Receiver<Result<(), &'static str>>) {
+    pub fn new(command: Result<Invocation, &'static str>) -> (Self, oneshot::Receiver<Result<(), &'static str>>) {
         let (send, receive) = oneshot::channel();
         (Self { command, reply: Arc::new(Mutex::new(Some(send))) }, receive)
     }
@@ -221,6 +222,7 @@ pub enum Startup {
 struct LauncherIface {
     events: mpsc::UnboundedSender<UiEvent>,
     private: bool,
+    settings_path: PathBuf,
 }
 
 #[zbus::interface(name = "io.github.ferroseek.Launcher1")]
@@ -232,20 +234,32 @@ impl LauncherIface {
 
     async fn open_command(&self, id: &str, private: bool) -> zbus::fdo::Result<()> {
         let command =
-            Builtin::from_id(id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("Unknown built-in command ID".into()))?;
+            DirectCommand::parse(id).ok_or_else(|| zbus::fdo::Error::InvalidArgs("Invalid command ID".into()))?;
         if private && !self.private {
             return Err(zbus::fdo::Error::Failed("Close the launcher before opening a private session.".into()));
         }
-        let (request, answer) = CommandRequest::new(command);
-        self.events.unbounded_send(UiEvent::OpenCommand(request)).map_err(|_| launcher_closed())?;
         let runtime =
             zruntime::SharedRuntime::current().map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
         runtime
-            .timeout(COMMAND_TIMEOUT, answer)
+            .timeout(COMMAND_TIMEOUT, self.deliver_command(command))
             .await
             .map_err(|_| zbus::fdo::Error::Failed("The launcher did not acknowledge the command.".into()))?
-            .map_err(|_| launcher_closed())?
-            .map_err(|message| zbus::fdo::Error::Failed(message.into()))
+    }
+}
+
+impl LauncherIface {
+    async fn deliver_command(&self, command: DirectCommand) -> zbus::fdo::Result<()> {
+        let invocation = match command {
+            DirectCommand::Builtin(command) => Ok(Invocation::Builtin(command)),
+            DirectCommand::Local(key) => {
+                let settings = self.settings_path.clone();
+                // Validate against the file on disk, including edits made while the window is open.
+                zruntime::unblock(move || Invocation::local(&Catalog::load(&settings), key)).await
+            }
+        };
+        let (request, answer) = CommandRequest::new(invocation);
+        self.events.unbounded_send(UiEvent::OpenCommand(request)).map_err(|_| launcher_closed())?;
+        answer.await.map_err(|_| launcher_closed())?.map_err(|message| zbus::fdo::Error::Failed(message.into()))
     }
 }
 
@@ -253,7 +267,7 @@ fn launcher_closed() -> zbus::fdo::Error {
     zbus::fdo::Error::Failed("The launcher closed. Open the command again.".into())
 }
 
-async fn forward(conn: &zbus::Connection, command: Option<Builtin>, private: bool) -> Result<Startup, String> {
+async fn forward(conn: &zbus::Connection, command: Option<DirectCommand>, private: bool) -> Result<Startup, String> {
     let launcher = zbus::Proxy::new(conn, LAUNCHER_BUS_NAME, LAUNCHER_PATH, LAUNCHER_INTERFACE)
         .await
         .map_err(|error| error.to_string())?;
@@ -273,7 +287,12 @@ async fn forward(conn: &zbus::Connection, command: Option<Builtin>, private: boo
 }
 
 /// Connects to the session bus and claims the single-instance name.
-pub fn start(activation: Activation, command: Option<Builtin>, private: bool) -> Result<Startup, String> {
+pub fn start(
+    activation: Activation,
+    command: Option<DirectCommand>,
+    private: bool,
+    settings_path: PathBuf,
+) -> Result<Startup, String> {
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<Startup, String>>();
     std::thread::Builder::new()
         .name("bus".into())
@@ -289,7 +308,7 @@ pub fn start(activation: Activation, command: Option<Builtin>, private: bool) ->
                 let (ev_tx, ev_rx) = mpsc::unbounded();
                 // Export before owning the name, so a caller that sees the
                 // name can always reach the object.
-                let iface = LauncherIface { events: ev_tx.clone(), private };
+                let iface = LauncherIface { events: ev_tx.clone(), private, settings_path };
                 if let Err(e) = conn.object_server().at(LAUNCHER_PATH, iface).await {
                     let _ = ready_tx.send(Err(format!("cannot export {LAUNCHER_PATH}: {e}")));
                     return;

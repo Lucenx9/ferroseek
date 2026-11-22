@@ -581,17 +581,10 @@ impl Launcher {
         } else if matches!(&destination, Destination::Search(query) if query.is_empty()) {
             Task::none()
         } else {
-            self.open_destination(destination)
+            self.open_startup_destination(destination)
         };
         let startup = Task::batch([self.resize(), prefill]);
         (self, startup)
-    }
-
-    fn open_destination(&mut self, destination: Destination) -> Task<Message> {
-        match destination {
-            Destination::Search(query) => update(self, Message::Query(query)),
-            Destination::Command(command) => self.open_direct_command(command),
-        }
     }
 
     fn resume_query(&mut self, query: String) -> Task<Message> {
@@ -786,7 +779,7 @@ impl Launcher {
         }
         match (action, &item.target) {
             (Action::EditAlias, _) => self.open_alias_editor(&item),
-            (Action::GlobalShortcut, Target::Command(command)) => self.show_global_shortcuts(Some(*command)),
+            (Action::GlobalShortcut, _) => self.show_command_shortcut(&item),
             (Action::OpenCommand | Action::RunScript | Action::EditScript | Action::EditWorkflow, _) => {
                 self.activate_command(&item.target, action)
             }
@@ -904,7 +897,7 @@ impl Launcher {
             panel.actions.push(if favorite { Action::RemoveFavorite } else { Action::AddFavorite });
         }
         self.add_favorite_move_actions(&item.target, &mut panel.actions);
-        panel.actions.extend(runnable_local.then_some(Action::EditAlias));
+        panel.actions.extend([Action::EditAlias, Action::GlobalShortcut].into_iter().filter(|_| runnable_local));
         panel
     }
 
@@ -1309,8 +1302,7 @@ impl Launcher {
                 }
                 let destination =
                     self.deferred_destination.take().unwrap_or_else(|| Destination::Search(self.query.clone()));
-                let open = self.open_destination(destination);
-                self.status = Status::Notice("Folders applied. Indexing continues in the background.".into());
+                let open = self.open_setup_destination(destination);
                 let focus = self.input_focus().map_or_else(Task::none, crate::input::focus);
                 Task::batch([task, open, self.resize(), focus])
             }

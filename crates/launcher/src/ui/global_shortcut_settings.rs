@@ -8,13 +8,14 @@ use iced::widget::{button, column, container, responsive, row, scrollable, space
 use iced::{Element, Font, Length, Task, Theme};
 
 use super::{
-    Launcher, Message, divider, footer_style, hint, palette, primary_hint, status_button_style, surface_style,
+    Launcher, Message, divider, footer_style, hint, page_header, palette, primary_hint, status_button_style,
+    surface_style,
 };
 use crate::activation::Activation;
 use crate::commands::Builtin;
 use crate::global_shortcuts::{self, Operation, Status};
 use crate::layout::{FOOTER_HEIGHT, PAD};
-use crate::model::{ClickTracker, Command};
+use crate::model::{ClickTracker, Command, Item, Target};
 
 const SCROLL: &str = "global-shortcuts-scroll";
 
@@ -43,12 +44,34 @@ pub(super) struct State {
 
 #[derive(Default)]
 pub(super) struct Panel {
-    command: Option<Builtin>,
+    command: Option<ShortcutCommand>,
     copied: bool,
     status: Option<Status>,
     error: Option<String>,
     pending: Option<Action>,
     request: u64,
+}
+
+enum ShortcutCommand {
+    Builtin(Builtin),
+    Local { key: String, title: String },
+}
+
+impl ShortcutCommand {
+    fn title(&self) -> &str {
+        match self {
+            Self::Builtin(command) => command.title(),
+            Self::Local { title, .. } => title,
+        }
+    }
+
+    fn launch_command(&self) -> String {
+        let id = match self {
+            Self::Builtin(command) => command.id(),
+            Self::Local { key, .. } => key,
+        };
+        format!("ferroseek-launcher --command {id}")
+    }
 }
 
 impl Action {
@@ -78,6 +101,10 @@ impl Action {
 }
 
 impl Panel {
+    fn manual_only(&self) -> bool {
+        matches!(self.command, Some(ShortcutCommand::Local { .. }))
+    }
+
     fn primary(&self) -> Option<Action> {
         match self.status {
             Some(Status::Stopped) => Some(Action::Start),
@@ -110,6 +137,19 @@ impl Panel {
         )
     }
 
+    fn portal_event(&mut self, event: Event, activation: Activation) -> Task<Event> {
+        if self.manual_only() {
+            return Task::none();
+        }
+        match event {
+            Event::Act(action) if self.available(action) => self.request(Some(action), activation),
+            Event::Refresh if self.pending.is_none() => self.request(None, activation),
+            Event::Poll(request) if request == self.request => self.request(None, activation),
+            Event::Completed { request, result } if request == self.request => self.complete(result),
+            _ => Task::none(),
+        }
+    }
+
     fn complete(&mut self, result: Result<Status, String>) -> Task<Event> {
         let action = self.pending.take();
         let status = match result {
@@ -132,6 +172,9 @@ impl Panel {
     }
 
     fn summary(&self) -> &str {
+        if self.manual_only() {
+            return "Assign the copied command to a key in desktop settings. The shortcut opens a review before running.";
+        }
         if let Some(action) = self.pending {
             return action.progress();
         }
@@ -154,18 +197,13 @@ impl Panel {
     }
 
     fn view(&self) -> Element<'_, Event> {
-        let header = super::back_refresh_header(
-            if self.command.is_some() { "Global shortcut" } else { "Global shortcuts" },
-            Event::Back,
-            self.pending.is_none().then_some(Event::Refresh),
-        );
         let summary_role = if self.error.is_some() && self.pending.is_none() { palette::ERROR } else { palette::DIM };
         let summary = text(self.summary().to_owned())
             .size(13)
             .style(move |theme: &Theme| text::Style { color: Some(summary_role.resolve(theme)) });
         let body = self.body(summary);
         let content = scrollable(body.padding(12)).id(SCROLL).height(Length::Fill);
-        container(column![header, divider(), content, divider(), self.footer()])
+        container(column![self.header(), divider(), content, divider(), self.footer()])
             .padding(PAD)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -173,19 +211,31 @@ impl Panel {
             .into()
     }
 
+    fn header(&self) -> Element<'_, Event> {
+        if self.manual_only() {
+            let back = button(text("Back").size(12)).on_press(Event::Back).padding([6, 8]).style(status_button_style);
+            return page_header(row![back, text("Global shortcut").size(20)].spacing(12).align_y(iced::Center)).into();
+        }
+        super::back_refresh_header(
+            if self.command.is_some() { "Global shortcut" } else { "Global shortcuts" },
+            Event::Back,
+            self.pending.is_none().then_some(Event::Refresh),
+        )
+    }
+
     fn body(&self, summary: iced::widget::Text<'static>) -> iced::widget::Column<'static, Event> {
         let bindings = match &self.status {
             Some(Status::Ready { bindings, .. }) => Some(bindings.as_slice()),
             _ => None,
         };
-        if let Some(command) = self.command {
+        if let Some(command) = &self.command {
             let title = command.title();
             let keys = bindings.map(|bindings| {
                 bindings.iter().find(|(name, _)| name == title).map_or("No key reported", |(_, keys)| keys.as_str())
             });
             let manual = column![
                 text("Manual desktop shortcut").size(13),
-                text(launch_command(command)).size(13).font(Font::MONOSPACE).wrapping(text::Wrapping::WordOrGlyph),
+                text(command.launch_command()).size(13).font(Font::MONOSPACE).wrapping(text::Wrapping::WordOrGlyph),
             ]
             .spacing(4);
             return column![binding_row(title, keys), summary, manual].spacing(12);
@@ -242,12 +292,22 @@ fn binding_row(title: &str, keys: Option<&str>) -> Element<'static, Event> {
     content.into()
 }
 
-fn launch_command(command: Builtin) -> String {
-    format!("ferroseek-launcher --command {}", command.id())
-}
-
 impl Launcher {
-    pub(super) fn show_global_shortcuts(&mut self, command: Option<Builtin>) -> Task<Message> {
+    pub(super) fn show_global_shortcuts(&mut self) -> Task<Message> {
+        self.show_shortcut_panel(None)
+    }
+
+    pub(super) fn show_command_shortcut(&mut self, item: &Item) -> Task<Message> {
+        let command = if let Target::Command(command) = item.target {
+            ShortcutCommand::Builtin(command)
+        } else {
+            let Some(key) = self.scripts.history_key(&item.target) else { return Task::none() };
+            ShortcutCommand::Local { key: key.into(), title: item.title.clone() }
+        };
+        self.show_shortcut_panel(Some(command))
+    }
+
+    fn show_shortcut_panel(&mut self, command: Option<ShortcutCommand>) -> Task<Message> {
         if self.opening.is_some() {
             return Task::none();
         }
@@ -296,15 +356,12 @@ impl Launcher {
                 return self.return_to_parent();
             }
             Event::CopyCommand => {
-                let Some(command) = panel.command else { return Task::none() };
+                let Some(command) = &panel.command else { return Task::none() };
                 panel.copied = true;
-                return self.write_clipboard(launch_command(command));
+                let launch = command.launch_command();
+                return self.write_clipboard(launch);
             }
-            Event::Act(action) if panel.available(action) => panel.request(Some(action), self.activation.clone()),
-            Event::Refresh if panel.pending.is_none() => panel.request(None, self.activation.clone()),
-            Event::Poll(request) if request == panel.request => panel.request(None, self.activation.clone()),
-            Event::Completed { request, result } if request == panel.request => panel.complete(result),
-            _ => Task::none(),
+            event => panel.portal_event(event, self.activation.clone()),
         };
         task.map(move |event| Message::GlobalShortcuts { generation, event })
     }
