@@ -346,6 +346,10 @@ fn search_in_uses_the_directory_the_argument_names() {
     };
     let album = linked.join("Music/Album");
     assert_eq!(scoped(&album, "track"), [album.join("track.flac").to_str().unwrap()]);
+    assert_eq!(
+        scoped(linked.parent().unwrap(), "track"),
+        [album.join("track.flac").to_str().unwrap(), linked.join("Music/other-track.flac").to_str().unwrap()]
+    );
     // The link's target is searched, and `..` leaves the target, not the link.
     assert_eq!(scoped(&real.join("a/link"), "note"), [real.join("b/c/note-c.txt").to_str().unwrap()]);
     assert_eq!(

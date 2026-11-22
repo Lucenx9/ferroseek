@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -128,6 +128,21 @@ fn kind_char(k: Kind) -> char {
     }
 }
 
+fn search_scope(reader: &Reader, path: &Path) -> PathBuf {
+    let lexical = normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
+    let canonical = std::fs::canonicalize(path).ok();
+    // Keep the configured spelling for an indexed directory or an ancestor
+    // of a root. A scope such as `link/..` can resolve to a different directory.
+    let indexed_scope =
+        reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir))
+            || reader.roots().is_ok_and(|roots| roots.iter().any(|root| root.starts_with(&lexical)));
+    if indexed_scope && std::fs::canonicalize(&lexical).ok() == canonical {
+        lexical
+    } else {
+        canonical.unwrap_or(lexical)
+    }
+}
+
 #[derive(Serialize)]
 struct JsonHit<'a> {
     // Never turn a lossy display path into a path a client might open.
@@ -213,24 +228,9 @@ fn main() -> ExitCode {
                     ));
                 }
             };
-            // Roots are stored as configured, so a root below a linked ancestor
-            // only matches lexically. The lexical path must still be an indexed
-            // directory naming the same directory: indexed links and `link/..`
-            // resolve through the link's target.
-            let within = within.map(|w| {
-                let lexical = normalize(&std::path::absolute(&w).unwrap_or_else(|_| w.clone()));
-                let canonical = std::fs::canonicalize(&w).ok();
-                let indexed_dir =
-                    reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir));
-                if indexed_dir && std::fs::canonicalize(&lexical).ok() == canonical {
-                    lexical
-                } else {
-                    canonical.unwrap_or(lexical)
-                }
-            });
             let opts = SearchOptions {
                 limit,
-                within,
+                within: within.as_deref().map(|path| search_scope(&reader, path)),
                 kind: if dirs {
                     Some(Kind::Dir)
                 } else if files {
