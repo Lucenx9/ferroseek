@@ -29,8 +29,8 @@ upgrade() (
     FERROSEEK_OLD_DAEMON="$PWD/target/compatibility/debug/ferroseekd" \
         FERROSEEK_CURRENT_DAEMON="$PWD/target/debug/ferroseekd" \
         cargo +stable test --locked -p ferroseek-launcher --bin ferroseek-launcher \
-        backend::tests::upgrade::launcher_recovers_after_daemon_upgrade -- --ignored --exact | tee "$fixture/results"
-    grep -q 'test result: ok. 1 passed;' "$fixture/results"
+        backend::tests::upgrade::launcher_recovers_after_daemon_upgrade -- --ignored --exact --color never | tee "$fixture/results"
+    grep -Fq 'test result: ok. 1 passed;' "$fixture/results"
 )
 
 workspace() {
