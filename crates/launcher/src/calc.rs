@@ -359,6 +359,9 @@ mod tests {
             ("32°F in °C", "0 °C"),
             ("-40 C to F", "-40 °F"),
             ("-459.67 F in K", "0 K"),
+            ("1 Kb in b", "1000 b"),
+            ("1 kb in Kb", "1 kb"),
+            ("1 KB in kB", "1 kB"),
             ("1 MB in Mb", "8 Mb"),
             ("1 MiB in MB", "1.048576 MB"),
         ] {
