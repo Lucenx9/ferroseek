@@ -450,6 +450,11 @@ strategy with SQL parent filtering. Short-component scopes retain the original
 candidate stages and budgets even when small, so narrowing the SQL source does
 not change which ranked candidates are eligible.
 Prefix candidates retain key/id ordering before their budget is applied.
+When a CLI folder scope resolves through a symlink, the CLI can search its
+configured spelling alongside the resolved spelling. It does so when the
+configured spelling names an ancestor of an indexed root and is itself outside
+the index. Each spelling uses scoped candidate collection. The index merges
+the ranked results and removes repeated entry IDs before applying the shared limit.
 The entire search holds one SQLite read snapshot.
 
 The bounded probe does not guarantee constant latency: very wide directories

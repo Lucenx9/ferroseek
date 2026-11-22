@@ -128,19 +128,22 @@ fn kind_char(k: Kind) -> char {
     }
 }
 
-fn search_scope(reader: &Reader, path: &Path) -> PathBuf {
+fn search_scope(reader: &Reader, path: &Path) -> (Option<PathBuf>, Option<PathBuf>) {
     let lexical = normalize(&std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()));
-    let canonical = std::fs::canonicalize(path).ok();
-    // Keep the configured spelling for an indexed directory or an ancestor
-    // of a root. A scope such as `link/..` can resolve to a different directory.
-    let indexed_scope =
-        reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir))
-            || reader.roots().is_ok_and(|roots| roots.iter().any(|root| root.starts_with(&lexical)));
-    if indexed_scope && std::fs::canonicalize(&lexical).ok() == canonical {
-        lexical
-    } else {
-        canonical.unwrap_or(lexical)
+    let Ok(canonical) = std::fs::canonicalize(path) else { return (Some(lexical), None) };
+    if lexical == canonical {
+        return (Some(lexical), None);
     }
+    // A scope such as `link/..` can resolve to a different directory.
+    if std::fs::canonicalize(&lexical).ok().as_ref() != Some(&canonical) {
+        return (Some(canonical), None);
+    }
+    if reader.lookup(&lexical).is_ok_and(|entry| entry.is_some_and(|(_, meta)| meta.kind == Kind::Dir)) {
+        return (Some(lexical), None);
+    }
+    // Roots below this directory can use either spelling in the index.
+    let has_linked_root = reader.roots().is_ok_and(|roots| roots.iter().any(|root| root.starts_with(&lexical)));
+    (Some(canonical), has_linked_root.then_some(lexical))
 }
 
 #[derive(Serialize)]
@@ -228,9 +231,10 @@ fn main() -> ExitCode {
                     ));
                 }
             };
+            let (within, alternate) = within.as_deref().map(|path| search_scope(&reader, path)).unwrap_or_default();
             let opts = SearchOptions {
                 limit,
-                within: within.as_deref().map(|path| search_scope(&reader, path)),
+                within,
                 kind: if dirs {
                     Some(Kind::Dir)
                 } else if files {
@@ -241,7 +245,7 @@ fn main() -> ExitCode {
                 include_hidden: !no_hidden,
                 accept: None,
             };
-            let hits = match reader.search(&Query::parse(&query.join(" ")), &opts) {
+            let hits = match reader.search_with_alternate_scope(&Query::parse(&query.join(" ")), &opts, alternate) {
                 Ok(h) => h,
                 Err(e) => return die(e),
             };

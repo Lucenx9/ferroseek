@@ -346,8 +346,9 @@ fn search_in_uses_the_directory_the_argument_names() {
     };
     let album = linked.join("Music/Album");
     assert_eq!(scoped(&album, "track"), [album.join("track.flac").to_str().unwrap()]);
+    let ancestor = linked.parent().unwrap();
     assert_eq!(
-        scoped(linked.parent().unwrap(), "track"),
+        scoped(ancestor, "track"),
         [album.join("track.flac").to_str().unwrap(), linked.join("Music/other-track.flac").to_str().unwrap()]
     );
     // The link's target is searched, and `..` leaves the target, not the link.
@@ -356,4 +357,43 @@ fn search_in_uses_the_directory_the_argument_names() {
         scoped(&real.join("a/link/.."), "note"),
         [real.join("b/c/note-c.txt").to_str().unwrap(), real.join("b/note-b.txt").to_str().unwrap()]
     );
+
+    let backup = disk.join("backup");
+    fs::create_dir(&backup).unwrap();
+    fs::write(backup.join("backup-track.flac"), b"x").unwrap();
+    let config = format!("roots = [\"{}\", \"{}\"]\n", linked.display(), backup.display());
+    fs::write(t.path().join("config.toml"), config).unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+    assert_eq!(
+        scoped(ancestor, "track"),
+        [
+            backup.join("backup-track.flac").to_str().unwrap(),
+            album.join("track.flac").to_str().unwrap(),
+            linked.join("Music/other-track.flac").to_str().unwrap(),
+        ]
+    );
+}
+
+#[test]
+fn search_in_alias_keeps_the_best_match_from_a_small_scoped_directory() {
+    let t = tempfile::tempdir().unwrap();
+    let disk = t.path().join("disk");
+    let scope = disk.join("scope");
+    fs::create_dir_all(scope.join("files")).unwrap();
+    let alias = t.path().join("mnt");
+    std::os::unix::fs::symlink(&scope, &alias).unwrap();
+    let root = alias.join("files");
+    for i in 0..301 {
+        fs::write(scope.join(format!("aa-{i:03}-long.txt")), b"x").unwrap();
+    }
+    let best = scope.join("aaz");
+    fs::write(&best, b"x").unwrap();
+    let config = format!("roots = [\"{}\", \"{}\"]\n", disk.display(), root.display());
+    fs::write(t.path().join("config.toml"), config).unwrap();
+    assert!(run(t.path(), &["index"]).status.success());
+
+    for folder in [&scope, &alias] {
+        let out = run(t.path(), &["search", "--in", folder.to_str().unwrap(), "-n", "1", "aa"]);
+        assert_eq!(stdout(&out).trim_end(), best.to_str().unwrap(), "{}", folder.display());
+    }
 }
