@@ -134,8 +134,11 @@ it is idempotent, and races between the scan and events converge.
   dedicated logind-triggered reconciliation on resume; unusual missed
   events remain a validation target.
 - **Watch exhaustion.** If `inotify_add_watch` returns `ENOSPC`, the daemon
-  keeps going in degraded mode. Unwatched subtrees depend on reconciliation;
-  `status` reports `watch_limit_hit`. Per-root coverage is future work.
+  keeps going in degraded mode. Reconciliation rechecks unwatched directory
+  listings even when their mtimes are unchanged, including the pass that
+  restores the watch. This catches file metadata changes that leave the
+  directory mtime intact. `status` reports `watch_limit_hit`. Per-root coverage
+  is future work.
 
 ## Threads and backpressure
 

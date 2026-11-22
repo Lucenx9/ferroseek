@@ -495,6 +495,12 @@ impl State {
         Ok(Some((md, depth)))
     }
 
+    fn cacheable_listing_mtime(&self, id: Id, md: &fs::Metadata) -> i64 {
+        // A daemon without a watch can miss metadata changes that leave the
+        // directory mtime intact. Keep its listing invalid until a watch is restored.
+        if self.ino.is_none() || self.by_id.contains_key(&id) { Meta::from_metadata(md).mtime_ns } else { 0 }
+    }
+
     fn reconcile_dir(&mut self, tx: &mut Txn<'_>, id: Id, mode: Mode) -> Result<()> {
         let Some(path) = tx.path(id)? else { return Ok(()) };
         let Some(stored) = tx.meta(id)? else { return Ok(()) };
@@ -504,8 +510,8 @@ impl State {
         let Some((md, depth)) = self.prepare_directory_listing(tx, &path, Child { id, meta: stored })? else {
             return Ok(());
         };
-        let cur = Meta::from_metadata(&md);
-        if mode == Mode::Quick && stored.mtime_ns != 0 && stored.mtime_ns == cur.mtime_ns && stored.ino == cur.ino {
+        let listing_mtime = self.cacheable_listing_mtime(id, &md);
+        if mode == Mode::Quick && stored.mtime_ns != 0 && stored.mtime_ns == listing_mtime && stored.ino == md.ino() {
             if depth < self.rules.max_depth {
                 for (cid, _) in tx.child_dirs(id)? {
                     self.work.push((cid, mode));
@@ -518,7 +524,7 @@ impl State {
             Err(e) => {
                 log::debug!("cannot list {}: {e}", path.display());
                 self.status.errors.fetch_add(1, Relaxed);
-                tx.mark_dir_reconciled(id, 0, cur.ino)?;
+                tx.mark_dir_reconciled(id, 0, md.ino())?;
                 return Ok(());
             }
         };
@@ -596,7 +602,7 @@ impl State {
                 self.drop_subtree(tx, c.id)?;
             }
         }
-        tx.mark_dir_reconciled(id, if complete { cur.mtime_ns } else { 0 }, cur.ino)?;
+        tx.mark_dir_reconciled(id, if complete { listing_mtime } else { 0 }, md.ino())?;
         Ok(())
     }
 
