@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tomllib
 
-from installer import ARCHIVE_FILES, component_binaries
+from installer import archive_files, component_binaries
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +39,7 @@ def main():
     if archive.exists() or checksum.exists():
         parser.error('output already exists; refusing to overwrite it')
     content = {}
-    for rel in ARCHIVE_FILES:
+    for rel in archive_files(components):
         content[rel] = ((ROOT / rel).read_bytes(), 0o755 if rel.endswith('.sh') else 0o644)
     for binary in binaries:
         path = ROOT / 'target/release' / binary

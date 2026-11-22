@@ -46,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         metadata = json.loads((payload / 'package.json').read_text())
         assert (payload / 'bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
         has_launcher = component in ['launcher', 'full']
+        icon_file = 'io.github.ferroseek.Launcher.png'
+        assert (payload / 'data' / icon_file).is_file() == has_launcher
         assert (payload / 'bin/ferroseek-launcher').exists() == has_launcher
         assert (payload / 'bin/ferroseek-plasma-windows').exists() == has_launcher
         assert not (payload / 'integrations').exists()
@@ -70,6 +72,11 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         plasma_desktop = home / '.local/share/applications/io.github.ferroseek.PlasmaWindows.desktop'
         assert plasma_helper.exists() == plasma_desktop.exists() == has_launcher
         desktop = home / '.local/share/applications/io.github.ferroseek.Launcher.desktop'
+        icon = home / '.local/share/icons/hicolor/256x256/apps' / icon_file
+        assert icon.is_file() == has_launcher
+        if has_launcher:
+            assert f'Icon={icon.stem}' in desktop.read_text().splitlines()
+            assert icon.read_bytes() == (repo / 'data' / icon_file).read_bytes()
         shortcut_unit = home / '.config/systemd/user/app-io.github.ferroseek.Launcher.service'
         assert desktop.exists() == shortcut_unit.exists() == has_launcher
         assert (home / '.local/bin/ferroseek-mcp').exists() == (component in ['mcp', 'full'])
@@ -92,5 +99,6 @@ with tempfile.TemporaryDirectory(prefix='ferroseek-package-') as tmp:
         assert not (home / '.local/bin/ferroseek').exists()
         assert not (home / '.local/bin/ferroseek-launcher').exists()
         assert not desktop.exists() and not shortcut_unit.exists()
+        assert not icon.exists()
         assert not plasma_helper.exists() and not plasma_desktop.exists()
 print('PASS: four native component archives, checksums, reproducibility, corruption rejection and installation without Cargo')

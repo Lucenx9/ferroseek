@@ -83,6 +83,10 @@ Use [material.rs](crates/launcher/src/material.rs) for capability handling.
 
 ### Typography and icons
 
+The launcher's desktop icon is a tilted iron magnet with orange and pale steel
+poles. Use the [magnet artwork](data/io.github.ferroseek.Launcher.png) for the
+application identity. Search controls and result types keep their own icons.
+
 Use iced's default font for UI text, with regular weight for content and
 semibold for short section labels or primary actions. This follows the existing
 font resolution; it does not guarantee a particular family on every desktop.
